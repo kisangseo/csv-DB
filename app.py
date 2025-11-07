@@ -4,12 +4,13 @@ import pandas as pd
 from azure.storage.blob import ContainerClient
 import chardet
 import re
+import os
 
 app = Flask(__name__)
 CORS(app)
 
 # --- Azure Storage ---
-CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=bcsobcf;AccountKey=jivFSuIpTOXv30ruihnQB6iE5/p8z2Z0KUihqSsjlYNHjIouD7eIB93bogR9u3t0aGkcqv94EalX+AStQg/yMQ==;EndpointSuffix=core.windows.net"
+CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 CONTAINERS = ["csv", "dvcsv", "fscsv"]
 
 # --- Detect encoding of blobs ---
