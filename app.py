@@ -9,6 +9,31 @@ import os
 app = Flask(__name__)
 CORS(app)
 
+# --- Load once at startup (from Azure Blob Storage) ---
+from io import StringIO
+from azure.storage.blob import BlobServiceClient
+
+CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+
+
+
+def read_blob(container_name, blob_name):
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+    data = blob_client.download_blob().readall().decode('utf-8')
+    return pd.read_csv(StringIO(data))
+
+# ✅ Load CSVs once from your Azure containers
+dv_df = read_blob("dvcsv", "DV Sample.csv")
+civil_df = read_blob("fscsv", "Civil_Intake_Data(survey).csv")
+warrants_df = read_blob("csv", "sample_warrants.csv")
+
+# Optional: Label for clarity
+dv_df["department"] = "domestic violence department"
+civil_df["department"] = "field services department - civil intake"
+warrants_df["department"] = "field services department - warrants"
+
+
 # --- Azure Storage ---
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 CONTAINERS = ["csv", "dvcsv", "fscsv"]
