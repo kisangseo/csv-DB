@@ -33,12 +33,12 @@ jobs:
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'CVDB'  # Your Azure Web App name
+          app-name: 'CVDB'
           slot-name: 'production'
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }}
           package: .
 
-      - name: Restart Azure Web App (to ensure latest version runs)
+      - name: Restart Azure Web App (refresh cache)
         uses: azure/CLI@v1
         with:
           inlineScript: |
