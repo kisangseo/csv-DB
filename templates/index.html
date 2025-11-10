@@ -18,11 +18,22 @@
     <button type="submit">Search</button>
   </form>
 
+  <!-- 👇 Added status message placeholder -->
+  <p id="statusMessage"></p>
+
   <div id="results"></div>
 
   <script>
     async function search(event) {
       event.preventDefault();
+
+      const status = document.getElementById("statusMessage");
+      const resultsDiv = document.getElementById("results");
+
+      // Show loading state
+      resultsDiv.innerHTML = "";
+      status.textContent = "Searching...";
+      status.classList.add("loading");
 
       const params = new URLSearchParams({
         name: document.getElementById("name").value,
@@ -30,80 +41,88 @@
         intake_date: document.getElementById("intake_date").value
       });
 
-      const response = await fetch(`${window.location.origin}/search_all?${params}`);
-      const data = await response.json();
+      try {
+        const response = await fetch(`${window.location.origin}/search_all?${params}`);
+        const data = await response.json();
 
-      const resultsDiv = document.getElementById("results");
-      resultsDiv.innerHTML = "";
+        status.classList.remove("loading");
 
-      if (Object.keys(data).length === 0) {
-        resultsDiv.innerHTML = "<p>No results found.</p>";
-        return;
-      }
-
-      for (const [dept, info] of Object.entries(data)) {
-        const rows = info.records;
-        const count = info.count;
-
-        const div = document.createElement("div");
-        div.className = "department";
-
-        const title = document.createElement("h2");
-        title.textContent = dept;
-        div.appendChild(title);
-
-        const countText = document.createElement("div");
-        countText.className = "count";
-        countText.textContent = `Results: ${count} record${count !== 1 ? "s" : ""}`;
-        div.appendChild(countText);
-
-        const table = document.createElement("table");
-        let headers = [];
-
-        if (dept === "Domestic Violence Department") {
-          headers = [
-            "Name",
-            "Case Number",
-            "Address",
-            "Order Type",
-            "Intake Date",
-            "Order Status"
-          ];
-        } else {
-          headers = [
-            "Name",
-            "Case Number",
-            "Address",
-            "Court Document Type",
-            "Intake Date",
-            "Current Disposition"
-          ];
+        if (Object.keys(data).length === 0) {
+          resultsDiv.innerHTML = "<p>No results found.</p>";
+          status.textContent = "No results found.";
+          return;
         }
 
-        const thead = document.createElement("thead");
-        const headerRow = document.createElement("tr");
-        headers.forEach(h => {
-          const th = document.createElement("th");
-          th.textContent = h;
-          headerRow.appendChild(th);
-        });
-        thead.appendChild(headerRow);
-        table.appendChild(thead);
+        status.textContent = "Search complete.";
 
-        const tbody = document.createElement("tbody");
-        rows.forEach(row => {
-          const tr = document.createElement("tr");
+        for (const [dept, info] of Object.entries(data)) {
+          const rows = info.records;
+          const count = info.count;
+
+          const div = document.createElement("div");
+          div.className = "department";
+
+          const title = document.createElement("h2");
+          title.textContent = dept;
+          div.appendChild(title);
+
+          const countText = document.createElement("div");
+          countText.className = "count";
+          countText.textContent = `Results: ${count} record${count !== 1 ? "s" : ""}`;
+          div.appendChild(countText);
+
+          const table = document.createElement("table");
+          let headers = [];
+
+          if (dept === "Domestic Violence Department") {
+            headers = [
+              "Name",
+              "Case Number",
+              "Address",
+              "Order Type",
+              "Intake Date",
+              "Order Status"
+            ];
+          } else {
+            headers = [
+              "Name",
+              "Case Number",
+              "Address",
+              "Court Document Type",
+              "Intake Date",
+              "Current Disposition"
+            ];
+          }
+
+          const thead = document.createElement("thead");
+          const headerRow = document.createElement("tr");
           headers.forEach(h => {
-            const td = document.createElement("td");
-            td.textContent = row[h] || "";
-            tr.appendChild(td);
+            const th = document.createElement("th");
+            th.textContent = h;
+            headerRow.appendChild(th);
           });
-          tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
+          thead.appendChild(headerRow);
+          table.appendChild(thead);
 
-        div.appendChild(table);
-        resultsDiv.appendChild(div);
+          const tbody = document.createElement("tbody");
+          rows.forEach(row => {
+            const tr = document.createElement("tr");
+            headers.forEach(h => {
+              const td = document.createElement("td");
+              td.textContent = row[h] || "";
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+
+          div.appendChild(table);
+          resultsDiv.appendChild(div);
+        }
+      } catch (err) {
+        console.error(err);
+        status.classList.remove("loading");
+        status.textContent = "Error occurred during search.";
       }
     }
   </script>

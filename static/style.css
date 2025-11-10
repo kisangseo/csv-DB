@@ -105,3 +105,22 @@ tr:hover {
     width: 100%;
   }
 }
+/* ===== Search Status ===== */
+#statusMessage {
+  color: gray;
+  font-style: italic;
+  text-align: center;
+  margin-top: 10px;
+}
+
+/* Optional: spinner animation while searching */
+#statusMessage.loading::after {
+  content: "⏳";
+  margin-left: 6px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
