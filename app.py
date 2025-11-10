@@ -21,7 +21,6 @@ def detect_encoding(blob_bytes):
 def load_all_data():
     all_dfs = []
     for container_name in CONTAINERS:
-        print(f"📂 Loading container: {container_name}")
         container_client = ContainerClient.from_connection_string(CONNECTION_STRING, container_name)
         
         for blob in container_client.list_blobs():
@@ -49,7 +48,7 @@ def load_all_data():
                         df["department"] = "warrants department"
 
                 all_dfs.append(df)
-                print(f"✅ Loaded {len(df)} rows for {df['department'].iloc[0].title()}")
+                
 
     return pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
 
@@ -92,7 +91,7 @@ def enforce_department_columns(df):
         # 1️⃣ Domestic Violence Department
         # -------------------------------------------------------------
         if dept == "domestic violence department":
-            print(f"🔧 Debug DV columns: {list(subdf.columns)}")
+           
 
             # Fuzzy match for Order Type / Status
             order_type_col = next((c for c in subdf.columns if "ordertype" in c.replace(" ", "")), None)
@@ -120,7 +119,7 @@ def enforce_department_columns(df):
         # 2️⃣ Field Services Department
         # -------------------------------------------------------------
         elif dept == "field services department":
-            print(f"🔧 Debug FS columns: {list(subdf.columns)}")
+           
             # --- Name handling ---
             if "tenant defendant or respondent name" in subdf.columns:
                 subdf["name"] = subdf["tenant defendant or respondent name"]
@@ -182,7 +181,7 @@ def enforce_department_columns(df):
         # 2️⃣a Field Services Department - Civil Intake
         # -------------------------------------------------------------
         elif dept == "field services department - civil intake":
-            print(f"🔧 Debug Civil Intake columns: {list(subdf.columns)}")
+            
 
             # --- Name ---
             if "tenant, defendant, or respondent name" in subdf.columns:
@@ -219,7 +218,7 @@ def enforce_department_columns(df):
         # 2️⃣b Field Services Department - Warrants
         # -------------------------------------------------------------
         elif dept == "field services department - warrants":
-            print(f"🔧 Debug Warrants columns: {list(subdf.columns)}")
+            
 
             # --- Name ---
             if "tenant defendant or respondent name" in subdf.columns:
@@ -346,8 +345,7 @@ def search_all():
                 .str.replace(r"\s+", "", regex=True)
                 .str.contains(value_clean, na=False)
             ]
-        print(f"🧩 Dept: {dept} | Rows before any date filtering: {len(search_df)}")
-        print(search_df.head(3))
+        
         # ✅ Handle intake_date search across departments (DV + Civil)
         intake_date = request.args.get("intake_date", "").strip()
         if intake_date:
@@ -393,18 +391,11 @@ def search_all():
                     search_df = search_df[search_df["parsed_intake"].dt.date == input_date]
                     after = len(search_df)
 
-                    print(
-                        f"📅 Using column '{found_col}' | Searching for {input_date} | "
-                        f"Before filter: {before} | After filter: {after}"
-                    )
-                else:
-                    print(
-                        f"⚠️ No matching date column found in department '{dept}' | "
-                        f"Columns: {list(search_df.columns)}"
-                    )
+                    
+                
 
             except Exception as e:
-                print("⚠️ Date filter error:", e)
+                
                 pass
 
         # ✅ Map filtered lowercase results back to the original, pretty-cased data
