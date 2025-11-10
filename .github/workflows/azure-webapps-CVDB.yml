@@ -1,0 +1,45 @@
+name: Build and deploy Python app to Azure Web App - CVDB
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Prepare Flask app files
+        run: |
+          echo "Ensuring Flask static and templates are included..."
+          ls -R
+          if [ ! -d "static" ]; then echo "⚠️ Warning: static folder missing!"; fi
+          if [ ! -d "templates" ]; then echo "⚠️ Warning: templates folder missing!"; fi
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: 'CVDB'  # Your Azure Web App name
+          slot-name: 'production'
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }}
+          package: .
+
+      - name: Restart Azure Web App (to ensure latest version runs)
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            az webapp restart --name CVDB --resource-group Body_Cam_Footage
