@@ -1,0 +1,107 @@
+/* ===== General Layout ===== */
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f7f7fb;
+  color: #333;
+  margin: 0;
+  padding: 40px 0;
+}
+
+h1 {
+  text-align: center;
+  color: #333;
+  margin-bottom: 30px;
+}
+
+/* ===== Search Form ===== */
+form {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 auto;
+  max-width: 900px; /* <-- limit total width */
+}
+
+input[type="text"],
+input[type="date"] {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 220px; /* <-- narrower input boxes */
+  transition: border-color 0.2s ease;
+}
+
+input[type="text"]:focus,
+input[type="date"]:focus {
+  border-color: #2d6cff;
+  outline: none;
+}
+
+button {
+  background-color: #2d6cff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+button:hover {
+  background-color: #1b4ed1;
+}
+
+/* ===== Results Section ===== */
+.department {
+  margin-top: 40px;
+}
+
+h2 {
+  color: #2d6cff;
+  border-bottom: 2px solid #2d6cff;
+  padding-bottom: 5px;
+}
+
+.count {
+  margin: 10px 0;
+  font-weight: bold;
+}
+
+/* ===== Tables ===== */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+th, td {
+  padding: 10px;
+  border: 1px solid #ccc;
+  text-align: left;
+}
+
+th {
+  background-color: #e8f0ff;
+}
+
+tr:nth-child(even) {
+  background-color: #f9f9f9;
+}
+
+tr:hover {
+  background-color: #eef3ff;
+}
+
+/* ===== Responsive Design ===== */
+@media (max-width: 768px) {
+  form {
+    flex-direction: column;
+    max-width: 100%;
+  }
+
+  input, button {
+    width: 100%;
+  }
+}

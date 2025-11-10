@@ -1,98 +1,20 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Department Search Portal</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 40px;
-      background-color: #f6f8fa;
-      color: #333;
-    }
-    h1 {
-      text-align: center;
-      color: #2c3e50;
-    }
-    form {
-      max-width: 800px;
-      margin: 0 auto 20px auto;
-      padding: 20px;
-      background: #fff;
-      border-radius: 12px;
-      box-shadow: 0 3px 8px rgba(0,0,0,0.1);
-    }
-    input {
-      margin: 5px;
-      padding: 10px;
-      width: calc(33% - 20px);
-      border: 1px solid #ccc;
-      border-radius: 6px;
-    }
-    button {
-      display: block;
-      margin: 20px auto;
-      padding: 10px 20px;
-      background-color: #0078d7;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    button:hover {
-      background-color: #005fa3;
-    }
-    .department {
-      background: #fff;
-      border-radius: 10px;
-      padding: 20px;
-      margin-bottom: 30px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    h2 {
-      color: #0078d7;
-      margin-bottom: 10px;
-    }
-    h3 {
-      color: #1a73e8;
-      margin: 10px 0;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-    }
-    th, td {
-      border: 1px solid #ddd;
-      padding: 8px;
-      text-align: left;
-    }
-    th {
-      background-color: #0078d7;
-      color: white;
-    }
-    tr:nth-child(even) {
-      background-color: #f9f9f9;
-    }
-    .count {
-      font-weight: bold;
-      color: #1a73e8;
-      margin-bottom: 10px;
-    }
-  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <h1>Department Search Portal</h1>
 
   <form id="searchForm" onsubmit="search(event)">
-    <input type="text" id="name" placeholder="Name" />
-    <input type="text" id="dob" placeholder="Date of Birth" />
-    <input type="text" id="race" placeholder="Race" />
-    <input type="text" id="sex" placeholder="Sex" />
-    <input type="text" id="address" placeholder="Address" />
-    <input type="text" id="case_number" placeholder="Case Number" />
-    <input type="text" id="parcel_id" placeholder="Parcel ID" />
+    <input type="text" id="name" name="name" placeholder="Name">
+    <input type="text" id="case_number" name="case_number" placeholder="Case Number">
+    <input type="text" id="intake_date" name="intake_date" placeholder="Intake Date"
+           onfocus="this.type='date'; this.showPicker?.()" 
+           onblur="if(!this.value)this.type='text'">
     <button type="submit">Search</button>
   </form>
 
@@ -104,12 +26,8 @@
 
       const params = new URLSearchParams({
         name: document.getElementById("name").value,
-        dob: document.getElementById("dob").value,
-        race: document.getElementById("race").value,
-        sex: document.getElementById("sex").value,
-        address: document.getElementById("address").value,
         case_number: document.getElementById("case_number").value,
-        parcel_id: document.getElementById("parcel_id").value
+        intake_date: document.getElementById("intake_date").value
       });
 
       const response = await fetch(`http://127.0.0.1:5000/search_all?${params}`);
@@ -140,27 +58,27 @@
         div.appendChild(countText);
 
         const table = document.createElement("table");
-       let headers = [];
+        let headers = [];
 
-      if (dept === "Domestic Violence Department") {
-        headers = [
-          "Name",
-          "Case Number",
-          "Address",
-          "Order Type",
-          "Hearing Date",
-          "Order Status"
-        ];
-      } else {
-        headers = [
-          "Name",
-          "Case Number",
-          "Address",
-          "Court Document Type",
-          "Hearing Date",
-          "Current Disposition"
-        ];
-      }
+        if (dept === "Domestic Violence Department") {
+          headers = [
+            "Name",
+            "Case Number",
+            "Address",
+            "Order Type",
+            "Intake Date",
+            "Order Status"
+          ];
+        } else {
+          headers = [
+            "Name",
+            "Case Number",
+            "Address",
+            "Court Document Type",
+            "Intake Date",
+            "Current Disposition"
+          ];
+        }
 
         const thead = document.createElement("thead");
         const headerRow = document.createElement("tr");
