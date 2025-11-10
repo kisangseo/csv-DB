@@ -30,7 +30,7 @@
         intake_date: document.getElementById("intake_date").value
       });
 
-      const response = await fetch(`http://127.0.0.1:5000/search_all?${params}`);
+      const response = await fetch(`${window.location.origin}/search_all?${params}`);
       const data = await response.json();
 
       const resultsDiv = document.getElementById("results");
