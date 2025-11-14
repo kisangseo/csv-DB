@@ -80,6 +80,7 @@ def load_all_data():
 
 # Load all data at startup
 df = load_all_data()
+df.columns = df.columns.str.strip().str.lower()
 
 def enforce_department_columns(df):
     import re
@@ -87,8 +88,30 @@ def enforce_department_columns(df):
     filtered = {}
 
     for dept, subdf in df.groupby("department", dropna=False):
-        dept = dept.lower().strip()
+        # normalize department name
+        dept = str(dept).lower().strip()
+
+        # 🔧 Ensure all subdf columns are normalized and copied from df
+        original_cols = df.columns
         subdf.columns = [re.sub(r"[^a-z0-9 ]", "", c.lower().strip()) for c in subdf.columns]
+
+        # 🩵 Restore Intake Date early (before trimming or display filtering)
+        if "intake date" not in subdf.columns or subdf["intake date"].isna().all():
+            # Prefer columns already present in this department slice
+            for col in subdf.columns:
+                if "intake" in col.lower() and "date" in col.lower():
+                    subdf["intake date"] = subdf[col]
+                    print(f"🩵 Restored '{col}' -> 'intake date' for {dept} (from subdf)")
+                    break
+            else:
+                # Fallback: pull from the original df, but align rows to this subdf
+                for col in df.columns:
+                    if "intake" in col.lower() and "date" in col.lower():
+                        subdf["intake date"] = df.loc[subdf.index, col]
+                        print(f"🩵 Restored '{col}' -> 'intake date' for {dept} (from df, aligned)")
+                        break
+
+        
 
         # --- COMMON NAME + ADDRESS HANDLING ---
         if "respondent name" in subdf.columns:
@@ -135,7 +158,7 @@ def enforce_department_columns(df):
                 "case number": "Case Number",
                 "address": "Address",
                 "order type": "Order Type",
-                "hearing date": "Intake Date",
+                "hearing date": "Hearing Date",
                 "order status": "Order Status",
             }
             DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
@@ -205,7 +228,7 @@ def enforce_department_columns(df):
         # -------------------------------------------------------------
         # 2️⃣a Field Services Department - Civil Intake
         # -------------------------------------------------------------
-        elif dept == "field services department - civil intake":
+        elif dept.lower() == "field services department - civil intake":
             
 
             # --- Name ---
@@ -226,8 +249,23 @@ def enforce_department_columns(df):
 
             # --- Normalize key fields ---
             subdf["court document type"] = subdf.get("court document type", "")
-            subdf["intake date"] = subdf.get("intake date", "")
-            subdf["current disposition"] = subdf.get("administrative status", "")
+
+            print("\n🧩 DEBUG: ORIGINAL DF COLUMNS for", dept)
+            for col in df.columns:
+                print("   →", repr(col))
+            
+        
+
+
+            # 🪪 Debug check
+            print("✅ Intake Date final sample for", dept, ":", subdf["intake date"].dropna().head(5).tolist())
+
+
+
+            subdf = subdf.copy()
+
+            if "administrative status" in subdf.columns and subdf["administrative status"].notna().any():
+                subdf["current disposition"] = subdf["administrative status"]
 
             PRETTY_NAMES = {
                 "name": "Name",
@@ -237,6 +275,8 @@ def enforce_department_columns(df):
                 "intake date": "Intake Date",
                 "current disposition": "Current Disposition",
             }
+            print("✅ Intake Date sample (pre-clean):", subdf.get("intake date", pd.Series(dtype=object)).dropna().head(5).tolist())
+
             DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
 
         # -------------------------------------------------------------
@@ -339,8 +379,7 @@ def search_all():
     for dept, records in grouped_data.items():
         # 🚫 Skip Warrants Department if user searched by Intake Date
         intake_date = request.args.get("intake_date", "").strip()
-        if intake_date and "warrants" in dept.lower():
-            continue
+        
 
         dept_df = pd.DataFrame(records)
         if dept_df.empty:
@@ -352,6 +391,9 @@ def search_all():
 
         # --- Apply AND filtering logic on search_df ---
         for field, value in params.items():
+            # ❗ Skip text filtering for intake_date — let the datetime logic handle it
+            if field == "intake_date":
+                continue
             value = (value or "").strip()  # ensure no spaces or None
             if not value:
                 continue
@@ -375,53 +417,75 @@ def search_all():
         intake_date = request.args.get("intake_date", "").strip()
         if intake_date:
             try:
-                input_date = pd.to_datetime(intake_date).date()
+                # Parse and normalize the user's input date
+                input_date = pd.to_datetime(intake_date, errors="coerce").normalize()
+                print(f"\nSearching for date: {input_date}")
 
-                # possible column names that represent intake/order dates
-                possible_date_cols = [
-                    "intake date",
-                    "hearing date",
-                    "date order was issued",
-                    "court issued date",
-                    "date and time of reissue"
-                ]
 
-                # find which column exists in the current department
-                found_col = next(
-                    (
-                        c for c in search_df.columns
-                        if any(k.replace(" ", "") in c.replace(" ", "") for k in possible_date_cols)
-                    ),
-                    None
-                )
+                # Reset date detection for this department
+                found_col = None
 
-                if found_col:
-                    # Clean and normalize the date column
-                    search_df["parsed_intake"] = (
-                        pd.to_datetime(
-                            search_df[found_col],
-                            errors="coerce",
-                            infer_datetime_format=True,
-                            yearfirst=False
-                        )
-                        .apply(
-                            lambda d: d + pd.offsets.DateOffset(years=100)
-                            if pd.notnull(d) and d.year < 1970
-                            else d
-                        )
-                        .dt.floor("D")
+                # Dynamically find which column has a date for this department
+                for col in search_df.columns:
+                    if any(key in col.lower() for key in [
+                        "hearing date",
+                        "intake date",
+                        "court issued date",
+                        "date order was issued",
+                        "date and time of reissue"
+                    ]):
+                        found_col = col
+                        break
+
+                # 🩵 Fallback: extra safety for Civil Intake where the column name might differ slightly
+                if not found_col:
+                    for col in search_df.columns:
+                        if "intake" in col.lower() and "date" in col.lower():
+                            found_col = col
+                            print(f"🩵 Fallback matched '{col}' as intake date for {dept}")
+                            break
+
+
+                if found_col and search_df[found_col].notna().any():
+                    print(f"Department: {dept}")
+                    print("Found column:", found_col)
+                    print("Sample values:", search_df[found_col].dropna().head(5).tolist())
+
+
+                    cleaned = (
+                    search_df[found_col]
+                    .astype(str)
+                    .str.replace(",", "", regex=False)
+                    .str.strip()
                     )
+                    print("🧩 Cleaned sample values:", cleaned.head(10).tolist())
 
-                    before = len(search_df)
-                    search_df = search_df[search_df["parsed_intake"].dt.date == input_date]
-                    after = len(search_df)
 
-                    
-                
+                    parsed = pd.to_datetime(cleaned, format="%m/%d/%Y %I:%M %p", errors="coerce")
+                    if parsed.isna().mean() > 0.9:
+                        parsed = pd.to_datetime(cleaned, format="%m/%d/%Y %H:%M", errors="coerce")
+
+
+                    parsed_day = parsed.dt.normalize()
+                    input_day = input_date.normalize()
+
+
+                    print("DEBUG Parsed Day unique:", parsed_day.unique())
+                    print("DEBUG Input Day:", input_day)
+
+
+                    search_df = search_df[parsed_day == input_day]
+                    print("DEBUG Matching rows count:", len(search_df))
+
+
+                else:
+                    print(f"⚠️ No valid date column found for {dept}")
+
 
             except Exception as e:
-                
-                pass
+                print(f"❌ Error during date filtering for {dept}: {e}")
+
+                    
 
         # ✅ Map filtered lowercase results back to the original, pretty-cased data
         if not search_df.empty:
