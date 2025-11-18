@@ -195,14 +195,17 @@ def enforce_department_columns(df):
 
             # --- Current Disposition (handle all FS variants safely) ---
             # Normalize possible disposition columns
-            disp_cols = [
-                c for c in subdf.columns
-                if "administrative status" in c or "adminstrative status" in c or "service disposition" in c
-            ]
+            disp_col = None
+                
+            for c in subdf.columns:
+                c_clean = c.lower().replace(" ", "")
+                if "adminstrative" in c_clean or "administrative" in c_clean:
+                    disp_col = c
+                    break
 
             # Use the first found column
-            if disp_cols:
-                subdf["current disposition"] = subdf[disp_cols[0]].astype(str)
+            if disp_col:
+                subdf["current disposition"] = subdf[disp_col].astype(str)
             else:
                 subdf["current disposition"] = ""
 
@@ -221,7 +224,7 @@ def enforce_department_columns(df):
                 "case number": "Case Number",
                 "address": "Address",
                 "court document type": "Court Document Type",
-                "hearing date": "Intake Date",
+                "intake date": "Intake Date",
                 "current disposition": "Current Disposition",
             }
             DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
@@ -283,7 +286,7 @@ def enforce_department_columns(df):
         # 2️⃣b Field Services Department - Warrants
         # -------------------------------------------------------------
         elif dept == "field services department - warrants":
-            
+                   
 
             # --- Name ---
             if "tenant defendant or respondent name" in subdf.columns:
@@ -302,30 +305,41 @@ def enforce_department_columns(df):
             # --- Court doc type ---
             subdf["court document type"] = subdf.get("court document type", "")
 
-            # --- Dates ---
-            if "court issued date" in subdf.columns:
-                subdf["hearing date"] = subdf["court issued date"].astype(str)
-            elif "trial date" in subdf.columns:
-                subdf["hearing date"] = subdf["trial date"].astype(str)
-            else:
-                subdf["hearing date"] = ""
+           
 
-            # --- Disposition ---
-            disp_cols = [
-                c for c in subdf.columns
-                if "administrative status" in c or "adminstrative status" in c or "service disposition" in c
-            ]
-            if disp_cols:
-                subdf["current disposition"] = subdf[disp_cols[0]].astype(str)
+             # --- Disposition (misspelled + correct spellings) ---
+            disp_col = None
+            for c in subdf.columns:
+                c_clean = c.lower().replace(" ", "").replace("_", "")
+                if "adminstrative" in c_clean or "administrative" in c_clean:
+                    disp_col = c
+                    break
+            if disp_col:
+                subdf["current disposition"] = subdf[disp_col].astype(str)
             else:
                 subdf["current disposition"] = ""
+
+            # Merge misspelled + correct versions if both exist
+            if "adminstrative status" in subdf.columns and "administrative status" in subdf.columns:
+                subdf["current disposition"] = (
+                    subdf["adminstrative status"]
+                    .fillna(subdf["administrative status"])
+                    .astype(str)
+                )
+
+            # Final clean-up: replace NaN strings + fill
+            subdf["current disposition"] = (
+                subdf["current disposition"]
+                .replace("nan", "")
+                .fillna("")
+            )
 
             PRETTY_NAMES = {
                 "name": "Name",
                 "case number": "Case Number",
                 "address": "Address",
                 "court document type": "Court Document Type",
-                "hearing date": "Hearing Date",
+                "intake date": "Intake Date",
                 "current disposition": "Current Disposition",
             }
             DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
@@ -377,8 +391,7 @@ def search_all():
     grouped_data = enforce_department_columns(df)
 
     for dept, records in grouped_data.items():
-        # 🚫 Skip Warrants Department if user searched by Intake Date
-        intake_date = request.args.get("intake_date", "").strip()
+        
         
 
         dept_df = pd.DataFrame(records)
@@ -412,84 +425,74 @@ def search_all():
                 .str.replace(r"\s+", "", regex=True)
                 .str.contains(value_clean, na=False)
             ]
-        
-        # ✅ Handle intake_date search across departments (DV + Civil)
-        intake_date = request.args.get("intake_date", "").strip()
-        if intake_date:
-            try:
-                # Parse and normalize the user's input date
-                input_date = pd.to_datetime(intake_date, errors="coerce").normalize()
-                print(f"\nSearching for date: {input_date}")
+        # --- DATE RANGE FILTER using intake_date (Flatpickr "start to end") ---
+        raw = request.args.get("intake_date", "").strip()
+        print("BACKEND RECEIVED DATE:", repr(raw))   # ← ADD THIS
 
+        if raw:
+            raw = raw.replace("  ", " ").strip()
 
-                # Reset date detection for this department
-                found_col = None
+            # Detect ranges safely
+            if "to" in raw:
+                parts = [p.strip() for p in raw.split("to")]
 
-                # Dynamically find which column has a date for this department
-                for col in search_df.columns:
-                    if any(key in col.lower() for key in [
-                        "hearing date",
-                        "intake date",
-                        "court issued date",
-                        "date order was issued",
-                        "date and time of reissue"
-                    ]):
-                        found_col = col
-                        break
+                # CASE 1: full valid range
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    start_str = parts[0]
+                    end_str   = parts[1]
 
-                # 🩵 Fallback: extra safety for Civil Intake where the column name might differ slightly
-                if not found_col:
-                    for col in search_df.columns:
-                        if "intake" in col.lower() and "date" in col.lower():
-                            found_col = col
-                            print(f"🩵 Fallback matched '{col}' as intake date for {dept}")
-                            break
-
-
-                if found_col and search_df[found_col].notna().any():
-                    print(f"Department: {dept}")
-                    print("Found column:", found_col)
-                    print("Sample values:", search_df[found_col].dropna().head(5).tolist())
-
-
-                    cleaned = (
-                    search_df[found_col]
-                    .astype(str)
-                    .str.replace(",", "", regex=False)
-                    .str.strip()
-                    )
-                    print("🧩 Cleaned sample values:", cleaned.head(10).tolist())
-
-
-                    parsed = pd.to_datetime(cleaned, format="%m/%d/%Y %I:%M %p", errors="coerce")
-                    if parsed.isna().mean() > 0.9:
-                        parsed = pd.to_datetime(cleaned, format="%m/%d/%Y %H:%M", errors="coerce")
-
-
-                    parsed_day = parsed.dt.normalize()
-                    input_day = input_date.normalize()
-
-
-                    print("DEBUG Parsed Day unique:", parsed_day.unique())
-                    print("DEBUG Input Day:", input_day)
-
-
-                    search_df = search_df[parsed_day == input_day]
-                    print("DEBUG Matching rows count:", len(search_df))
-
+                # CASE 2: "2025-10-20 to " (single date)
+                elif len(parts) >= 1 and parts[0]:
+                    start_str = end_str = parts[0]
 
                 else:
-                    print(f"⚠️ No valid date column found for {dept}")
+                    start_str = end_str = None
+            else:
+                # CASE 3: "2025-10-20" (single click)
+                start_str = end_str = raw
 
+            if start_str and end_str:
+                start = pd.to_datetime(start_str, errors="coerce").normalize()
+                end   = pd.to_datetime(end_str, errors="coerce").normalize()
 
-            except Exception as e:
-                print(f"❌ Error during date filtering for {dept}: {e}")
+                if pd.notna(start) and pd.notna(end):
+
+                    dept_lower = dept.lower()
+
+                    if dept_lower == "domestic violence department":
+                        date_col = "hearing date"
+                    elif dept_lower == "field services department - civil intake":
+                        date_col = "intake date"
+                    elif dept_lower == "field services department - warrants":
+                        date_col = "intake date"
+                    else:
+                        date_col = None
+
+                    if date_col and date_col in search_df.columns:
+                        cleaned = (
+                            search_df[date_col]
+                            .astype(str)
+                            .str.replace(",", "", regex=False)
+                            .str.strip()
+                        )
+
+                        parsed = pd.to_datetime(cleaned, errors="coerce").dt.normalize()
+
+                        mask = (parsed >= start) & (parsed <= end)
+                        search_df = search_df[mask.fillna(False)]
+        
+
+        
+
+        
 
                     
 
         # ✅ Map filtered lowercase results back to the original, pretty-cased data
         if not search_df.empty:
-            filtered_rows = dept_df.loc[search_df.index]
+            # sync dept_df with search_df's index AFTER filtering
+            dept_filtered = dept_df.loc[search_df.index].copy()
+            filtered_rows = dept_filtered
             limited = filtered_rows.head(200)
             all_filtered[dept] = {
                 "count": len(limited),

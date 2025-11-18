@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Department Search Portal</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <!-- Flatpickr CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  
 </head>
 <body>
   <h1>Department Search Portal</h1>
@@ -12,9 +15,7 @@
   <form id="searchForm" onsubmit="search(event)">
     <input type="text" id="name" name="name" placeholder="Name">
     <input type="text" id="case_number" name="case_number" placeholder="Case Number">
-    <input type="text" id="intake_date" name="intake_date" placeholder="Intake Date"
-           onfocus="this.type='date'; this.showPicker?.()" 
-           onblur="if(!this.value)this.type='text'">
+    <input type="text" id="intake_date" name="intake_date" placeholder="Select Date Range">
     <button type="submit">Search</button>
   </form>
 
@@ -22,6 +23,19 @@
   <p id="statusMessage"></p>
 
   <div id="results"></div>
+
+  <!-- Flatpickr JS -->
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
+  <script id="fp-script-v2">
+    flatpickr("#intake_date", {
+        mode: "range",
+        dateFormat: "Y-m-d",
+        allowInput: false,
+         
+      
+    });
+  </script>
 
   <script>
     async function search(event) {
@@ -35,12 +49,21 @@
       status.textContent = "Searching...";
       status.classList.add("loading");
 
+      // Read date directly from flatpickr
+      const fp = document.querySelector("#intake_date")._flatpickr;
+      let d = "";
+
+      if (fp && fp.selectedDates.length) {
+        const f = d => d.toISOString().slice(0,10);
+        const s = fp.selectedDates;
+        d = s.length === 1 ? f(s[0]) : `${f(s[0])} to ${f(s[1])}`;
+      }
+
       const params = new URLSearchParams({
         name: document.getElementById("name").value,
         case_number: document.getElementById("case_number").value,
-        intake_date: document.getElementById("intake_date").value
+        intake_date: d
       });
-
       try {
         const response = await fetch(`${window.location.origin}/search_all?${params}`);
         const data = await response.json();
