@@ -16,6 +16,7 @@
     <input type="text" id="name" name="name" placeholder="Name">
     <input type="text" id="case_number" name="case_number" placeholder="Case Number">
     <input type="text" id="intake_date" name="intake_date" placeholder="Select Date Range">
+    <input type="hidden" id="intake_date_hidden" name="intake_date">
     <button type="submit">Search</button>
   </form>
 
@@ -28,14 +29,46 @@
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 
   <script id="fp-script-v2">
+    // Helper function to update both visible + hidden fields
+    function updateDateFields(selectedDates) {
+      const f = d => d.toISOString().slice(0, 10);
+      let val = "";
+
+      if (selectedDates.length === 1) {
+        const one = f(selectedDates[0]);
+        val = `${one} to ${one}`;
+      }
+      else if (selectedDates.length === 2) {
+          val = `${f(selectedDates[0])} to ${f(selectedDates[1])}`;
+      }
+      else {
+          // No dates selected
+          val = "";
+      }
+
+      // Hidden field -> backend uses this
+      document.getElementById("intake_date_hidden").value = val;
+
+      // Visible field -> user sees this
+      document.getElementById("intake_date").value = val;
+    }
+   
+   
+   
     flatpickr("#intake_date", {
         mode: "range",
         dateFormat: "Y-m-d",
         allowInput: false,
-         
-      
+        onChange: function(selectedDates) {
+          updateDateFields(selectedDates);
+      },
+
+        onClose: function(selectedDates) {
+          updateDateFields(selectedDates);
+      }
     });
   </script>
+     
 
   <script>
     async function search(event) {
@@ -49,15 +82,8 @@
       status.textContent = "Searching...";
       status.classList.add("loading");
 
-      // Read date directly from flatpickr
-      const fp = document.querySelector("#intake_date")._flatpickr;
-      let d = "";
-
-      if (fp && fp.selectedDates.length) {
-        const f = d => d.toISOString().slice(0,10);
-        const s = fp.selectedDates;
-        d = s.length === 1 ? f(s[0]) : `${f(s[0])} to ${f(s[1])}`;
-      }
+      // Read date from hidden field (always set by flatpickr)
+      let d = document.getElementById("intake_date_hidden").value;
 
       const params = new URLSearchParams({
         name: document.getElementById("name").value,
