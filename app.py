@@ -5,6 +5,26 @@ from azure.storage.blob import ContainerClient
 import chardet
 import re
 import os
+from difflib import SequenceMatcher
+import string
+
+def clean_str(s):
+    if s is None:
+        return ""
+    s = str(s).lower().strip()
+
+    # remove punctuation
+    for p in string.punctuation:
+        s = s.replace(p, "")
+
+    # remove whitespace
+    s = re.sub(r"\s+", "", s)
+    return s
+
+def fuzzy_match(a, b, threshold=0.75):
+    if not a or not b:
+        return False
+    return SequenceMatcher(None, a, b).ratio() >= threshold
 
 app = Flask(__name__)
 CORS(app)
@@ -412,19 +432,47 @@ def search_all():
                 continue
 
 
-            value_clean = re.sub(r"\s+", "", value)
+            # Clean the value typed by user
+            user_clean = clean_str(value)
+
             possible_cols = [c for c in search_df.columns if field.replace("_", " ") in c.lower()]
             if not possible_cols:
                 continue
 
             col = possible_cols[0]
-            search_df = search_df[
-                search_df[col]
-                .astype(str)
-                .str.lower()
-                .str.replace(r"\s+", "", regex=True)
-                .str.contains(value_clean, na=False)
-            ]
+
+            def row_matches(cell):
+                # Lowercase and remove punctuation BUT preserve spaces for tokenizing
+                if cell is None:
+                    return False
+                raw = str(cell).lower()
+
+                # Remove punctuation
+                for p in string.punctuation:
+                    raw = raw.replace(p, " ")
+
+                # Tokenize (split words)
+                cell_tokens = [t.strip() for t in raw.split() if t.strip()]
+
+                # Clean user tokens
+                user_tokens = [clean_str(t) for t in value.split() if t.strip()]
+
+                # Convert cell tokens into clean forms too (no punctuation/spaces)
+                clean_cell_tokens = [clean_str(t) for t in cell_tokens]
+
+                # For each token user typed (e.g., "anthony", "jons")
+                for token in user_tokens:
+                    # It must match at least ONE clean token in the record
+                    if not any(
+                        token in ct or fuzzy_match(ct, token)
+                        for ct in clean_cell_tokens
+                    ):
+                        return False  # This token did not match any part → reject
+
+                return True
+
+            # Apply combined matching
+            search_df = search_df[search_df[col].apply(row_matches)]
         # --- DATE RANGE FILTER using intake_date (Flatpickr "start to end") ---
         raw = request.args.get("intake_date", "").strip()
         print("BACKEND RECEIVED DATE:", repr(raw))   # ← ADD THIS
