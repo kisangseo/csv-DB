@@ -201,6 +201,8 @@ tr:hover {
 }
 @media (max-width: 768px) {
   table {
-    width: 700px; /* minimum width for proper column spacing */
+    table-layout: auto !important;   /* override the fixed layout */
+    width: 900px;                    /* force horizontal scroll */
+    white-space: nowrap;             /* prevent text collapsing */
   }
 }
