@@ -173,7 +173,11 @@
 
             table.appendChild(tbody);
 
-            div.appendChild(table);
+            const wrapper = document.createElement("div");
+            wrapper.className = "results-table-wrapper";
+            wrapper.appendChild(table);
+
+            div.appendChild(wrapper);
             resultsDiv.appendChild(div);
           }
         } catch (err) {

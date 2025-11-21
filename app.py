@@ -102,6 +102,7 @@ def load_all_data():
 df = load_all_data()
 df.columns = df.columns.str.strip().str.lower()
 
+
 def enforce_department_columns(df):
     import re
 
@@ -391,6 +392,8 @@ def enforce_department_columns(df):
 
     return filtered
 
+PROCESSED = enforce_department_columns(df)
+
 
 
 @app.route("/")
@@ -408,7 +411,7 @@ def search_all():
           ["name", "dob", "race", "sex", "address", "case_number", "parcel_id", "intake_date"]}
 
     all_filtered = {}
-    grouped_data = enforce_department_columns(df)
+    grouped_data = PROCESSED
 
     for dept, records in grouped_data.items():
         

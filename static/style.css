@@ -195,4 +195,12 @@ tr:hover {
   100% { transform: rotate(360deg); }
 }
 
-
+.results-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 768px) {
+  table {
+    width: 700px; /* minimum width for proper column spacing */
+  }
+}
