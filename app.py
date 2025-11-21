@@ -440,6 +440,13 @@ def search_all():
                 continue
 
             col = possible_cols[0]
+            # ✅ EXACT match for case number
+            if field == "case_number":
+                search_df = search_df[
+                    search_df[col].astype(str).str.lower().str.strip()
+                    == value.lower().strip()
+                ]
+                continue
 
             def row_matches(cell):
                 # Lowercase and remove punctuation BUT preserve spaces for tokenizing
