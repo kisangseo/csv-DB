@@ -1,564 +1,526 @@
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
-import pandas as pd
-from azure.storage.blob import ContainerClient
-import chardet
-import re
 import os
-from difflib import SequenceMatcher
+import re
 import string
+from difflib import SequenceMatcher
+import pandas as pd
+import chardet
+from azure.storage.blob import ContainerClient
+
+# ============================================================
+# NORMALIZATION HELPERS
+# ============================================================
+
+def normalize_col(col: str) -> str:
+    col = col.lower().strip()
+    return re.sub(r"[^a-z0-9 ]", "", col)
+
+
+def detect_encoding(blob_bytes: bytes) -> str:
+    result = chardet.detect(blob_bytes)
+    return result.get("encoding") or "utf-8"
+
 
 def clean_str(s):
     if s is None:
         return ""
     s = str(s).lower().strip()
-
-    # remove punctuation
     for p in string.punctuation:
         s = s.replace(p, "")
-
-    # remove whitespace
     s = re.sub(r"\s+", "", s)
     return s
+
 
 def fuzzy_match(a, b, threshold=0.75):
     if not a or not b:
         return False
     return SequenceMatcher(None, a, b).ratio() >= threshold
 
+
+# ============================================================
+# COLUMN MAP
+# ============================================================
+
+COLUMN_MAP = {
+    "name": [
+        "civil respondent",
+        "tenant defendant or respondent name",
+        "respondent name",
+        "defendant name",
+        "tenant name",
+        "name",
+    ],
+    "address": [
+        "tenant defendant or respondent address",
+        "address addressaddress",
+        "respondent address",
+        "address",
+        "street address",
+    ],
+    "case number": [
+        "case number",
+        "casenumber",
+        "case_number",
+    ],
+    "court document type": [
+        "court document type",
+        "document type",
+        "doctype",
+        "doc type",
+    ],
+    "hearing date": [
+        "hearing date",
+        "hearingdate",
+        "court issued date",
+        "trial date",
+        "court date",
+        "arrival"
+    ],
+    "intake date": [
+        "intake date",
+        "intakedate",
+        "intake_date",
+        "entry date",
+        "filed date",
+        "date",
+    ],
+    "current disposition": [
+        "current disposition",
+        "adminstrative status",
+        "administrative status",
+        
+        
+        "civil process service disposition",
+        "eviction disposition",
+    ],
+    "order type": [
+        "order type",
+        "ordertype",
+        "court document type",
+    ],
+    "order status": [
+        "order status",
+        "orderstatus",
+        "civil process service disposition",
+    ],
+}
+
+# Flexible column resolver
+def get_col(subdf: pd.DataFrame, logical_key: str):
+    candidates = COLUMN_MAP.get(logical_key, [])
+    cols = list(subdf.columns)
+
+    # exact match
+    for cand in candidates:
+        if cand in cols:
+            return cand
+
+    # relaxed match
+    for cand in candidates:
+        for col in cols:
+            if cand in col or col in cand:
+                return col
+
+    return None
+
+
+# ============================================================
+# FLASK + AZURE SETUP
+# ============================================================
+
 app = Flask(__name__)
 CORS(app)
 
-# --- Load once at startup (from Azure Blob Storage) ---
-from io import StringIO
-from azure.storage.blob import BlobServiceClient
-
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-blob_service_client = BlobServiceClient.from_connection_string(CONNECTION_STRING)
 
+# Your actual containers:
+CONTAINERS = {
+    "dvcsv": "domestic violence department",
+    "fscsv": "mixed",  # civil + warrants
+}
 
+# ============================================================
+# LOAD ALL DATA FROM AZURE
+# ============================================================
 
-def read_blob(container_name, blob_name):
-    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-    data = blob_client.download_blob().readall().decode('utf-8')
-    return pd.read_csv(StringIO(data))
-
-# ✅ Load CSVs once from your Azure containers
-dv_df = read_blob("dvcsv", "DV Sample.csv")
-civil_df = read_blob("fscsv", "Civil_Intake_Data(survey).csv")
-warrants_df = read_blob("csv", "sample_warrants.csv")
-
-# Optional: Label for clarity
-dv_df["department"] = "domestic violence department"
-civil_df["department"] = "field services department - civil intake"
-warrants_df["department"] = "field services department - warrants"
-
-
-# --- Azure Storage ---
-CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-CONTAINERS = ["csv", "dvcsv", "fscsv"]
-
-# --- Detect encoding of blobs ---
-def detect_encoding(blob_bytes):
-    result = chardet.detect(blob_bytes)
-    return result["encoding"] or "utf-8"
-#load csv from blob
 def load_all_data():
     all_dfs = []
-    for container_name in CONTAINERS:
-        container_client = ContainerClient.from_connection_string(CONNECTION_STRING, container_name)
-        
-        for blob in container_client.list_blobs():
-            if blob.name.lower().endswith(".csv"):
-                blob_data = container_client.download_blob(blob.name).readall()
-                encoding = detect_encoding(blob_data)
-                df = pd.read_csv(pd.io.common.BytesIO(blob_data), encoding=encoding, low_memory=False)
-                df.columns = [c.strip().lower() for c in df.columns]
 
-                # ✅ Determine department by file name (smarter than container-only)
-                blob_name_lower = blob.name.lower()
-                if "dv" in blob_name_lower:
-                    df["department"] = "domestic violence department"
-                elif "civil" in blob_name_lower:
-                    df["department"] = "field services department - civil intake"
-                elif "warrant" in blob_name_lower:
-                    df["department"] = "field services department - warrants"
-                else:
-                    # fallback by container if unknown
-                    if "dv" in container_name.lower():
-                        df["department"] = "domestic violence department"
-                    elif "fs" in container_name.lower():
-                        df["department"] = "field services department"
-                    else:
-                        df["department"] = "warrants department"
+    for container_name, dept_type in CONTAINERS.items():
+        container = ContainerClient.from_connection_string(
+            CONNECTION_STRING, container_name
+        )
 
-                all_dfs.append(df)
-                
-
-    return pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
-
-
-# Load all data at startup
-df = load_all_data()
-df.columns = df.columns.str.strip().str.lower()
-
-
-def enforce_department_columns(df):
-    import re
-
-    filtered = {}
-
-    for dept, subdf in df.groupby("department", dropna=False):
-        # normalize department name
-        dept = str(dept).lower().strip()
-
-        # 🔧 Ensure all subdf columns are normalized and copied from df
-        original_cols = df.columns
-        subdf.columns = [re.sub(r"[^a-z0-9 ]", "", c.lower().strip()) for c in subdf.columns]
-
-        # 🩵 Restore Intake Date early (before trimming or display filtering)
-        if "intake date" not in subdf.columns or subdf["intake date"].isna().all():
-            # Prefer columns already present in this department slice
-            for col in subdf.columns:
-                if "intake" in col.lower() and "date" in col.lower():
-                    subdf["intake date"] = subdf[col]
-                    print(f"🩵 Restored '{col}' -> 'intake date' for {dept} (from subdf)")
-                    break
-            else:
-                # Fallback: pull from the original df, but align rows to this subdf
-                for col in df.columns:
-                    if "intake" in col.lower() and "date" in col.lower():
-                        subdf["intake date"] = df.loc[subdf.index, col]
-                        print(f"🩵 Restored '{col}' -> 'intake date' for {dept} (from df, aligned)")
-                        break
-
-        
-
-        # --- COMMON NAME + ADDRESS HANDLING ---
-        if "respondent name" in subdf.columns:
-            subdf["name"] = subdf["respondent name"]
-        elif "tenant defendant or respondent name" in subdf.columns:
-            subdf["name"] = subdf["tenant defendant or respondent name"]
-        elif {"first name", "last name"}.issubset(subdf.columns):
-            subdf["name"] = subdf["first name"].fillna("") + " " + subdf["last name"].fillna("")
-        else:
-            subdf["name"] = ""
-
-        if "tenant defendant or respondent address" in subdf.columns:
-            subdf["address"] = subdf["tenant defendant or respondent address"]
-        elif {"address", "city", "subregion"}.issubset(subdf.columns):
-            subdf["address"] = (
-                subdf["address"].fillna("") + ", " +
-                subdf["city"].fillna("") + ", " +
-                subdf["subregion"].fillna("")
-            ).str.replace(r"\s+", " ", regex=True).str.strip()
-        else:
-            subdf["address"] = ""
-
-        # --- DEPARTMENT SPECIFIC HANDLING ---
-        # -------------------------------------------------------------
-        # 1️⃣ Domestic Violence Department
-        # -------------------------------------------------------------
-        if dept == "domestic violence department":
-           
-
-            # Fuzzy match for Order Type / Status
-            order_type_col = next((c for c in subdf.columns if "ordertype" in c.replace(" ", "")), None)
-            order_status_col = next((c for c in subdf.columns if "orderstatus" in c.replace(" ", "")), None)
-
-            subdf["order type"] = subdf[order_type_col].astype(str) if order_type_col else ""
-            subdf["order status"] = subdf[order_status_col].astype(str) if order_status_col else ""
-
-            if "hearing date" not in subdf.columns and "hearingdate" in subdf.columns:
-                subdf["hearing date"] = subdf["hearingdate"]
-            if "case number" not in subdf.columns and "casenumber" in subdf.columns:
-                subdf["case number"] = subdf["casenumber"]
-
-            PRETTY_NAMES = {
-                "name": "Name",
-                "case number": "Case Number",
-                "address": "Address",
-                "order type": "Order Type",
-                "hearing date": "Hearing Date",
-                "order status": "Order Status",
-            }
-            DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
-
-        # -------------------------------------------------------------
-        # 2️⃣ Field Services Department
-        # -------------------------------------------------------------
-        elif dept == "field services department":
-           
-            # --- Name handling ---
-            if "tenant defendant or respondent name" in subdf.columns:
-                subdf["name"] = subdf["tenant defendant or respondent name"]
-            elif "tenant defendant or respondent" in subdf.columns:
-                subdf["name"] = subdf["tenant defendant or respondent"]
-            elif "respondent name" in subdf.columns:
-                subdf["name"] = subdf["respondent name"]
-            elif {"first name", "last name"}.issubset(subdf.columns):
-                subdf["name"] = subdf["first name"].fillna("") + " " + subdf["last name"].fillna("")
-            else:
-                subdf["name"] = ""
-
-            # Normalize key fields
-            if "court document type" in subdf.columns:
-                subdf["court document type"] = subdf["court document type"].astype(str)
-            else:
-                subdf["court document type"] = ""
-
-            if "court issued date" in subdf.columns:
-                subdf["hearing date"] = subdf["court issued date"].astype(str)
-            elif "trial date" in subdf.columns:
-                subdf["hearing date"] = subdf["trial date"].astype(str)
-            else:
-                subdf["hearing date"] = ""
-
-            # --- Current Disposition (handle all FS variants safely) ---
-            # Normalize possible disposition columns
-            disp_col = None
-                
-            for c in subdf.columns:
-                c_clean = c.lower().replace(" ", "")
-                if "adminstrative" in c_clean or "administrative" in c_clean:
-                    disp_col = c
-                    break
-
-            # Use the first found column
-            if disp_col:
-                subdf["current disposition"] = subdf[disp_col].astype(str)
-            else:
-                subdf["current disposition"] = ""
-
-            # ✅ Fix NaN merging issue and prefer non-empty value if duplicates exist
-            if "adminstrative status" in subdf.columns and "administrative status" in subdf.columns:
-                subdf["current disposition"] = (
-                    subdf["adminstrative status"].fillna(subdf["administrative status"])
-                )
-
-            # ✅ Final fill and clean-up
-            subdf["current disposition"] = subdf["current disposition"].fillna("").astype(str)
+        for blob in container.list_blobs():
+            print("BLOB RAW NAME:", repr(blob.name))
+            
+            name = blob.name.lower()
             
 
-            PRETTY_NAMES = {
-                "name": "Name",
-                "case number": "Case Number",
-                "address": "Address",
-                "court document type": "Court Document Type",
-                "intake date": "Intake Date",
-                "current disposition": "Current Disposition",
-            }
-            DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
-        # -------------------------------------------------------------
-        # 2️⃣a Field Services Department - Civil Intake
-        # -------------------------------------------------------------
-        elif dept.lower() == "field services department - civil intake":
-            
+            if not name.endswith(".csv"):
+                continue
 
-            # --- Name ---
-            if "tenant, defendant, or respondent name" in subdf.columns:
-                subdf["name"] = subdf["tenant, defendant, or respondent name"]
-            elif "tenant defendant or respondent name" in subdf.columns:
-                subdf["name"] = subdf["tenant defendant or respondent name"]
-            else:
-                subdf["name"] = ""
+            blob_bytes = container.download_blob(blob.name).readall()
+            enc = detect_encoding(blob_bytes)
 
-            # --- Address ---
-            if "tenant, defendant or respondent address" in subdf.columns:
-                subdf["address"] = subdf["tenant, defendant or respondent address"]
-            elif "tenant defendant or respondent address" in subdf.columns:
-                subdf["address"] = subdf["tenant defendant or respondent address"]
-            else:
-                subdf["address"] = ""
-
-            # --- Normalize key fields ---
-            subdf["court document type"] = subdf.get("court document type", "")
-
-            print("\n🧩 DEBUG: ORIGINAL DF COLUMNS for", dept)
-            for col in df.columns:
-                print("   →", repr(col))
-            
-        
-
-
-            # 🪪 Debug check
-            print("✅ Intake Date final sample for", dept, ":", subdf["intake date"].dropna().head(5).tolist())
-
-
-
-            subdf = subdf.copy()
-
-            if "administrative status" in subdf.columns and subdf["administrative status"].notna().any():
-                subdf["current disposition"] = subdf["administrative status"]
-
-            PRETTY_NAMES = {
-                "name": "Name",
-                "case number": "Case Number",
-                "address": "Address",
-                "court document type": "Court Document Type",
-                "intake date": "Intake Date",
-                "current disposition": "Current Disposition",
-            }
-            print("✅ Intake Date sample (pre-clean):", subdf.get("intake date", pd.Series(dtype=object)).dropna().head(5).tolist())
-
-            DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
-
-        # -------------------------------------------------------------
-        # 2️⃣b Field Services Department - Warrants
-        # -------------------------------------------------------------
-        elif dept == "field services department - warrants":
-                   
-
-            # --- Name ---
-            if "tenant defendant or respondent name" in subdf.columns:
-                subdf["name"] = subdf["tenant defendant or respondent name"]
-            elif {"first name", "last name"}.issubset(subdf.columns):
-                subdf["name"] = subdf["first name"].fillna("") + " " + subdf["last name"].fillna("")
-            else:
-                subdf["name"] = ""
-
-            # --- Address ---
-            if "tenant defendant or respondent address" in subdf.columns:
-                subdf["address"] = subdf["tenant defendant or respondent address"]
-            else:
-                subdf["address"] = ""
-
-            # --- Court doc type ---
-            subdf["court document type"] = subdf.get("court document type", "")
-
-           
-
-             # --- Disposition (misspelled + correct spellings) ---
-            disp_col = None
-            for c in subdf.columns:
-                c_clean = c.lower().replace(" ", "").replace("_", "")
-                if "adminstrative" in c_clean or "administrative" in c_clean:
-                    disp_col = c
-                    break
-            if disp_col:
-                subdf["current disposition"] = subdf[disp_col].astype(str)
-            else:
-                subdf["current disposition"] = ""
-
-            # Merge misspelled + correct versions if both exist
-            if "adminstrative status" in subdf.columns and "administrative status" in subdf.columns:
-                subdf["current disposition"] = (
-                    subdf["adminstrative status"]
-                    .fillna(subdf["administrative status"])
-                    .astype(str)
-                )
-
-            # Final clean-up: replace NaN strings + fill
-            subdf["current disposition"] = (
-                subdf["current disposition"]
-                .replace("nan", "")
-                .fillna("")
+            df = pd.read_csv(
+                pd.io.common.BytesIO(blob_bytes),
+                encoding=enc,
+                low_memory=False
             )
 
-            PRETTY_NAMES = {
-                "name": "Name",
-                "case number": "Case Number",
-                "address": "Address",
-                "court document type": "Court Document Type",
-                "intake date": "Intake Date",
-                "current disposition": "Current Disposition",
-            }
-            DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
+            df.columns = [normalize_col(c) for c in df.columns]
+             
+            
+           
+            
+            # Department detection
+            blob_name_lower = blob.name.lower()
 
-        # -------------------------------------------------------------
-        # 3️⃣ Default (Warrants / others)
-        # -------------------------------------------------------------
+            if "dv" in blob_name_lower:
+                dept = "domestic violence department"
+            elif "civil" in blob_name_lower and "intake" in blob_name_lower:
+                dept = "field services department - civil intake"
+            elif "civil" in blob_name_lower and "intake" not in blob_name_lower:
+                dept = "field services department - civil survey"
+            elif "warrant" in blob_name_lower and "intake" not in blob_name_lower:
+                dept = "field services department - warrants"
+
+            elif "warrant" in blob_name_lower or "rest" in blob_name_lower:
+                dept = "field services department - warrants"
+
+            
+            #debug to see which dept the csvs are attached to
+            print("ASSIGNED DEPT:", dept)   
+
+            df["department"] = dept
+            all_dfs.append(df)
+            print("ASSIGNED DEPT:", dept)
+
+    if not all_dfs:
+        return pd.DataFrame()
+
+    out = pd.concat(all_dfs, ignore_index=True)
+    out["department"] = out["department"].astype(str).str.lower().str.strip()
+    
+
+    return out
+
+
+df = load_all_data()
+
+
+# ============================================================
+# DEPARTMENT FIELD BUILDERS
+# ============================================================
+
+def build_name(subdf, dept_norm):
+    cols = list(subdf.columns)
+    
+
+    if dept_norm == "field services department - civil intake":
+        priority = [
+            "tenant defendant or respondent name",
+            "civil respondent",
+            
+            "respondent name",
+            
+        ]
+
+    elif dept_norm == "field services department - civil survey":
+        priority = [
+            "civil respondent",
+            "respondent name",
+            "tenant defendant or respondent name"
+        ]
+        
+        
+
+    elif dept_norm == "domestic violence department":
+        priority = ["respondent name", "name"]
+
+    elif dept_norm == "field services department - warrants":
+        priority = [
+            "tenant defendant or respondent name",
+            "respondent name",
+            "name",
+        ]
+
+    else:
+        priority = ["name"]
+
+    for p in priority:
+        if p in cols:
+            return subdf[p].astype(str)
+
+    col = get_col(subdf, "name")
+    return subdf[col].astype(str) if col else pd.Series([""] * len(subdf))
+
+
+def build_address(subdf, dept_norm):
+    cols = list(subdf.columns)
+
+    if dept_norm == "field services department - civil intake":
+        if "tenant defendant or respondent address" in cols:
+            return subdf["tenant defendant or respondent address"].astype(str)
+        if "address" in cols:
+            return subdf["address"].astype(str)
+    elif dept_norm == "field services department - civil survey":
+        priority = [
+            "address",]
+        for cand in priority:
+            if cand in cols:
+                return subdf[cand].astype(str)
+        return ""
+
+    elif dept_norm == "domestic violence department":
+        if "address addressaddress" in cols:
+            return subdf["address addressaddress"].astype(str)
+        if "respondent address" in cols:
+            return subdf["respondent address"].astype(str)
+        if "address" in cols:
+            return subdf["address"].astype(str)
+
+    col = get_col(subdf, "address")
+    if col:
+        return subdf[col].astype(str)
+
+    if {"address", "city", "subregion"}.issubset(cols):
+        return (
+            subdf["address"].fillna("") + ", " +
+            subdf["city"].fillna("") + ", " +
+            subdf["subregion"].fillna("")
+        ).astype(str)
+
+    return pd.Series([""] * len(subdf))
+
+
+
+def build_disposition(subdf, dept_norm):
+    cols = list(subdf.columns)
+
+    # --- CIVIL INTAKE ---
+    if dept_norm == "field services department - civil intake":
+        priority = [
+            "administrative status",
+            "current disposition",
+        ]
+
+    # --- CIVIL SURVEY ---
+    elif dept_norm == "field services department - civil survey":
+        priority = [
+            "civil process service disposition",
+        ]
+
+    # --- WARRANTS ---
+    elif dept_norm == "field services department - warrants":
+        priority = [
+            "adminstrative status",   # misspelled column in actual warrants CSV
+        ]
+
+    # --- DV (Domestic Violence) ---
+    elif dept_norm == "domestic violence department":
+        priority = [
+            "order status",
+        ]
+
+    # --- DEFAULT (fallback) ---
+    else:
+        priority = [
+            "current disposition",
+        ]
+
+    # Select the first matching column
+    for cand in priority:
+        if cand in cols:
+            return subdf[cand]
+
+    return ""
+
+# ============================================================
+# TRANSFORM RAW DF → FRONTEND STRUCTURE
+# ============================================================
+
+def enforce_department_columns(df):
+    out = {}
+
+    for dept, subdf in df.groupby("department", dropna=False):
+        dept_norm = dept.lower().strip()
+        sub = subdf.copy()
+
+        name_series = build_name(sub, dept_norm)
+        addr_series = build_address(sub, dept_norm)
+
+        case_col = get_col(sub, "case number")
+        case_series = sub[case_col].astype(str) if case_col else ""
+        
+
+        intake_col = get_col(sub, "intake date")
+        intake_series = sub[intake_col].astype(str) if intake_col else ""
+
+        court_col = get_col(sub, "court document type")
+        court_series = sub[court_col].astype(str) if court_col else ""
+        #trying out new thing
+        #disp_col = get_col(sub, "current disposition")
+        #disp_series = sub[disp_col].astype(str) if disp_col else ""
+        disp_series = build_disposition(sub, dept_norm).astype(str)
+
+        if dept_norm == "domestic violence department":
+            order_type_col = get_col(sub, "order type")
+            order_type_series = sub[order_type_col].astype(str) if order_type_col else ""
+
+            hearing_col = get_col(sub, "hearing date")
+            hearing_series = sub[hearing_col].astype(str) if hearing_col else ""
+
+            order_status_col = get_col(sub, "order status")
+            order_status_series = (
+                sub[order_status_col].astype(str) if order_status_col else ""
+            )
+
+            clean = pd.DataFrame({
+                "Name": name_series,
+                "Case Number": case_series,
+                "Address": addr_series,
+                "Order Type": order_type_series,
+                "Hearing Date": hearing_series,
+                "Order Status": order_status_series,
+            })
+
         else:
-            PRETTY_NAMES = {
-                "name": "Name",
-                "case number": "Case Number",
-                "address": "Address",
-                "court document type": "Court Document Type",
-                "hearing date": "Hearing Date",
-                "current disposition": "Current Disposition",
-            }
-            DISPLAY_COLUMNS = list(PRETTY_NAMES.keys())
-            for col in DISPLAY_COLUMNS:
-                if col not in subdf.columns:
-                    subdf[col] = ""
+            clean = pd.DataFrame({
+                "Name": name_series,
+                "Case Number": case_series,
+                "Address": addr_series,
+                "Court Document Type": court_series,
+                "Intake Date": intake_series,
+                "Current Disposition": disp_series,
+            })
 
-        # --- FINALIZE CLEAN OUTPUT ---
-        for col in DISPLAY_COLUMNS:
-            if col not in subdf.columns:
-                subdf[col] = ""
-        clean = subdf[DISPLAY_COLUMNS].fillna("")
-        clean.rename(columns=PRETTY_NAMES, inplace=True)
-        filtered[dept.title()] = clean.to_dict(orient="records")
+        clean = clean.fillna("")
 
-    return filtered
+        out[dept.title()] = clean.to_dict(orient="records")
+
+    return out
+
 
 PROCESSED = enforce_department_columns(df)
+print("\nCIVIL RECORDS:")
+for rec in PROCESSED.get("Field Services Department - Civil Intake", []):
+    print(rec)
+    break  # print just first row
 
 
+
+# ============================================================
+# SEARCH ENDPOINT
+# ============================================================
 
 @app.route("/")
 def home():
     return render_template("index.html")
 
 
-# --- Main Search Route ---
 @app.route("/search_all")
 def search_all():
     if df.empty:
         return jsonify({"error": "No data loaded"}), 500
 
-    params = {k: request.args.get(k, "").strip().lower() for k in
-          ["name", "dob", "race", "sex", "address", "case_number", "parcel_id", "intake_date"]}
+    params = {
+        k: request.args.get(k, "").strip().lower()
+        for k in ["name", "address", "case_number", "intake_date"]
+    }
 
     all_filtered = {}
-    grouped_data = PROCESSED
 
-    for dept, records in grouped_data.items():
-        
-        
-
+    for dept, records in PROCESSED.items():
         dept_df = pd.DataFrame(records)
-        if dept_df.empty:
-            continue
-
-        # ✅ Make a lowercase copy ONLY for filtering
         search_df = dept_df.copy()
-        search_df.columns = [re.sub(r"[^a-z0-9 ]", "", c.lower().strip()) for c in search_df.columns]
 
-        # --- Apply AND filtering logic on search_df ---
-        for field, value in params.items():
-            # ❗ Skip text filtering for intake_date — let the datetime logic handle it
-            if field == "intake_date":
+        search_df.columns = [normalize_col(c) for c in search_df.columns]
+
+       
+
+        # TEXT FILTERS
+        for key, val in params.items():
+            if key == "intake_date":
                 continue
-            value = (value or "").strip()  # ensure no spaces or None
-            if not value:
+            if not val:
                 continue
 
+            user_tokens = [clean_str(t) for t in val.split() if t.strip()]
 
-            # Clean the value typed by user
-            user_clean = clean_str(value)
+            possible_cols = [
+                c for c in search_df.columns if key.replace("_", " ") in c
+            ]
 
-            possible_cols = [c for c in search_df.columns if field.replace("_", " ") in c.lower()]
             if not possible_cols:
                 continue
 
             col = possible_cols[0]
-            # ✅ EXACT match for case number
-            if field == "case_number":
-                search_df = search_df[
-                    search_df[col].astype(str).str.lower().str.strip()
-                    == value.lower().strip()
-                ]
-                continue
 
-            def row_matches(cell):
-                # Lowercase and remove punctuation BUT preserve spaces for tokenizing
+            def matches(cell):
                 if cell is None:
                     return False
-                raw = str(cell).lower()
 
-                # Remove punctuation
+                raw = str(cell).lower()
                 for p in string.punctuation:
                     raw = raw.replace(p, " ")
 
-                # Tokenize (split words)
-                cell_tokens = [t.strip() for t in raw.split() if t.strip()]
+                cell_tokens = [clean_str(t) for t in raw.split() if t.strip()]
 
-                # Clean user tokens
-                user_tokens = [clean_str(t) for t in value.split() if t.strip()]
-
-                # Convert cell tokens into clean forms too (no punctuation/spaces)
-                clean_cell_tokens = [clean_str(t) for t in cell_tokens]
-
-                # For each token user typed (e.g., "anthony", "jons")
-                for token in user_tokens:
-                    # It must match at least ONE clean token in the record
-                    if not any(
-                        token in ct or fuzzy_match(ct, token)
-                        for ct in clean_cell_tokens
-                    ):
-                        return False  # This token did not match any part → reject
-
+                for ut in user_tokens:
+                    if not any(ut in ct or fuzzy_match(ct, ut) for ct in cell_tokens):
+                        return False
                 return True
 
-            # Apply combined matching
-            search_df = search_df[search_df[col].apply(row_matches)]
-        # --- DATE RANGE FILTER using intake_date (Flatpickr "start to end") ---
-        raw = request.args.get("intake_date", "").strip()
-        print("BACKEND RECEIVED DATE:", repr(raw))   # ← ADD THIS
+            search_df = search_df[search_df[col].apply(matches)]
 
-        if raw:
-            raw = raw.replace("  ", " ").strip()
+        # DATE FILTERING
+        dr = params["intake_date"]
+        if dr:
+            raw = dr.replace("  ", " ").strip()
 
-            # Detect ranges safely
             if "to" in raw:
                 parts = [p.strip() for p in raw.split("to")]
-
-                # CASE 1: full valid range
                 if len(parts) == 2 and parts[0] and parts[1]:
-                    start_str = parts[0]
-                    end_str   = parts[1]
-
-                # CASE 2: "2025-10-20 to " (single date)
-                elif len(parts) >= 1 and parts[0]:
-                    start_str = end_str = parts[0]
-
+                    start_str, end_str = parts
                 else:
-                    start_str = end_str = None
+                    start_str = end_str = parts[0]
             else:
-                # CASE 3: "2025-10-20" (single click)
                 start_str = end_str = raw
 
-            if start_str and end_str:
-                start = pd.to_datetime(start_str, errors="coerce").normalize()
-                end   = pd.to_datetime(end_str, errors="coerce").normalize()
+            start = pd.to_datetime(start_str, errors="coerce")
+            end = pd.to_datetime(end_str, errors="coerce")
 
-                if pd.notna(start) and pd.notna(end):
+            dept_lower = dept.lower()
 
-                    dept_lower = dept.lower()
+            if dept_lower == "domestic violence department":
+                date_col = "hearing date"
+            else:
+                date_col = "intake date"
 
-                    if dept_lower == "domestic violence department":
-                        date_col = "hearing date"
-                    elif dept_lower == "field services department - civil intake":
-                        date_col = "intake date"
-                    elif dept_lower == "field services department - warrants":
-                        date_col = "intake date"
-                    else:
-                        date_col = None
+            if normalize_col(date_col) in search_df.columns:
+                clean = (
+                    search_df[normalize_col(date_col)]
+                    .astype(str)
+                    .str.replace(",", "")
+                    .str.strip()
+                )
+                parsed = pd.to_datetime(clean, errors="coerce")
+                mask = (parsed >= start) & (parsed <= end)
+                search_df = search_df[mask.fillna(False)]
 
-                    if date_col and date_col in search_df.columns:
-                        cleaned = (
-                            search_df[date_col]
-                            .astype(str)
-                            .str.replace(",", "", regex=False)
-                            .str.strip()
-                        )
-
-                        parsed = pd.to_datetime(cleaned, errors="coerce").dt.normalize()
-
-                        mask = (parsed >= start) & (parsed <= end)
-                        search_df = search_df[mask.fillna(False)]
-        
-
-        
-
-        
-
-                    
-
-        # ✅ Map filtered lowercase results back to the original, pretty-cased data
         if not search_df.empty:
-            # sync dept_df with search_df's index AFTER filtering
-            dept_filtered = dept_df.loc[search_df.index].copy()
-            filtered_rows = dept_filtered
-            limited = filtered_rows.head(200)
+            filtered = dept_df.loc[search_df.index]
+            limited = filtered.head(200)
+
             all_filtered[dept] = {
                 "count": len(limited),
-                "records": limited.to_dict(orient="records")
+                "records": limited.to_dict(orient="records"),
             }
 
     return jsonify(all_filtered)
-
 
 
 if __name__ == "__main__":
