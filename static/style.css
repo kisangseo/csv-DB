@@ -140,8 +140,7 @@ th, td {
   padding: 12px 14px;
   border-bottom: 1px solid #ddd;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+ 
   
 }
 /* Case Number column */
