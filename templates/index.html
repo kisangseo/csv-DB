@@ -148,9 +148,15 @@
             const thead = document.createElement("thead");
             const headerRow = document.createElement("tr");
             headers.forEach(h => {
-              const th = document.createElement("th");
-              th.textContent = h;
-              headerRow.appendChild(th);
+              const td = document.createElement("td");
+
+              // 👇 tag the Name column
+              if (h === "Name") {
+                td.classList.add("name-col");
+              }
+
+              td.textContent = row[h] || "";
+              tr.appendChild(td);
             });
             thead.appendChild(headerRow);
             table.appendChild(thead);
