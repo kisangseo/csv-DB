@@ -148,15 +148,9 @@
             const thead = document.createElement("thead");
             const headerRow = document.createElement("tr");
             headers.forEach(h => {
-              const td = document.createElement("td");
-
-              // 👇 tag the Name column
-              if (h === "Name") {
-                td.classList.add("name-col");
-              }
-
-              td.textContent = row[h] || "";
-              tr.appendChild(td);
+              const th = document.createElement("th");
+              th.textContent = h;
+              headerRow.appendChild(th);
             });
             thead.appendChild(headerRow);
             table.appendChild(thead);
@@ -169,9 +163,14 @@
               const tr = document.createElement("tr");
 
               headers.forEach(h => {
-                  const td = document.createElement("td");
-                  td.textContent = row[h] || "";
-                  tr.appendChild(td);
+                const td = document.createElement("td");
+
+                if (h === "Name") {
+                  td.classList.add("name-col");
+                }
+
+                td.textContent = row[h] || "";
+                tr.appendChild(td);
               });
 
               tbody.appendChild(tr);
