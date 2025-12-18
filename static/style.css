@@ -19,15 +19,6 @@ body {
   box-shadow: 0 4px 20px rgba(0,0,0,0.08);
 }
 
-.results-table td.name-col,
-.results-table th.name-col {
-    white-space: nowrap;
-    overflow: visible;
-    text-overflow: unset;
-}
-.name-col {
-  white-space: nowrap;
-}
 
 h1 {
   text-align: center;
@@ -139,7 +130,7 @@ table {
 th, td {
   padding: 12px 14px;
   border-bottom: 1px solid #ddd;
-  white-space: nowrap;
+
  
   
 }
@@ -216,4 +207,19 @@ tr:hover {
     width: 900px;                    /* force horizontal scroll */
     white-space: nowrap;             /* prevent text collapsing */
   }
+}
+
+.results-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.results-table td.name-col,
+.results-table th.name-col {
+  white-space: normal;      /* allow wrapping */
+  overflow: visible;        /* no clipping */
+  text-overflow: unset;     /* no ... */
+  word-break: break-word;   /* break long names safely */
+  max-width: 240px;         /* controls column width */
+  line-height: 1.3;
 }

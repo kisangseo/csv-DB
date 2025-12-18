@@ -12,6 +12,9 @@ from azure.storage.blob import ContainerClient
 # NORMALIZATION HELPERS
 # ============================================================
 
+def date_only(series):
+    return pd.to_datetime(series, errors="coerce").dt.date.astype(str).replace("NaT", "")
+
 def normalize_col(col: str) -> str:
     col = col.lower().strip()
     return re.sub(r"[^a-z0-9 ]", "", col)
@@ -138,6 +141,7 @@ CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 CONTAINERS = {
     "dvcsv": "domestic violence department",
     "fscsv": "mixed",  # civil + warrants
+    "warrantscsv": "warrants",
 }
 
 # ============================================================
@@ -146,6 +150,7 @@ CONTAINERS = {
 
 def load_all_data():
     all_dfs = []
+   
 
     for container_name, dept_type in CONTAINERS.items():
         container = ContainerClient.from_connection_string(
@@ -153,7 +158,7 @@ def load_all_data():
         )
 
         for blob in container.list_blobs():
-            print("BLOB RAW NAME:", repr(blob.name))
+            
             
             name = blob.name.lower()
             
@@ -177,6 +182,7 @@ def load_all_data():
             
             # Department detection
             blob_name_lower = blob.name.lower()
+            
 
             if "dv" in blob_name_lower:
                 dept = "domestic violence department"
@@ -184,6 +190,9 @@ def load_all_data():
                 dept = "field services department - civil intake"
             elif "civil" in blob_name_lower and "intake" not in blob_name_lower:
                 dept = "field services department - civil survey"
+            # SPECIAL WARRANTS (new section)
+            elif "warrants_1.csv" in blob_name_lower:
+                dept = "warrants"
             elif "warrant" in blob_name_lower and "intake" not in blob_name_lower:
                 dept = "field services department - warrants"
 
@@ -196,7 +205,7 @@ def load_all_data():
 
             df["department"] = dept
             all_dfs.append(df)
-            print("ASSIGNED DEPT:", dept)
+            print("ASSIGNING:", blob.name, "FROM CONTAINER:", container_name, "→", dept)
 
     if not all_dfs:
         return pd.DataFrame()
@@ -274,6 +283,7 @@ def build_address(subdf, dept_norm):
                 return subdf[cand].astype(str)
         return ""
 
+
     elif dept_norm == "domestic violence department":
         if "address addressaddress" in cols:
             return subdf["address addressaddress"].astype(str)
@@ -281,6 +291,12 @@ def build_address(subdf, dept_norm):
             return subdf["respondent address"].astype(str)
         if "address" in cols:
             return subdf["address"].astype(str)
+        
+    elif dept_norm == "warrants":
+        if "address" in cols:
+            return subdf["address"].astype(str)
+        return pd.Series([""] * len(subdf))
+
 
     col = get_col(subdf, "address")
     if col:
@@ -336,7 +352,7 @@ def build_disposition(subdf, dept_norm):
         if cand in cols:
             return subdf[cand]
 
-    return ""
+    return pd.Series([""] * len(subdf), index=subdf.index)
 
 # ============================================================
 # TRANSFORM RAW DF → FRONTEND STRUCTURE
@@ -357,7 +373,7 @@ def enforce_department_columns(df):
         
 
         intake_col = get_col(sub, "intake date")
-        intake_series = sub[intake_col].astype(str) if intake_col else ""
+        intake_series = date_only(sub[intake_col]) if intake_col else ""
 
         court_col = get_col(sub, "court document type")
         court_series = sub[court_col].astype(str) if court_col else ""
@@ -371,7 +387,7 @@ def enforce_department_columns(df):
             order_type_series = sub[order_type_col].astype(str) if order_type_col else ""
 
             hearing_col = get_col(sub, "hearing date")
-            hearing_series = sub[hearing_col].astype(str) if hearing_col else ""
+            hearing_series = date_only(sub[hearing_col]) if hearing_col else ""
 
             order_status_col = get_col(sub, "order status")
             order_status_series = (
@@ -386,6 +402,36 @@ def enforce_department_columns(df):
                 "Hearing Date": hearing_series,
                 "Order Status": order_status_series,
             })
+        elif dept_norm == "warrants":
+            
+            first_col = get_col(sub, "first name")
+            last_col = get_col(sub, "last name")
+
+            if first_col and last_col:
+                name_series = (
+                    sub[first_col].fillna("").astype(str) + " " +
+                    sub[last_col].fillna("").astype(str)
+                ).str.strip()
+            else:
+                name_series = build_name(sub, dept_norm)
+
+            sid_series = sub["sid"].astype(str) if "sid" in sub.columns else ""
+
+            warrant_type_series = sub["warrant type"].astype(str) if "warrant type" in sub.columns else ""
+            issue_date_series = date_only(sub["issue date"]) if "issue date" in sub.columns else ""
+            warrant_status_series = sub["warrant status"].astype(str) if "warrant status" in sub.columns else ""
+
+            
+
+            clean = pd.DataFrame({
+                "Name": name_series,
+                "SID": sid_series,
+                "Case Number": case_series,
+                "Address": addr_series,
+                "Warrant Type": warrant_type_series,
+                "Issue Date": issue_date_series,
+                "Warrant Status": warrant_status_series,
+            })
 
         else:
             clean = pd.DataFrame({
@@ -396,6 +442,7 @@ def enforce_department_columns(df):
                 "Intake Date": intake_series,
                 "Current Disposition": disp_series,
             })
+        
 
         clean = clean.fillna("")
 

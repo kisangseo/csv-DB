@@ -131,18 +131,35 @@
                 "Case Number",
                 "Address",
                 "Order Type",
-                "Hearing Date",   // ✅ use Hearing Date for DV
+                "Hearing Date",
                 "Order Status"
               ];
-            } else {
+
+            } else if (dept === "Field Services Department - Civil Intake"
+                    || dept === "Field Services Department - Civil Survey"
+                    || dept === "Field Services Department - Warrants") {
+
               headers = [
                 "Name",
                 "Case Number",
                 "Address",
                 "Court Document Type",
-                "Intake Date",    // ✅ keep Intake Date for Civil/FS
+                "Intake Date",
                 "Current Disposition"
               ];
+
+            } else if (dept === "Warrants") {
+
+              headers = [
+                "Name",
+                "SID",
+                "Case Number",
+                "Address",
+                "Warrant Type",
+                "Issue Date",
+                "Warrant Status"
+              ];
+
             }
 
             const thead = document.createElement("thead");
