@@ -4,10 +4,12 @@ import pandas as pd
 from azure.storage.blob import BlobServiceClient
 import io
 import os
+import pyodbc
 
 
 
 def insert_search_record(cursor, record):
+    
     sql = """
         INSERT INTO search.records (
             department,
@@ -36,7 +38,7 @@ def insert_search_record(cursor, record):
         OUTPUT INSERTED.record_id
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
-
+    
     values = (
         record.get("department"),
         record.get("source_file"),
@@ -62,7 +64,14 @@ def insert_search_record(cursor, record):
         record.get("notes"),
     )
     
+    
+    
+
     cursor.execute(sql, *values)
+    
+
+    
+    
     return cursor.fetchone()[0]
 
 def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
@@ -81,6 +90,7 @@ def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
         json.dumps(raw_row_dict, default=str)
     )
 
+    
     cursor.execute(sql, values)
 
 def read_csv_from_blob(container_name, blob_name):
@@ -101,6 +111,14 @@ def ingest_warrants_csv():
     import io
     import os
     import pandas as pd
+    def safe_sql_date(v):
+        ts = pd.to_datetime(v, errors="coerce")
+        return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
+
+    print("AZURE_STORAGE_CONNECTION_STRING set:", bool(os.getenv("AZURE_STORAGE_CONNECTION_STRING")))
+
+
+    
 
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -116,13 +134,19 @@ def ingest_warrants_csv():
 
     data = blob_client.download_blob().readall()
     df = pd.read_csv(io.BytesIO(data))
+    print("DF SHAPE:", df.shape)
    
     
 
     cursor = conn.cursor()
+    cursor.execute("SELECT 1")
+    print("SQL CONNECTED:", cursor.fetchone())
+    print("ODBC DRIVER:", conn.getinfo(pyodbc.SQL_DRIVER_NAME))
     
 
     for _, row in df.iterrows():
+       
+        
         
         record = {
             "department": "WARRANTS",
@@ -149,7 +173,7 @@ def ingest_warrants_csv():
             "date_of_birth": (
                 None
                 if pd.isna(row.get("Date of Birth"))
-                else pd.to_datetime(row.get("Date of Birth"), errors="coerce").date()
+                else safe_sql_date(row.get("Date of Birth"))
             ),
 
             "sid": (
@@ -179,7 +203,7 @@ def ingest_warrants_csv():
             "issue_date": (
                 None
                 if pd.isna(row.get("Issue Date"))
-                else pd.to_datetime(row.get("Issue Date"), errors="coerce")
+                else safe_sql_date(row.get("Issue Date"))
             ),
 
             "intake_date": None,
@@ -208,11 +232,12 @@ def ingest_warrants_csv():
             "issuing_county": (
                 None if pd.isna(row.get("Issuing County")) else str(row.get("Issuing County")).strip()
             ),
-                    }
-
+        }
+        
 
         record_id = insert_search_record(cursor, record)
         insert_raw_record(cursor, record_id, blob_name, row.to_dict())
         
-
+    
     conn.commit()
+

@@ -7,7 +7,7 @@ username = "bscoit"
 password = os.getenv("AZURE_SQL_PASSWORD")
 
 conn = pyodbc.connect(
-    f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+    f"DRIVER={{SQL Server}};"
     f"SERVER={server};"
     f"DATABASE={database};"
     f"UID={username};"
