@@ -20,6 +20,59 @@
       <input type="text" id="intake_date" name="intake_date" placeholder="Select Date Range">
       <input type="hidden" id="intake_date_hidden" name="intake_date">
       <button type="submit">Search</button>
+      <!-- Advanced Search -->
+      <details class="advanced-search" closed>
+        <summary>Advanced Search</summary>
+      
+        
+
+        <div class="advanced-fields">
+
+          <input
+            type="text"
+            id="sid"
+            placeholder="SID"
+          />
+          <input
+            type="text"
+            id="dob"
+            name="dob"
+            placeholder="Date of Birth"
+          />
+
+          
+          <select id="sex">
+            <option value="">Sex (Any)</option>
+            <option value="M">Male</option>
+            <option value="F">Female</option>
+          </select>
+
+          <select id="race">
+            <option value="">Race (Any)</option>
+            <option value="black">Black</option>
+            <option value="white">White</option>
+            <option value="hispanic">Hispanic</option>
+            <option value="asian">Asian</option>
+            <option value="other">Other</option>
+          </select>
+
+          <input
+            type="text"
+            id="issuing_county"
+            placeholder="Issuing County"
+          >
+
+          <input
+            type="number"
+            id="last_x_days"
+            name="last_x_days"
+            min="1"
+            placeholder="In the last X days"
+          >
+          
+        </div>
+      </details>
+      
     </form>
 
     <!-- 👇 Added status message placeholder -->
@@ -69,10 +122,29 @@
             updateDateFields(selectedDates);
         }
       });
+      flatpickr("#dob", {
+        dateFormat: "Y-m-d",
+        allowInput: true
+      });
+      
     </script>
       
 
     <script>
+       const FIELD_MAP = {
+        "Name": "name",
+        "SID": "sid",
+        "Case Number": "case_number",
+        "Address": "address",
+        "Warrant Type": "warrant_type",
+        "Issue Date": "issue_date",
+        "Warrant Status": "warrant_status",
+
+        // future-proofing (won’t be used yet, but safe)
+        "Intake Date": "intake_date",
+        "Court Document Type": "court_document_type",
+        "Current Disposition": "disposition"
+      };
       async function search(event) {
         event.preventDefault();
 
@@ -90,7 +162,13 @@
         const params = new URLSearchParams({
           name: document.getElementById("name").value,
           case_number: document.getElementById("case_number").value,
-          intake_date: d
+          intake_date: d,
+          last_x_days: document.getElementById("last_x_days").value,
+          sex: document.getElementById("sex").value,
+          race: document.getElementById("race").value,
+          issuing_county: document.getElementById("issuing_county").value,
+          sid: document.getElementById("sid").value,
+          dob: document.getElementById("dob").value
         });
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
@@ -186,7 +264,8 @@
                   td.classList.add("name-col");
                 }
 
-                td.textContent = row[h] || "";
+                const key = FIELD_MAP[h] || h;
+                td.textContent = row[key] ?? "";
                 tr.appendChild(td);
               });
 

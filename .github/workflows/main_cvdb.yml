@@ -74,6 +74,8 @@ jobs:
         with:
           app-name: 'CVDB'
           slot-name: 'Production'
+          package: .
+
 
           
 

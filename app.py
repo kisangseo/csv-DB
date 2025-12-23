@@ -7,6 +7,8 @@ from difflib import SequenceMatcher
 import pandas as pd
 import chardet
 from azure.storage.blob import ContainerClient
+from db_connect import conn
+from search_sql import search_by_name
 
 # ============================================================
 # NORMALIZATION HELPERS
@@ -143,7 +145,7 @@ CONTAINERS = {
     "fscsv": "mixed",  # civil + warrants
     "warrantscsv": "warrants",
 }
-
+"""
 # ============================================================
 # LOAD ALL DATA FROM AZURE
 # ============================================================
@@ -218,7 +220,7 @@ def load_all_data():
 
 
 df = load_all_data()
-
+"""
 
 # ============================================================
 # DEPARTMENT FIELD BUILDERS
@@ -451,12 +453,13 @@ def enforce_department_columns(df):
     return out
 
 
+"""
 PROCESSED = enforce_department_columns(df)
 print("\nCIVIL RECORDS:")
 for rec in PROCESSED.get("Field Services Department - Civil Intake", []):
     print(rec)
     break  # print just first row
-
+"""
 
 
 # ============================================================
@@ -468,8 +471,8 @@ def home():
     return render_template("index.html")
 
 
-@app.route("/search_all")
-def search_all():
+# LEGACY CSV SEARCH (parked, not deleted)
+def legacy_search_all():
     if df.empty:
         return jsonify({"error": "No data loaded"}), 500
 
@@ -569,6 +572,45 @@ def search_all():
 
     return jsonify(all_filtered)
 
+
+
+
+@app.route("/search_all")
+def search_all():
+    query = request.args.get("name", "").strip()
+
+    last_x_days = request.args.get("last_x_days", "").strip()
+    sex = request.args.get("sex", "").strip()
+    race = request.args.get("race", "").strip()
+    race = race if race else None
+    issuing_county = request.args.get("issuing_county", "").strip()
+    sid = request.args.get("sid", "").strip()
+    dob = request.args.get("dob", "").strip()
+    print("DEBUG dob:", dob)
+
+    
+    records = search_by_name(conn, query,  sid=sid or None, dob=dob or None, sex=sex or None, race=race, issuing_county=issuing_county or None, last_x_days=last_x_days or None, limit=200)
+
+    
+    sex = sex if sex in ("M", "F") else None
+
+    
+    
+
+    grouped = {}
+    for r in records:
+        dept = r["department"].title()
+        grouped.setdefault(dept, []).append(r)
+
+    response = {}
+    for dept, rows in grouped.items():
+        response[dept] = {
+            "count": len(rows),
+            "records": rows,
+        }
+    
+   
+    return jsonify(response)
 
 if __name__ == "__main__":
     app.run(debug=True)

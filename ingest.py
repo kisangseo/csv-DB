@@ -16,6 +16,9 @@ def insert_search_record(cursor, record):
             last_name,
             full_name,
             date_of_birth,
+            sex,
+            race,
+            issuing_county,
             sid,
             case_number,
             warrant_type,
@@ -26,10 +29,12 @@ def insert_search_record(cursor, record):
             city,
             state,
             postal_code,
+            court_document_type,
+            disposition,
             notes
         )
         OUTPUT INSERTED.record_id
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     values = (
@@ -39,6 +44,9 @@ def insert_search_record(cursor, record):
         record.get("last_name"),
         record.get("full_name"),
         record.get("date_of_birth"),
+        record.get("sex"),
+        record.get("race"),
+        record.get("issuing_county"),
         record.get("sid"),
         record.get("case_number"),
         record.get("warrant_type"),
@@ -49,10 +57,12 @@ def insert_search_record(cursor, record):
         record.get("city"),
         record.get("state"),
         record.get("postal_code"),
+        None,  # court_document_type
+        None,  # disposition
         record.get("notes"),
     )
-
-    cursor.execute(sql, values)
+    
+    cursor.execute(sql, *values)
     return cursor.fetchone()[0]
 
 def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
@@ -110,55 +120,99 @@ def ingest_warrants_csv():
     
 
     cursor = conn.cursor()
-    for i, (_, row) in enumerate(df.iterrows()):
-        if i == 0:
-            print("DEBUG ROW KEYS:")
-            print(list(row.index))
-            print("DEBUG SAMPLE VALUES:")
-            print({
-                "First Name": row.get("First Name"),
-                "Last Name": row.get("Last Name"),
-                "SID": row.get("SID"),
-                "Case Number": row.get("Case Number"),
-                "Warrant Type": row.get("Warrant Type"),
-                "Warrant Status": row.get("Warrant Status"),
-                "Issue Date": row.get("Issue Date"),
-            })
+    
 
     for _, row in df.iterrows():
+        
         record = {
             "department": "WARRANTS",
             "source_file": blob_name,
 
-            "first_name": row.get("First Name"),
-            "last_name": row.get("Last Name"),
-            "full_name": (
-                f"{row.get('First Name', '')} {row.get('Last Name', '')}".strip()
+            "first_name": (
+                None
+                if pd.isna(row.get("First Name"))
+                else str(row.get("First Name"))
             ),
 
-            "date_of_birth": row.get("Date of Birth"),
+            "last_name": (
+                None
+                if pd.isna(row.get("Last Name"))
+                else str(row.get("Last Name"))
+            ),
+
+            "full_name": (
+                None
+                if pd.isna(row.get("First Name")) and pd.isna(row.get("Last Name"))
+                else f"{row.get('First Name', '')} {row.get('Last Name', '')}".strip()
+            ),
+
+            "date_of_birth": (
+                None
+                if pd.isna(row.get("Date of Birth"))
+                else pd.to_datetime(row.get("Date of Birth"), errors="coerce").date()
+            ),
+
             "sid": (
                 None
                 if pd.isna(row.get("SID"))
                 else str(int(row.get("SID")))
             ),
 
-            "case_number": row.get("Case Number"),
-            "warrant_type": row.get("Warrant Type"),
-            "warrant_status": row.get("Warrant Status"),
+            "case_number": (
+                None
+                if pd.isna(row.get("Case Number"))
+                else str(row.get("Case Number"))
+            ),
 
-            "issue_date": row.get("Issue Date"),
+            "warrant_type": (
+                None
+                if pd.isna(row.get("Warrant Type"))
+                else str(row.get("Warrant Type"))
+            ),
+
+            "warrant_status": (
+                None
+                if pd.isna(row.get("Warrant Status"))
+                else str(row.get("Warrant Status"))
+            ),
+
+            "issue_date": (
+                None
+                if pd.isna(row.get("Issue Date"))
+                else pd.to_datetime(row.get("Issue Date"), errors="coerce")
+            ),
+
             "intake_date": None,
 
-            "address": row.get("Address"),
+            "address": (
+                None
+                if pd.isna(row.get("Address"))
+                else str(row.get("Address"))
+            ),
+
             "city": None,
             "state": None,
             "postal_code": None,
 
-            "notes": row.get("Notes or Alias"),
-        }
+            "notes": (
+                None
+                if pd.isna(row.get("Notes or Alias"))
+                else str(row.get("Notes or Alias"))
+            ),
+            "sex": (
+                None if pd.isna(row.get("Sex")) else str(row.get("Sex")).strip()
+            ),
+            "race": (
+                None if pd.isna(row.get("Race")) else str(row.get("Race")).strip()
+            ),
+            "issuing_county": (
+                None if pd.isna(row.get("Issuing County")) else str(row.get("Issuing County")).strip()
+            ),
+                    }
+
 
         record_id = insert_search_record(cursor, record)
         insert_raw_record(cursor, record_id, blob_name, row.to_dict())
+        
 
     conn.commit()

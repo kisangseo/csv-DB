@@ -223,3 +223,94 @@ tr:hover {
   max-width: 240px;         /* controls column width */
   line-height: 1.3;
 }
+
+/* ---------- Advanced Search ---------- */
+
+.advanced-search {
+  margin-top: 20px;
+  background: #f9fafc;
+  padding: 14px 16px;
+  border-radius: 8px;
+  
+}
+
+.advanced-search h3 {
+  margin-bottom: 10px;
+  font-size: 16px;
+  color: #333;
+  
+  
+}
+
+.advanced-fields {
+  display: grid;
+  grid-template-columns:
+  0.8fr   /* SID */
+  1fr     /* DOB */
+  0.9fr   /* Sex */
+  0.9fr   /* Race */
+  1.3fr   /* Issuing County */
+  1.2fr;  /* Last X days */
+  gap: 12px;
+  
+  
+  
+}
+
+.advanced-fields input,
+.advanced-fields select {
+  height: 38px;
+  box-sizing: border-box;
+  font-size: 14px;
+  
+}
+
+@media (max-width: 900px) {
+  .advanced-fields {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.advanced-fields > div {
+  display: flex;
+  gap: 12px;
+}
+
+.advanced-fields > div input {
+  margin-right: 12px;
+}
+
+.advanced-fields > div input:last-child {
+  margin-right: 0;
+}
+.advanced-fields {
+  column-gap: 16px;
+}
+.advanced-fields input,
+.advanced-fields select {
+  border: 1px solid #d6deee;
+  border-radius: 6px;
+  width: 100%;
+}
+
+.advanced-fields > :nth-child(3),
+.advanced-fields > :nth-child(5) {
+  padding-left: 24px;
+}
+
+.advanced-fields select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 20px;
+  text-align: center;
+  text-align-last: center;
+}
+.advanced-fields input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
