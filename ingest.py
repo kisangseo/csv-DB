@@ -5,10 +5,10 @@ from azure.storage.blob import BlobServiceClient
 import io
 import os
 import pyodbc
+print("USING INGEST.PY FROM:", __file__)
 
 
-
-def insert_search_record(cursor, record):
+def insert_search_record_warrants(cursor, record):
     
     sql = """
         INSERT INTO search.records (
@@ -18,9 +18,6 @@ def insert_search_record(cursor, record):
             last_name,
             full_name,
             date_of_birth,
-            sex,
-            race,
-            issuing_county,
             sid,
             case_number,
             warrant_type,
@@ -33,12 +30,14 @@ def insert_search_record(cursor, record):
             postal_code,
             court_document_type,
             disposition,
-            notes
+            notes,
+            sex,
+            race
         )
         OUTPUT INSERTED.record_id
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
     values = (
         record.get("department"),
         record.get("source_file"),
@@ -46,9 +45,6 @@ def insert_search_record(cursor, record):
         record.get("last_name"),
         record.get("full_name"),
         record.get("date_of_birth"),
-        record.get("sex"),
-        record.get("race"),
-        record.get("issuing_county"),
         record.get("sid"),
         record.get("case_number"),
         record.get("warrant_type"),
@@ -59,13 +55,12 @@ def insert_search_record(cursor, record):
         record.get("city"),
         record.get("state"),
         record.get("postal_code"),
-        None,  # court_document_type
-        None,  # disposition
+        record.get("court_document_type"),
+        record.get("disposition"),
         record.get("notes"),
+        record.get("sex"),
+        record.get("race"),
     )
-    
-    
-    
 
     cursor.execute(sql, *values)
     
@@ -73,6 +68,43 @@ def insert_search_record(cursor, record):
     
     
     return cursor.fetchone()[0]
+
+def insert_search_record_odyssey(cursor, record):
+    sql = """
+    INSERT INTO search.records (
+        department,
+        source_file,
+        full_name,
+        case_number,
+        intake_date,
+        address,
+        city,
+        state,
+        disposition,
+        notes
+    )
+    OUTPUT INSERTED.record_id
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    def clean(v):
+        return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
+
+    values = tuple(clean(v) for v in (
+        record.get("department"),
+        record.get("source_file"),
+        record.get("full_name"),
+        record.get("case_number"),
+        record.get("intake_date"),
+        record.get("address"),
+        record.get("city"),
+        record.get("state"),
+        record.get("disposition"),
+        record.get("notes"),
+    ))
+    cursor.execute(sql, *values)
+    return cursor.fetchone()[0]
+    
 
 def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
     sql = """
@@ -91,7 +123,10 @@ def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
     )
 
     
-    cursor.execute(sql, values)
+    cursor.execute(sql, *values)
+def safe_sql_date(v):
+    ts = pd.to_datetime(v, errors="coerce")
+    return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
 
 def read_csv_from_blob(container_name, blob_name):
     blob_service_client = BlobServiceClient.from_connection_string(
@@ -106,16 +141,60 @@ def read_csv_from_blob(container_name, blob_name):
     data = blob_client.download_blob().readall()
     return pd.read_csv(io.BytesIO(data))
 
+def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
+    df = read_csv_from_blob(container_name, blob_name)
+    
+
+    cursor = conn.cursor()
+
+    for _, row in df.iterrows():
+        
+        record = {
+            "department": "FIELD SERVICES DEPARTMENT - CIVIL",
+            "source_file": blob_name,
+
+            "full_name": row.get("DefendantName"),
+            "case_number": row.get("CaseNumber"),
+
+            "intake_date": safe_sql_date(row.get("EventDate")),
+
+            "address": row.get("TenantAddress"),
+            "city": row.get("TenantCity"),
+            "state": row.get("TenantState"),
+            "postal_code": None,
+            "disposition": row.get("EventType"),
+            "notes": row.get("EventComment"),
+
+            
+        }
+
+        record_id = insert_search_record_odyssey(cursor, record)
+        insert_raw_record(cursor, record_id, blob_name, row.to_dict())
+
+    conn.commit()
+
+def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
+    blob_service_client = BlobServiceClient.from_connection_string(
+        os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    )
+
+    container_client = blob_service_client.get_container_client(container_name)
+
+    for blob in container_client.list_blobs():
+        name = blob.name
+
+        if name.startswith("Odyssey-JobOutput-") and name.endswith(".csv"):
+            print("Ingesting:", name)
+            ingest_odyssey_civil_from_blob(name, container_name)
+
 def ingest_warrants_csv():
     from azure.storage.blob import BlobServiceClient
     import io
     import os
     import pandas as pd
-    def safe_sql_date(v):
-        ts = pd.to_datetime(v, errors="coerce")
-        return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
+    
 
-    print("AZURE_STORAGE_CONNECTION_STRING set:", bool(os.getenv("AZURE_STORAGE_CONNECTION_STRING")))
+    
 
 
     
@@ -123,6 +202,7 @@ def ingest_warrants_csv():
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     )
+
 
     container_name = "warrantscsv"
     blob_name = "warrants_1.csv"
@@ -136,12 +216,11 @@ def ingest_warrants_csv():
     df = pd.read_csv(io.BytesIO(data))
     print("DF SHAPE:", df.shape)
    
-    
+    print("WARRANTS DF ROWS:", len(df))
 
     cursor = conn.cursor()
     cursor.execute("SELECT 1")
-    print("SQL CONNECTED:", cursor.fetchone())
-    print("ODBC DRIVER:", conn.getinfo(pyodbc.SQL_DRIVER_NAME))
+    
     
 
     for _, row in df.iterrows():
@@ -235,7 +314,7 @@ def ingest_warrants_csv():
         }
         
 
-        record_id = insert_search_record(cursor, record)
+        record_id = insert_search_record_warrants(cursor, record)
         insert_raw_record(cursor, record_id, blob_name, row.to_dict())
         
     

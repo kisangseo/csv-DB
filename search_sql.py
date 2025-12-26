@@ -9,8 +9,9 @@ def search_by_name(conn, name_query, dob=None, sex=None, race=None, issuing_coun
         case_number    AS case_number,
         address        AS address,
         warrant_type   AS warrant_type,
-        issue_date     AS issue_date,
+        COALESCE(issue_date, intake_date) AS record_date,
         warrant_status AS warrant_status,
+        disposition    AS disposition,
         department
     FROM search.records
     WHERE full_name LIKE ?
@@ -23,7 +24,10 @@ def search_by_name(conn, name_query, dob=None, sex=None, race=None, issuing_coun
         params.append(sex)
 
     if last_x_days:
-        sql += " AND issue_date >= DATEADD(day, -?, CAST(GETDATE() AS date))"
+        sql += """
+        AND COALESCE(issue_date, intake_date) >=
+            DATEADD(day, -?, CAST(GETDATE() AS date))
+        """
         params.append(int(last_x_days))
     if race:
         sql += " AND LOWER(race) = ?"

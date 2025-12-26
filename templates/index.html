@@ -143,7 +143,10 @@
         // future-proofing (won’t be used yet, but safe)
         "Intake Date": "intake_date",
         "Court Document Type": "court_document_type",
-        "Current Disposition": "disposition"
+        "Current Disposition": "disposition",
+        "Defendant Name": "name",
+        "Event Date": "record_date",
+        "Event Type": "disposition"
       };
       async function search(event) {
         event.preventDefault();
@@ -215,6 +218,7 @@
 
             } else if (dept === "Field Services Department - Civil Intake"
                     || dept === "Field Services Department - Civil Survey"
+                    
                     || dept === "Field Services Department - Warrants") {
 
               headers = [
@@ -225,7 +229,17 @@
                 "Intake Date",
                 "Current Disposition"
               ];
+            } else if (dept === "Field Services Department - Civil") {
 
+              headers = [
+                
+                "Defendant Name",
+                "Case Number",
+                "Address",
+                "Event Date",
+                "Event Type"
+              ];
+              
             } else if (dept === "Warrants") {
 
               headers = [

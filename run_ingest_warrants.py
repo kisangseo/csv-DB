@@ -1,4 +1,5 @@
-from ingest import ingest_warrants_csv
+from ingest import ingest_warrants_csv, ingest_all_odyssey_civil_blobs
 
-ingest_warrants_csv()
-print("Warrants ingestion complete")
+if __name__ == "__main__":
+    ingest_warrants_csv()
+    ingest_all_odyssey_civil_blobs()
