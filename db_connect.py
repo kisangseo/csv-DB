@@ -1,51 +1,20 @@
-import pyodbc
 import os
+import pyodbc
 
-server = "bsco-sql-server.database.windows.net"
-database = "bcsodb"
-username = "bscoit"
+server = os.getenv("AZURE_SQL_SERVER")
+database = os.getenv("AZURE_SQL_DATABASE")
+username = os.getenv("AZURE_SQL_USERNAME")
 password = os.getenv("AZURE_SQL_PASSWORD")
 
+driver = os.getenv("ODBC_DRIVER", "SQL Server")
+
 conn = pyodbc.connect(
-    f"DRIVER={{SQL Server}};"
+    f"DRIVER={{{driver}}};"
     f"SERVER={server};"
     f"DATABASE={database};"
     f"UID={username};"
-    f"PWD={password}"
+    f"PWD={password};"
+    "Encrypt=yes;"
+    "TrustServerCertificate=no;"
+    "Connection Timeout=30;"
 )
-
-cursor = conn.cursor()
-cursor.execute("SELECT 1")
-print(cursor.fetchone())
-
-def search_by_name(conn, name_query, limit=100):
-    cursor = conn.cursor()
-
-    sql = """
-    SELECT TOP (?)
-        record_id,
-        department,
-        full_name,
-        case_number,
-        sid,
-        date_of_birth,
-        address,
-        warrant_type,
-        warrant_status,
-        issue_date,
-        notes
-    FROM search.records
-    WHERE full_name LIKE ?
-    ORDER BY created_at DESC
-    """
-
-    cursor.execute(
-        sql,
-        limit,
-        f"%{name_query}%"
-    )
-
-    columns = [col[0] for col in cursor.description]
-    rows = cursor.fetchall()
-
-    return [dict(zip(columns, row)) for row in rows]
