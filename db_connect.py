@@ -8,13 +8,14 @@ password = os.getenv("AZURE_SQL_PASSWORD")
 
 driver = os.getenv("ODBC_DRIVER", "SQL Server")
 
-conn = pyodbc.connect(
-    f"DRIVER={{{driver}}};"
-    f"SERVER={server};"
-    f"DATABASE={database};"
-    f"UID={username};"
-    f"PWD={password};"
-    "Encrypt=yes;"
-    "TrustServerCertificate=no;"
-    "Connection Timeout=30;"
-)
+def get_conn():
+    return pyodbc.connect(
+        f"DRIVER={{{driver}}};"
+        f"SERVER={server};"
+        f"DATABASE={database};"
+        f"UID={username};"
+        f"PWD={password};"
+        "Encrypt=yes;"
+        "TrustServerCertificate=no;"
+        "Connection Timeout=30;"
+    )

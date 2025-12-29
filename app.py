@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 import pandas as pd
 import chardet
 from azure.storage.blob import ContainerClient
-from db_connect import conn
+from db_connect import get_conn
 from search_sql import search_by_name
 
 # ============================================================
@@ -589,8 +589,21 @@ def search_all():
     print("DEBUG dob:", dob)
 
     
-    records = search_by_name(conn, query,  sid=sid or None, dob=dob or None, sex=sex or None, race=race, issuing_county=issuing_county or None, last_x_days=last_x_days or None, limit=200)
-
+    conn = get_conn()
+    try:
+        records = search_by_name(
+            conn,
+            query,
+            sid=sid or None,
+            dob=dob or None,
+            sex=sex or None,
+            race=race,
+            issuing_county=issuing_county or None,
+            last_x_days=last_x_days or None,
+            limit=200
+        )
+    finally:
+        conn.close()
     
     sex = sex if sex in ("M", "F") else None
 
