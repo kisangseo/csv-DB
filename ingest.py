@@ -1,4 +1,4 @@
-from db_connect import conn
+from db_connect import get_conn
 import json
 import pandas as pd
 from azure.storage.blob import BlobServiceClient
@@ -143,35 +143,32 @@ def read_csv_from_blob(container_name, blob_name):
 
 def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
     df = read_csv_from_blob(container_name, blob_name)
-    
 
-    cursor = conn.cursor()
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
 
-    for _, row in df.iterrows():
-        
-        record = {
-            "department": "FIELD SERVICES DEPARTMENT - CIVIL",
-            "source_file": blob_name,
+        for _, row in df.iterrows():
+            record = {
+                "department": "FIELD SERVICES DEPARTMENT",
+                "source_file": blob_name,
+                "full_name": row.get("DefendantName"),
+                "case_number": row.get("CaseNumber"),
+                "intake_date": safe_sql_date(row.get("EventDate")),
+                "address": row.get("TenantAddress"),
+                "city": row.get("TenantCity"),
+                "state": row.get("TenantState"),
+                "postal_code": None,
+                "disposition": row.get("EventType"),
+                "notes": row.get("EventComment"),
+            }
 
-            "full_name": row.get("DefendantName"),
-            "case_number": row.get("CaseNumber"),
+            record_id = insert_search_record_odyssey(cursor, record)
+            insert_raw_record(cursor, record_id, blob_name, row.to_dict())
 
-            "intake_date": safe_sql_date(row.get("EventDate")),
-
-            "address": row.get("TenantAddress"),
-            "city": row.get("TenantCity"),
-            "state": row.get("TenantState"),
-            "postal_code": None,
-            "disposition": row.get("EventType"),
-            "notes": row.get("EventComment"),
-
-            
-        }
-
-        record_id = insert_search_record_odyssey(cursor, record)
-        insert_raw_record(cursor, record_id, blob_name, row.to_dict())
-
-    conn.commit()
+        conn.commit()
+    finally:
+        conn.close()
 
 def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
     blob_service_client = BlobServiceClient.from_connection_string(
@@ -218,105 +215,110 @@ def ingest_warrants_csv():
    
     print("WARRANTS DF ROWS:", len(df))
 
-    cursor = conn.cursor()
-    cursor.execute("SELECT 1")
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+
     
     
 
-    for _, row in df.iterrows():
-       
+        for _, row in df.iterrows():
         
-        
-        record = {
-            "department": "WARRANTS",
-            "source_file": blob_name,
+            
+            
+            record = {
+                "department": "WARRANTS",
+                "source_file": blob_name,
 
-            "first_name": (
-                None
-                if pd.isna(row.get("First Name"))
-                else str(row.get("First Name"))
-            ),
+                "first_name": (
+                    None
+                    if pd.isna(row.get("First Name"))
+                    else str(row.get("First Name"))
+                ),
 
-            "last_name": (
-                None
-                if pd.isna(row.get("Last Name"))
-                else str(row.get("Last Name"))
-            ),
+                "last_name": (
+                    None
+                    if pd.isna(row.get("Last Name"))
+                    else str(row.get("Last Name"))
+                ),
 
-            "full_name": (
-                None
-                if pd.isna(row.get("First Name")) and pd.isna(row.get("Last Name"))
-                else f"{row.get('First Name', '')} {row.get('Last Name', '')}".strip()
-            ),
+                "full_name": (
+                    None
+                    if pd.isna(row.get("First Name")) and pd.isna(row.get("Last Name"))
+                    else f"{row.get('First Name', '')} {row.get('Last Name', '')}".strip()
+                ),
 
-            "date_of_birth": (
-                None
-                if pd.isna(row.get("Date of Birth"))
-                else safe_sql_date(row.get("Date of Birth"))
-            ),
+                "date_of_birth": (
+                    None
+                    if pd.isna(row.get("Date of Birth"))
+                    else safe_sql_date(row.get("Date of Birth"))
+                ),
 
-            "sid": (
-                None
-                if pd.isna(row.get("SID"))
-                else str(int(row.get("SID")))
-            ),
+                "sid": (
+                    None
+                    if pd.isna(row.get("SID"))
+                    else str(int(row.get("SID")))
+                ),
 
-            "case_number": (
-                None
-                if pd.isna(row.get("Case Number"))
-                else str(row.get("Case Number"))
-            ),
+                "case_number": (
+                    None
+                    if pd.isna(row.get("Case Number"))
+                    else str(row.get("Case Number"))
+                ),
 
-            "warrant_type": (
-                None
-                if pd.isna(row.get("Warrant Type"))
-                else str(row.get("Warrant Type"))
-            ),
+                "warrant_type": (
+                    None
+                    if pd.isna(row.get("Warrant Type"))
+                    else str(row.get("Warrant Type"))
+                ),
 
-            "warrant_status": (
-                None
-                if pd.isna(row.get("Warrant Status"))
-                else str(row.get("Warrant Status"))
-            ),
+                "warrant_status": (
+                    None
+                    if pd.isna(row.get("Warrant Status"))
+                    else str(row.get("Warrant Status"))
+                ),
 
-            "issue_date": (
-                None
-                if pd.isna(row.get("Issue Date"))
-                else safe_sql_date(row.get("Issue Date"))
-            ),
+                "issue_date": (
+                    None
+                    if pd.isna(row.get("Issue Date"))
+                    else safe_sql_date(row.get("Issue Date"))
+                ),
 
-            "intake_date": None,
+                "intake_date": None,
 
-            "address": (
-                None
-                if pd.isna(row.get("Address"))
-                else str(row.get("Address"))
-            ),
+                "address": (
+                    None
+                    if pd.isna(row.get("Address"))
+                    else str(row.get("Address"))
+                ),
 
-            "city": None,
-            "state": None,
-            "postal_code": None,
+                "city": None,
+                "state": None,
+                "postal_code": None,
 
-            "notes": (
-                None
-                if pd.isna(row.get("Notes or Alias"))
-                else str(row.get("Notes or Alias"))
-            ),
-            "sex": (
-                None if pd.isna(row.get("Sex")) else str(row.get("Sex")).strip()
-            ),
-            "race": (
-                None if pd.isna(row.get("Race")) else str(row.get("Race")).strip()
-            ),
-            "issuing_county": (
-                None if pd.isna(row.get("Issuing County")) else str(row.get("Issuing County")).strip()
-            ),
-        }
-        
+                "notes": (
+                    None
+                    if pd.isna(row.get("Notes or Alias"))
+                    else str(row.get("Notes or Alias"))
+                ),
+                "sex": (
+                    None if pd.isna(row.get("Sex")) else str(row.get("Sex")).strip()
+                ),
+                "race": (
+                    None if pd.isna(row.get("Race")) else str(row.get("Race")).strip()
+                ),
+                "issuing_county": (
+                    None if pd.isna(row.get("Issuing County")) else str(row.get("Issuing County")).strip()
+                ),
+            }
+            
 
-        record_id = insert_search_record_warrants(cursor, record)
-        insert_raw_record(cursor, record_id, blob_name, row.to_dict())
+            record_id = insert_search_record_warrants(cursor, record)
+            insert_raw_record(cursor, record_id, blob_name, row.to_dict())
         
     
-    conn.commit()
+        conn.commit()
+    finally:
+        conn.close()
 
