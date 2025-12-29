@@ -1,4 +1,4 @@
-def search_by_name(conn, name_query, dob=None, sex=None, race=None, issuing_county=None, last_x_days=None, sid=None, limit=100):
+def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, limit=100):
     
     cursor = conn.cursor()
 
@@ -19,6 +19,16 @@ def search_by_name(conn, name_query, dob=None, sex=None, race=None, issuing_coun
 
     params = [limit, f"%{name_query}%"]
 
+    if case_number:
+        sql += " AND case_number LIKE ?"
+        params.append(f"%{case_number}%")
+    if date_start and date_end:
+        sql += """
+        AND COALESCE(issue_date, intake_date)
+            BETWEEN CAST(? AS date) AND CAST(? AS date)
+        """
+        params.extend([date_start, date_end])
+
     if sex:
         sql += " AND sex = ?"
         params.append(sex)
@@ -33,7 +43,11 @@ def search_by_name(conn, name_query, dob=None, sex=None, race=None, issuing_coun
         sql += " AND LOWER(race) = ?"
         params.append(race.lower())
     if issuing_county:
-        sql += " AND issuing_county IS NOT NULL AND LOWER(issuing_county) LIKE ?"
+        sql += """
+        AND issuing_county IS NOT NULL
+        AND LTRIM(RTRIM(issuing_county)) != ''
+        AND LOWER(issuing_county) LIKE ?
+        """
         params.append(f"%{issuing_county.lower()}%")
     if sid:
         sql += " AND sid = ?"
@@ -44,10 +58,7 @@ def search_by_name(conn, name_query, dob=None, sex=None, race=None, issuing_coun
 
     sql += " ORDER BY created_at DESC"
 
-    print("DEBUG FINAL SQL:")
-    print(sql)
-    print("DEBUG PARAMS:")
-    print(params)
+    
     cursor.execute(sql, params)
 
     columns = [col[0] for col in cursor.description]

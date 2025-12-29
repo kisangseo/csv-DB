@@ -32,10 +32,11 @@ def insert_search_record_warrants(cursor, record):
             disposition,
             notes,
             sex,
-            race
+            race,
+            issuing_county
         )
         OUTPUT INSERTED.record_id
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
     values = (
@@ -60,6 +61,7 @@ def insert_search_record_warrants(cursor, record):
         record.get("notes"),
         record.get("sex"),
         record.get("race"),
+        record.get("issuing_county"),
     )
 
     cursor.execute(sql, *values)

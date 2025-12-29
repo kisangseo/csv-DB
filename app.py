@@ -578,7 +578,16 @@ def legacy_search_all():
 @app.route("/search_all")
 def search_all():
     query = request.args.get("name", "").strip()
+    case_number = request.args.get("case_number", "").strip()
+    date_start = None
+    date_end = None
 
+    intake_date = request.args.get("intake_date", "").strip()
+    if " to " in intake_date:
+        parts = intake_date.split(" to ")
+        if len(parts) == 2:
+            date_start = parts[0].strip()
+            date_end = parts[1].strip()
     last_x_days = request.args.get("last_x_days", "").strip()
     sex = request.args.get("sex", "").strip()
     race = request.args.get("race", "").strip()
@@ -594,6 +603,9 @@ def search_all():
         records = search_by_name(
             conn,
             query,
+            date_start=date_start,
+            date_end=date_end,
+            case_number=case_number or None,
             sid=sid or None,
             dob=dob or None,
             sex=sex or None,

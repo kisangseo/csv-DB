@@ -158,7 +158,7 @@ th:nth-child(6) {
 }
 td:nth-child(3), th:nth-child(3) {
   white-space: normal;
-  font-weight: 600;     /* instead of 700/bold */
+  
   padding-top: 6px;
   padding-bottom: 6px;
 }
