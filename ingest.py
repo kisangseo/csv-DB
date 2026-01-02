@@ -71,6 +71,52 @@ def insert_search_record_warrants(cursor, record):
     
     return cursor.fetchone()[0]
 
+def insert_search_record_fsdw(cursor, record):
+    sql = """
+    INSERT INTO search.records (
+        department,
+        source_file,
+        full_name,
+        case_number,
+        issue_date,
+        intake_date,
+        address,
+        city,
+        state,
+        postal_code,
+        court_document_type,
+        disposition,
+        notes
+    )
+    OUTPUT INSERTED.record_id
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    def clean(v):
+        return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
+
+    values = tuple(clean(v) for v in (
+        record.get("department"),
+        record.get("source_file"),
+        record.get("full_name"),
+        record.get("case_number"),
+        record.get("issue_date"),
+        record.get("intake_date"),
+        record.get("address"),
+        record.get("city"),
+        record.get("state"),
+        record.get("postal_code"),
+        record.get("court_document_type"),
+        record.get("disposition"),
+        record.get("notes"),
+    ))
+
+    cursor.execute(sql, *values)
+    return cursor.fetchone()[0]
+
+
+
+
 def insert_search_record_odyssey(cursor, record):
     sql = """
     INSERT INTO search.records (
@@ -324,3 +370,92 @@ def ingest_warrants_csv():
     finally:
         conn.close()
 
+def ingest_wor_csv():
+    from azure.storage.blob import BlobServiceClient
+    import io
+    import os
+    import pandas as pd
+
+    blob_service_client = BlobServiceClient.from_connection_string(
+        os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    )
+
+    container_name = "fscsv"
+    blob_name = "Warrant_of_Restitution_Data_Management_Table_for_size_est(survey).csv"
+
+    blob_client = blob_service_client.get_blob_client(
+        container=container_name,
+        blob=blob_name
+    )
+
+    data = blob_client.download_blob().readall()
+    df = pd.read_csv(io.BytesIO(data), low_memory=False)
+
+    print("WOR DF ROWS:", len(df))
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+
+        batch_size = 1000
+
+        for i, (_, row) in enumerate(df.iterrows(), start=1):
+            record = {
+                "department": "FSDW",
+                "source_file": blob_name,
+
+                "full_name": (
+                    None
+                    if pd.isna(row.get("Tenant, Defendant, or Respondent Name"))
+                    else str(row.get("Tenant, Defendant, or Respondent Name")).strip()
+                ),
+
+                "case_number": (
+                    None
+                    if pd.isna(row.get("Case Number"))
+                    else str(row.get("Case Number")).strip()
+                ),
+
+                "intake_date": safe_sql_date(row.get("Intake Date")),
+                "issue_date": safe_sql_date(row.get("Court Issued Date")),
+
+                "address": (
+                    None
+                    if pd.isna(row.get("Tenant, Defendant or Respondent Address"))
+                    else str(row.get("Tenant, Defendant or Respondent Address")).strip()
+                ),
+
+                "city": None,
+                "state": None,
+                "postal_code": None,
+
+                "court_document_type": (
+                    None
+                    if pd.isna(row.get("Court Document Type"))
+                    else str(row.get("Court Document Type")).strip()
+                ),
+
+                "disposition": (
+                    None
+                    if pd.isna(row.get("Adminstrative Status"))
+                    else str(row.get("Adminstrative Status")).strip()
+                ),
+
+                "notes": (
+                    None
+                    if pd.isna(row.get("Comments"))
+                    else str(row.get("Comments")).strip()
+                ),
+            }
+
+            record_id = insert_search_record_fsdw(cursor, record)
+            insert_raw_record(cursor, record_id, blob_name, row.to_dict())
+
+            if i % batch_size == 0:
+                conn.commit()
+                print(f">>> WOR committed {i} rows")
+
+        conn.commit()
+    finally:
+        conn.close()

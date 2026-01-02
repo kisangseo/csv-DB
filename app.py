@@ -626,6 +626,9 @@ def search_all():
     for r in records:
         dept = r["department"].title()
         grouped.setdefault(dept, []).append(r)
+    MAX_PER_DEPT = 200
+    for dept in grouped:
+        grouped[dept] = grouped[dept][:MAX_PER_DEPT]
 
     response = {}
     for dept, rows in grouped.items():

@@ -3,21 +3,24 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
     cursor = conn.cursor()
 
     sql = """
-    SELECT TOP (?)
+    SELECT
         full_name      AS name,
         sid            AS sid,
         case_number    AS case_number,
         address        AS address,
         warrant_type   AS warrant_type,
+        court_document_type,
+        intake_date,
         COALESCE(issue_date, intake_date) AS record_date,
         warrant_status AS warrant_status,
         disposition    AS disposition,
         department
+        
     FROM search.records
     WHERE full_name LIKE ?
     """
 
-    params = [limit, f"%{name_query}%"]
+    params = [f"%{name_query}%"]
 
     if case_number:
         sql += " AND case_number LIKE ?"
@@ -35,6 +38,10 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
 
     if last_x_days:
         sql += """
+        AND (
+            issue_date IS NOT NULL
+            OR intake_date IS NOT NULL
+        )
         AND COALESCE(issue_date, intake_date) >=
             DATEADD(day, -?, CAST(GETDATE() AS date))
         """

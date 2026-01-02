@@ -139,6 +139,9 @@
         "Warrant Type": "warrant_type",
         "Issue Date": "record_date",
         "Warrant Status": "warrant_status",
+        "Type": "court_document_type",
+        
+        "Status": "disposition",
 
         // future-proofing (won’t be used yet, but safe)
         "Intake Date": "intake_date",
@@ -195,7 +198,11 @@
             div.className = "department";
 
             const title = document.createElement("h2");
-            title.textContent = dept;
+            if (dept.toUpperCase() === "FSDW") {
+              title.textContent = "Warrant of Restitution";
+          } else {
+              title.textContent = dept;
+          }
             div.appendChild(title);
 
             const countText = document.createElement("div");
@@ -219,6 +226,7 @@
             } else if (dept === "Field Services Department - Civil Intake"
                     || dept === "Field Services Department - Civil Survey"
                     
+                    
                     || dept === "Field Services Department - Warrants") {
 
               headers = [
@@ -229,7 +237,18 @@
                 "Intake Date",
                 "Current Disposition"
               ];
-            } else if (dept === dept === "Field Services Department - Civil" ||
+            } 
+              else if (dept === "Fsdw") {
+              headers = [
+                  "Name",
+                  "Case Number",
+                  "Address",
+                  "Type",
+                  "Intake Date",
+                  "Status"
+              ];
+          }
+              else if (dept === dept === "Field Services Department - Civil" ||
                     dept === "Field Services Department") {
 
               headers = [
@@ -240,6 +259,7 @@
                 "Event Date",
                 "Event Type"
               ];
+            
               
             } else if (dept === "Warrants") {
 
