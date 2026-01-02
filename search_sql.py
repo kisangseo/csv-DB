@@ -4,18 +4,18 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
 
     sql = """
     SELECT
-        full_name      AS name,
-        sid            AS sid,
-        date_of_birth  AS date_of_birth,
-        facility       AS facility,
-        case_number    AS case_number,
-        address        AS address,
-        warrant_type   AS warrant_type,
+        full_name AS name,
+        sid AS sid,
+        CAST(date_of_birth AS date) AS date_of_birth,
+        facility AS facility,
+        case_number AS case_number,
+        address AS address,
+        warrant_type AS warrant_type,
         court_document_type,
         intake_date,
-        COALESCE(issue_date, intake_date) AS record_date,
+        CAST(COALESCE(issue_date, intake_date) AS date) AS record_date,
         warrant_status AS warrant_status,
-        disposition    AS disposition,
+        disposition AS disposition,
         department
     FROM search.records
     WHERE 1=1
@@ -78,3 +78,5 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
     rows = cursor.fetchall()
 
     return [dict(zip(columns, row)) for row in rows]
+
+print("🔥 USING CAST DATE VERSION 🔥")
