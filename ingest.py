@@ -8,6 +8,7 @@ import pyodbc
 print("USING INGEST.PY FROM:", __file__)
 
 
+
 def insert_search_record_warrants(cursor, record):
     
     sql = """
@@ -62,8 +63,8 @@ def insert_search_record_warrants(cursor, record):
         record.get("sex"),
         record.get("race"),
         record.get("issuing_county"),
-    )
-
+            )
+    
     cursor.execute(sql, *values)
     
 
@@ -450,6 +451,82 @@ def ingest_warrants_csv():
         
     
         conn.commit()
+    finally:
+        conn.close()
+
+def ingest_new_warrant_csv():
+    from azure.storage.blob import BlobServiceClient
+    import io
+    import pandas as pd
+    import os
+
+    container_name = "warrantscsv"
+    blob_name = "AllActiveWarrants_0.csv"
+
+    blob_service_client = BlobServiceClient.from_connection_string(
+        os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    )
+
+    blob_client = blob_service_client.get_blob_client(
+        container=container_name,
+        blob=blob_name
+    )
+
+    data = blob_client.download_blob().readall()
+    df = pd.read_csv(io.BytesIO(data), dtype=str, low_memory=False)
+    
+    
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+
+        for i, (_, row) in enumerate(df.iterrows(), start=1):
+            row = row.where(pd.notna(row), None)
+            full_name = (
+                row.get("Full Name")
+                if pd.notna(row.get("Full Name"))
+                else " ".join(
+                    str(x) for x in [
+                        row.get("Last_Name"),
+                        row.get("First_Name"),
+                        row.get("Middle_Name")
+                    ]
+                    if pd.notna(x)
+                )
+            )
+
+            record = {
+                "department": "WARRANTS",
+                "source_file": blob_name,
+                "full_name": full_name,
+                "case_number": row.get("Case Number"),
+                "issue_date": safe_sql_date(row.get("Warrant_Issue_Date")),
+                "date_of_birth": safe_sql_date(row.get("DOB")),
+
+                # force FLOAT-backed columns to NULL for this CSV
+                "sid": None,
+                "sex": row.get("Sex"),
+                "race": row.get("Race"),
+
+
+                "issuing_county": row.get("County"),
+                "disposition": (
+                    row.get("1st_Charge")
+                    if pd.notna(row.get("1st_Charge"))
+                    else None
+                ),
+            }
+
+            record_id = insert_search_record_warrants(cursor, record)
+            insert_raw_record(cursor, record_id, blob_name, row.to_dict())
+
+            if i % 1000 == 0:
+                print(f"Inserted {i} records...")
+
+        conn.commit()
+        print(f"Finished ingesting {i} records.")
+
     finally:
         conn.close()
 

@@ -144,6 +144,11 @@
         "Status": "disposition",
         "Date of Birth": "date_of_birth",
         "Facility": "facility",
+        "Sex": "sex",
+        "Race": "race",
+        "Issuing County": "issuing_county",
+        "1st Charge": "disposition",
+
 
         // future-proofing (won’t be used yet, but safe)
         "Intake Date": "intake_date",
@@ -152,6 +157,8 @@
         "Defendant Name": "name",
         "Event Date": "record_date",
         "Event Type": "disposition"
+
+        
       };
       async function search(event) {
         event.preventDefault();
@@ -253,6 +260,18 @@
                   "Status"
               ];
           }
+              else if (dept.toLowerCase() === "active warrants") {
+              headers = [
+                "Name",
+                "Case Number",
+                "Issue Date",
+                "Date of Birth",
+                "Sex",
+                "Race",
+                "Issuing County",
+                "1st Charge"
+              ];
+            }
               else if (dept === dept === "Field Services Department - Civil" ||
                     dept === "Field Services Department") {
 
@@ -308,24 +327,38 @@
             const tbody = document.createElement("tbody");
 
             rows.forEach(row => {
-
-              
               const tr = document.createElement("tr");
 
-              headers.forEach(h => {
+              let cells;
+
+              // ✅ Active Warrants: explicit order
+              if (dept.toLowerCase() === "active warrants") {
+                cells = [
+                  row.full_name,
+                  row.case_number,
+                  row.issue_date,
+                  row.date_of_birth,
+                  row.sex,
+                  row.race,
+                  row.issuing_county,
+                  row.disposition
+                ];
+              } else {
+                // 🔁 default behavior (everything else)
+                cells = headers.map(h => {
+                  const key = FIELD_MAP[h] || h;
+                  return row[key];
+                });
+              }
+
+              cells.forEach(val => {
                 const td = document.createElement("td");
-
-                if (h === "Name") {
-                  td.classList.add("name-col");
-                }
-
-                const key = FIELD_MAP[h] || h;
-                td.textContent = row[key] ?? "";
+                td.textContent = val ?? "";
                 tr.appendChild(td);
               });
 
               tbody.appendChild(tr);
-          });
+            });
 
             table.appendChild(tbody);
 
