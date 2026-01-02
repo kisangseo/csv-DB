@@ -337,3 +337,19 @@ table th:nth-child(5) {
   appearance: textfield;
   -moz-appearance: textfield;
 }
+
+/* Force consistent alignment everywhere */
+table th {
+  text-align: center !important;
+  vertical-align: middle;
+}
+
+table td {
+  text-align: left !important;
+  vertical-align: middle;
+}
+
+/* You add .name-col in JS — override any old centering rules */
+table td.name-col {
+  text-align: left !important;
+}

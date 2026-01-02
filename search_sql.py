@@ -1,11 +1,13 @@
 def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, limit=100):
-    
+    name_tokens = [t for t in name_query.strip().split() if t]
     cursor = conn.cursor()
 
     sql = """
     SELECT
         full_name      AS name,
         sid            AS sid,
+        date_of_birth  AS date_of_birth,
+        facility       AS facility,
         case_number    AS case_number,
         address        AS address,
         warrant_type   AS warrant_type,
@@ -15,12 +17,16 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         warrant_status AS warrant_status,
         disposition    AS disposition,
         department
-        
     FROM search.records
-    WHERE full_name LIKE ?
+    WHERE 1=1
+    
     """
 
-    params = [f"%{name_query}%"]
+    params = []
+
+    for token in name_tokens:
+        sql += " AND full_name LIKE ?"
+        params.append(f"%{token}%")
 
     if case_number:
         sql += " AND case_number LIKE ?"

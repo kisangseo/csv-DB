@@ -142,6 +142,8 @@
         "Type": "court_document_type",
         
         "Status": "disposition",
+        "Date of Birth": "date_of_birth",
+        "Facility": "facility",
 
         // future-proofing (won’t be used yet, but safe)
         "Intake Date": "intake_date",
@@ -198,11 +200,14 @@
             div.className = "department";
 
             const title = document.createElement("h2");
-            if (dept.toUpperCase() === "FSDW") {
-              title.textContent = "Warrant of Restitution";
-          } else {
-              title.textContent = dept;
-          }
+            const DISPLAY_NAMES = {
+              "fsdw": "Warrant of Restitution",
+              "doc jail population": "DoC Jail Population",
+              "baltimore jail population": "Baltimore Jail Population"
+            };
+
+            title.textContent = DISPLAY_NAMES[dept.toLowerCase()] || dept;
+          
             div.appendChild(title);
 
             const countText = document.createElement("div");
@@ -261,7 +266,22 @@
               ];
             
               
-            } else if (dept === "Warrants") {
+              
+            } 
+            
+              else if (
+                dept.toLowerCase() === "baltimore jail population"
+                || dept.toLowerCase() === "doc jail population"
+              ) {
+
+                headers = [
+                  "SID",
+                  "Name",
+                  "Date of Birth",
+                  "Facility"
+                ];
+              }
+              else if (dept === "Warrants") {
 
               headers = [
                 "Name",

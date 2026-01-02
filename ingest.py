@@ -71,6 +71,37 @@ def insert_search_record_warrants(cursor, record):
     
     return cursor.fetchone()[0]
 
+def insert_search_record_population(cursor, record):
+    sql = """
+        INSERT INTO search.records (
+            department,
+            source_file,
+            first_name,
+            last_name,
+            full_name,
+            date_of_birth,
+            sid,
+            facility
+        )
+        OUTPUT INSERTED.record_id
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    values = (
+        record.get("department"),
+        record.get("source_file"),
+        record.get("first_name"),
+        record.get("last_name"),
+        record.get("full_name"),
+        record.get("date_of_birth"),
+        record.get("sid"),
+        record.get("facility"),
+    )
+
+    cursor.execute(sql, *values)
+    return cursor.fetchone()[0]
+
+
 def insert_search_record_fsdw(cursor, record):
     sql = """
     INSERT INTO search.records (
@@ -231,6 +262,58 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
         if name.startswith("Odyssey-JobOutput-") and name.endswith(".csv"):
             print("Ingesting:", name)
             ingest_odyssey_civil_from_blob(name, container_name)
+
+def ingest_population_from_table(table_name, display_department, source_file):
+    """
+    Copies rows from a staging table (jail_population or doc_population)
+    into search.records so it becomes searchable in the site.
+    """
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+
+        # OPTIONAL safety: remove prior inserts for this same source_file + department
+        cursor.execute("""
+            DELETE FROM search.records
+            WHERE department = ? AND source_file = ?
+        """, display_department, source_file)
+
+        cursor.execute(f"""
+            SELECT
+                sid,
+                last_name,
+                first_name,
+                middle_initial,
+                date_of_birth,
+                facility
+            FROM {table_name}
+            WHERE source_file = ?
+        """, source_file)
+
+        rows = cursor.fetchall()
+
+        for sid, last_name, first_name, mi, dob, facility in rows:
+            full_name = f"{last_name}, {first_name}".strip(", ").strip()
+
+            record = {
+                "department": display_department,
+                "source_file": source_file,
+                "first_name": first_name,
+                "last_name": last_name,
+                "full_name": full_name,
+                "date_of_birth": dob,      # already a date in SQL
+                "sid": str(sid) if sid is not None else None,
+                "facility": facility
+            }
+
+            insert_search_record_population(cursor, record)
+
+        conn.commit()
+        print(f"Inserted {len(rows)} rows into search.records from {table_name}")
+
+    finally:
+        conn.close()
 
 def ingest_warrants_csv():
     from azure.storage.blob import BlobServiceClient
@@ -402,7 +485,7 @@ def ingest_wor_csv():
 
         for i, (_, row) in enumerate(df.iterrows(), start=1):
             record = {
-                "department": "FSDW",
+                "department": "Warrant of Restitution",
                 "source_file": blob_name,
 
                 "full_name": (
@@ -459,3 +542,17 @@ def ingest_wor_csv():
         conn.commit()
     finally:
         conn.close()
+
+def ingest_baltimore_jail_population():
+    ingest_population_from_table(
+        table_name="jail_population",
+        display_department="Baltimore Jail Population",
+        source_file="baltimorejailpopulation_20251228.pdf"
+    )
+
+def ingest_doc_jail_population():
+    ingest_population_from_table(
+        table_name="doc_population",
+        display_department="DOC Jail Population",
+        source_file="docpopulation_20251228.pdf"
+    )
