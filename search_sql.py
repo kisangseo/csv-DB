@@ -16,6 +16,9 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         CAST(COALESCE(issue_date, intake_date) AS date) AS record_date,
         warrant_status AS warrant_status,
         disposition AS disposition,
+        sex AS sex,
+        race AS race,
+        issuing_county AS issuing_county,
         CASE
             WHEN source_file = 'AllActiveWarrants_0.csv'
                 THEN 'Active Warrants'

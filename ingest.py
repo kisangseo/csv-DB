@@ -497,7 +497,7 @@ def ingest_new_warrant_csv():
             )
 
             record = {
-                "department": "WARRANTS",
+                "department": "ACTIVE_WARRANTS",
                 "source_file": blob_name,
                 "full_name": full_name,
                 "case_number": row.get("Case Number"),
