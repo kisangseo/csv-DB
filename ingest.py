@@ -352,13 +352,8 @@ def ingest_warrants_csv():
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
 
-    
-    
-
         for _, row in df.iterrows():
-        
-            
-            
+           
             record = {
                 "department": "WARRANTS",
                 "source_file": blob_name,
@@ -497,7 +492,7 @@ def ingest_new_warrant_csv():
             )
 
             record = {
-                "department": "ACTIVE_WARRANTS",
+                "department": "WARRANTS",
                 "source_file": blob_name,
                 "full_name": full_name,
                 "case_number": row.get("Case Number"),
