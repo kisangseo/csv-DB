@@ -41,8 +41,4 @@ jobs:
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }}
           package: .
 
-      - name: Restart Azure Web App (refresh cache)
-        uses: azure/CLI@v1
-        with:
-          inlineScript: |
-            az webapp restart --name CVDB --resource-group Body_Cam_Footage
+
