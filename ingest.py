@@ -72,6 +72,48 @@ def insert_search_record_warrants(cursor, record):
     
     return cursor.fetchone()[0]
 
+def insert_search_record_active_warrants(cursor, record):
+    sql = """
+        INSERT INTO search.records (
+            department,
+            source_file,
+            full_name,
+            case_number,
+            warrant_id_number,
+            warrant_type,
+            issue_date,
+            warrant_status,
+            sid,
+            date_of_birth,
+            race,
+            sex,
+            issuing_county,
+            address
+        )
+        OUTPUT INSERTED.record_id
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    values = (
+        record.get("department"),
+        record.get("source_file"),
+        record.get("full_name"),
+        record.get("case_number"),
+        record.get("warrant_id_number"),
+        record.get("warrant_type"),
+        record.get("issue_date"),
+        record.get("warrant_status"),
+        record.get("sid"),
+        record.get("date_of_birth"),
+        record.get("race"),
+        record.get("sex"),
+        record.get("issuing_county"),
+        record.get("address"),
+    )
+
+    cursor.execute(sql, values)
+    return cursor.fetchone()[0]
+
 def insert_search_record_population(cursor, record):
     sql = """
         INSERT INTO search.records (
@@ -145,6 +187,7 @@ def insert_search_record_fsdw(cursor, record):
 
     cursor.execute(sql, *values)
     return cursor.fetchone()[0]
+
 
 
 
@@ -446,6 +489,86 @@ def ingest_warrants_csv():
         
     
         conn.commit()
+    finally:
+        conn.close()
+def ingest_bcso_active_warrants_csv():
+    from azure.storage.blob import BlobServiceClient
+    import io
+    import pandas as pd
+    import os
+    import json
+
+    container_name = "bcsoactivewarrants"
+    blob_name = "survey_0.csv"
+    
+
+    blob_service_client = BlobServiceClient.from_connection_string(
+        os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    )
+    blob_client = blob_service_client.get_blob_client(
+        container=container_name,
+        blob=blob_name
+    )
+
+    data = blob_client.download_blob().readall()
+    df = pd.read_csv(io.BytesIO(data), dtype=str, low_memory=False)
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+
+        # OVERWRITE existing BCSO Active Warrants
+        cursor.execute(
+            """
+            DELETE FROM search.records
+            WHERE department = ? AND source_file = ?
+            """,
+            "BCSO_ACTIVE_WARRANTS",
+            "survey_0"
+        )
+
+        cursor.execute(
+            """
+            DELETE FROM search.raw_records
+            WHERE source_file = ?
+            """,
+            "survey_0"
+        )
+
+        for i, (_, row) in enumerate(df.iterrows(), start=1):
+            row = row.where(pd.notna(row), None)
+
+            full_name = f"{row.get('Last Name')}, {row.get('First Name')}".strip(", ")
+
+            record = {
+                "department": "BCSO_ACTIVE_WARRANTS",
+                "source_file": "survey_0",
+
+                "full_name": full_name,
+                "case_number": row.get("Case Number"),
+                "warrant_id_number": row.get("Warrant ID Number"),
+                "warrant_type": row.get("Warrant Type"),
+                "issue_date": safe_sql_date(row.get("Date Issued")),
+                "warrant_status": row.get("Warrant Status"),
+
+                "sid": row.get("SID Number"),
+                "date_of_birth": safe_sql_date(row.get("Date of Birth")),
+                "race": row.get("Race"),
+                "sex": row.get("Sex"),
+
+                "issuing_county": row.get("Issuing County"),
+                "address": row.get("LKA"),
+            }
+
+            record_id = insert_search_record_active_warrants(cursor, record)
+            insert_raw_record(cursor, record_id, "survey_0", row.to_dict())
+
+            if i % 1000 == 0:
+                print(f"Inserted {i} records...")
+
+        conn.commit()
+        print(f"Finished ingesting {i} BCSO Active Warrants records.")
+
     finally:
         conn.close()
 

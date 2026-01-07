@@ -7,7 +7,7 @@ body {
   padding: 40px 0;
 }
 
-
+.department-content.collapsed { display: none; }
 
 /* ===== Page Container ===== */
 .container {

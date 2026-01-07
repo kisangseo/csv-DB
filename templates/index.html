@@ -210,7 +210,10 @@
             const DISPLAY_NAMES = {
               "fsdw": "Warrant of Restitution",
               "doc jail population": "DoC Jail Population",
-              "baltimore jail population": "Baltimore Jail Population"
+              "baltimore jail population": "Baltimore Jail Population",
+              "field services department": "Civil Papers",
+              "active warrants": "Warrants to Audit",
+
             };
 
             title.textContent = DISPLAY_NAMES[dept.toLowerCase()] || dept;
@@ -220,7 +223,19 @@
             const countText = document.createElement("div");
             countText.className = "count";
             countText.textContent = `Results: ${count} record${count !== 1 ? "s" : ""}`;
-            div.appendChild(countText);
+
+            // ✅ collapsible container (we'll put count + table inside this)
+            const content = document.createElement("div");
+            content.className = "department-content";
+            content.appendChild(countText);
+
+            // ✅ click-to-collapse on the title
+            title.style.cursor = "pointer";
+            title.textContent = `▼ ${title.textContent}`;
+            title.addEventListener("click", () => {
+              const collapsed = content.classList.toggle("collapsed");
+              title.textContent = `${collapsed ? "▶" : "▼"} ${title.textContent.slice(2)}`;
+            });
 
             const table = document.createElement("table");
             let headers = [];
@@ -234,6 +249,22 @@
                 "Hearing Date",
                 "Order Status"
               ];
+            } else if (dept.toLowerCase() === "bcso active warrants") {
+                headers = [
+                  "Issuing County",
+                  "Case Number",
+                  "Warrant ID Number",
+                  "Warrant Type",
+                  "Record Date",
+                  "Warrant Status",
+                  "Name",
+                  "SID",
+                  "Date of Birth",
+                  "Race",
+                  "Sex",
+                  "LKA"
+                ];
+        
 
             } else if (dept === "Field Services Department - Civil Intake"
                     || dept === "Field Services Department - Civil Survey"
@@ -330,9 +361,25 @@
               const tr = document.createElement("tr");
 
               let cells;
-
+              if (dept.toLowerCase() === "bcso active warrants") {
+                console.log("DEBUG BCSO ROW:", row.record_date, row.warrant_id_number);
+                cells = [
+                  row.issuing_county,
+                  row.case_number,
+                  row.warrant_id_number,
+                  row.warrant_type,
+                  row.record_date,   // ✅ NOT issue_date
+                  row.warrant_status,
+                  row.name,
+                  row.sid,
+                  row.date_of_birth,
+                  row.race,
+                  row.sex,
+                  row.address        // LKA
+                ];
+              }
               // ✅ Active Warrants: explicit order
-              if (dept.toLowerCase() === "active warrants") {
+              else if (dept.toLowerCase() === "active warrants") {
                 cells = [
                   row.name,
                   row.case_number,
@@ -351,6 +398,7 @@
                 });
               }
 
+
               cells.forEach(val => {
                 const td = document.createElement("td");
                 td.textContent = val ?? "";
@@ -366,7 +414,8 @@
             wrapper.className = "results-table-wrapper";
             wrapper.appendChild(table);
 
-            div.appendChild(wrapper);
+            content.appendChild(wrapper);
+            div.appendChild(content);
             resultsDiv.appendChild(div);
           }
         } catch (err) {

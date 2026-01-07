@@ -16,12 +16,16 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         FORMAT(COALESCE(issue_date, intake_date), 'yyyy-MM-dd') AS record_date,
         warrant_status AS warrant_status,
         disposition AS disposition,
+        warrant_id_number,
+        
         sex AS sex,
         race AS race,
         issuing_county AS issuing_county,
         CASE
             WHEN source_file = 'AllActiveWarrants_0.csv'
                 THEN 'Active Warrants'
+            WHEN department = 'BCSO_ACTIVE_WARRANTS'
+                THEN 'BCSO Active Warrants'
             ELSE department
         END AS department
     FROM search.records
