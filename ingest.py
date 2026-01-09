@@ -250,6 +250,26 @@ def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
 def safe_sql_date(v):
     ts = pd.to_datetime(v, errors="coerce")
     return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
+def safe_sql_date_epoch(v):
+    """
+    Converts Survey123 epoch milliseconds OR normal date strings to SQL date.
+    """
+    if v is None:
+        return None
+
+    try:
+        v = str(v).strip()
+
+        # Survey123 sends milliseconds since epoch
+        if v.isdigit() and len(v) >= 13:
+            ts = pd.to_datetime(int(v), unit="ms", errors="coerce")
+        else:
+            ts = pd.to_datetime(v, errors="coerce")
+
+        return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
+
+    except Exception:
+        return None
 
 def read_csv_from_blob(container_name, blob_name):
     blob_service_client = BlobServiceClient.from_connection_string(
@@ -491,83 +511,145 @@ def ingest_warrants_csv():
         conn.commit()
     finally:
         conn.close()
-def ingest_bcso_active_warrants_csv():
+
+def ingest_bcso_active_warrants_csv(_=None):
     from azure.storage.blob import BlobServiceClient
     import io
     import pandas as pd
     import os
-    import json
 
     container_name = "bcsoactivewarrants"
-    blob_name = "survey_0.csv"
-    
 
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     )
-    blob_client = blob_service_client.get_blob_client(
-        container=container_name,
-        blob=blob_name
-    )
-
-    data = blob_client.download_blob().readall()
-    df = pd.read_csv(io.BytesIO(data), dtype=str, low_memory=False)
+    container_client = blob_service_client.get_container_client(container_name)
 
     conn = get_conn()
     try:
         cursor = conn.cursor()
 
-        # OVERWRITE existing BCSO Active Warrants
-        cursor.execute(
-            """
-            DELETE FROM search.records
-            WHERE department = ? AND source_file = ?
-            """,
-            "BCSO_ACTIVE_WARRANTS",
-            "survey_0"
-        )
+        # 1) Build a set of blob filenames we've already ingested
+        cursor.execute("""
+            SELECT DISTINCT source_file
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+        """)
+        already_ingested = {row[0] for row in cursor.fetchall()}
 
-        cursor.execute(
-            """
-            DELETE FROM search.raw_records
-            WHERE source_file = ?
-            """,
-            "survey_0"
-        )
+        inserted = 0
 
-        for i, (_, row) in enumerate(df.iterrows(), start=1):
-            row = row.where(pd.notna(row), None)
+        # 2) Loop through blobs and only ingest NEW ones
+        for blob in container_client.list_blobs():
+            if not blob.name.endswith(".csv"):
+                continue
 
-            full_name = f"{row.get('Last Name')}, {row.get('First Name')}".strip(", ")
+            if blob.name in already_ingested:
+                print("SKIPPING (already ingested):", blob.name)
+                continue
 
-            record = {
-                "department": "BCSO_ACTIVE_WARRANTS",
-                "source_file": "survey_0",
+            print("INGESTING:", blob.name)
 
-                "full_name": full_name,
-                "case_number": row.get("Case Number"),
-                "warrant_id_number": row.get("Warrant ID Number"),
-                "warrant_type": row.get("Warrant Type"),
-                "issue_date": safe_sql_date(row.get("Date Issued")),
-                "warrant_status": row.get("Warrant Status"),
+            blob_client = container_client.get_blob_client(blob.name)
+            data = blob_client.download_blob().readall()
 
-                "sid": row.get("SID Number"),
-                "date_of_birth": safe_sql_date(row.get("Date of Birth")),
-                "race": row.get("Race"),
-                "sex": row.get("Sex"),
+            if not data.strip():
+                print("SKIPPING (empty file):", blob.name)
+                continue
 
-                "issuing_county": row.get("Issuing County"),
-                "address": row.get("LKA"),
-            }
+            # 3) Read headerless CSV (your Make output)
+            text = data.decode("utf-8").strip().splitlines()
+            rows = []
 
-            record_id = insert_search_record_active_warrants(cursor, record)
-            insert_raw_record(cursor, record_id, "survey_0", row.to_dict())
+            for line in text:
+                parts = [p.strip() for p in line.split(",")]
+                print("RAW PARTS:", parts)
 
-            if i % 1000 == 0:
-                print(f"Inserted {i} records...")
+                if len(parts) < 12:
+                    print("SKIPPING malformed line:", line)
+                    continue
+
+                # Columns 0–11 are fixed (ending with sex)
+                fixed = parts[0:12]
+
+                # Columns 12+ are the address (street, city, state, zip, etc)
+                lka = ", ".join(parts[12:]).strip()
+
+                fixed.append(lka)
+                rows.append(fixed)
+
+            df = pd.DataFrame(rows, columns=[
+                "issuing_county",
+                "case_number",
+                "warrant_id",
+                "warrant_type",
+                "date_issued",
+                "warrant_status",
+                "last_name",
+                "first_name",
+                "sid",
+                "dob",
+                "race",
+                "sex",
+                "lka"
+            ])
+
+            # IMPORTANT: Skip old/wrong-format files (like survey_0.csv with 46 columns)
+            if df.shape[1] != 13:
+                print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob.name)
+                continue
+
+            df.columns = [
+                "issuing_county",
+                "case_number",
+                "warrant_id",
+                "warrant_type",
+                "date_issued",
+                "warrant_status",
+                "last_name",
+                "first_name",
+                "sid",
+                "dob",
+                "race",
+                "sex",
+                "lka"
+            ]
+          
+            # 4) Insert each row into SQL
+            for _, row in df.iterrows():
+                row = row.where(pd.notna(row), None)
+
+                full_name = f"{row.get('last_name')}, {row.get('first_name')}".strip(", ")
+                
+                record = {
+                    "department": "BCSO_ACTIVE_WARRANTS",
+                    "source_file": blob.name,
+
+                    "full_name": full_name,
+                    "case_number": row.get("case_number"),
+                    "warrant_id_number": row.get("warrant_id"),
+                    "warrant_type": row.get("warrant_type"),
+                    "issue_date": safe_sql_date_epoch(row.get("date_issued")),
+                    "warrant_status": row.get("warrant_status"),
+
+                    "sid": row.get("sid"),
+                    "date_of_birth": safe_sql_date_epoch(row.get("dob")),
+                    "race": row.get("race"),
+                    "sex": row.get("sex"),
+
+                    "issuing_county": row.get("issuing_county"),
+                    "address": row.get("lka"),
+                }
+
+                record_id = insert_search_record_active_warrants(cursor, record)
+                insert_raw_record(cursor, record_id, blob.name, row.to_dict())
+                inserted += 1
+
+                if inserted % 1000 == 0:
+                    print(f"Inserted {inserted} records...")
 
         conn.commit()
-        print(f"Finished ingesting {i} BCSO Active Warrants records.")
+        print(f"Done. Inserted {inserted} new BCSO Active Warrants records.")
 
     finally:
         conn.close()
