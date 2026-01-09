@@ -460,7 +460,11 @@ for rec in PROCESSED.get("Field Services Department - Civil Intake", []):
     print(rec)
     break  # print just first row
 """
-
+@app.route("/run-active-warrants", methods=["POST"])
+def run_active_warrants():
+    from ingest import ingest_bcso_active_warrants_csv
+    ingest_bcso_active_warrants_csv()
+    return "OK"
 
 # ============================================================
 # SEARCH ENDPOINT

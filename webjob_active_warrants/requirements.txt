@@ -1,0 +1,8 @@
+Flask==3.0.3
+Flask-Cors==4.0.0
+pandas==2.2.2
+azure-storage-blob==12.20.0
+chardet==5.2.0
+gunicorn==22.0.0
+pyodbc==5.1.0
+ 
