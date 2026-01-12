@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, redirect, session
 from flask_cors import CORS
 import os
 import re
@@ -9,6 +9,95 @@ import chardet
 from azure.storage.blob import ContainerClient
 from db_connect import get_conn
 from search_sql import search_by_name
+
+# ============================================================
+# USER LOGIN
+# ============================================================
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        return '''
+        <form method="post">
+            Email: <input name="email"><br>
+            Password: <input name="password" type="password"><br>
+            <button type="submit">Login</button>
+        </form>
+        '''
+
+    email = request.form["email"]
+    password = request.form["password"]
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT user_id, password_hash, must_change_password
+        FROM search.users
+        WHERE email = ? AND is_active = 1
+    """, email)
+
+    row = cur.fetchone()
+
+    if not row:
+        return "Invalid login", 401
+
+    user_id, pw, must_change = row
+
+    if password != pw:
+        return "Invalid login", 401
+
+    session["user_id"] = user_id
+
+    if must_change:
+        return redirect("/change-password")
+
+    return redirect("/")
+
+def require_login():
+    if "user_id" not in session:
+        return redirect("/login")
+@app.route("/")
+def home():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    return render_template("index.html")
+@app.route("/change-password", methods=["GET","POST"])
+def change_password():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    if request.method == "GET":
+        return '''
+        <form method="post">
+            New password: <input name="pw1" type="password"><br>
+            Confirm: <input name="pw2" type="password"><br>
+            <button type="submit">Set Password</button>
+        </form>
+        '''
+
+    pw1 = request.form["pw1"]
+    pw2 = request.form["pw2"]
+
+    if pw1 != pw2:
+        return "Passwords do not match"
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE search.users
+        SET password_hash = ?, must_change_password = 0
+        WHERE user_id = ?
+    """, pw1, session["user_id"])
+
+    conn.commit()
+
+    return redirect("/")
 
 # ============================================================
 # NORMALIZATION HELPERS
@@ -134,7 +223,7 @@ def get_col(subdf: pd.DataFrame, logical_key: str):
 # FLASK + AZURE SETUP
 # ============================================================
 
-app = Flask(__name__)
+
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
@@ -470,9 +559,7 @@ def run_active_warrants():
 # SEARCH ENDPOINT
 # ============================================================
 
-@app.route("/")
-def home():
-    return render_template("index.html")
+
 
 
 # LEGACY CSV SEARCH (parked, not deleted)
