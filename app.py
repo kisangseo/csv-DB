@@ -9,6 +9,7 @@ import chardet
 from azure.storage.blob import ContainerClient
 from db_connect import get_conn
 from search_sql import search_by_name
+from datetime import timedelta
 
 # ============================================================
 # USER LOGIN
@@ -16,6 +17,7 @@ from search_sql import search_by_name
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
+app.permanent_session_lifetime = timedelta(hours=12)
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -49,13 +51,15 @@ def login():
 
     if password != pw:
         return "Invalid login", 401
-
+    session.permanent = True
     session["user_id"] = user_id
 
     if must_change:
         return redirect("/change-password")
 
     return redirect("/")
+
+
 
 def require_login():
     if "user_id" not in session:
@@ -88,6 +92,8 @@ def change_password():
 
     conn = get_conn()
     cur = conn.cursor()
+
+   
 
     cur.execute("""
         UPDATE search.users
