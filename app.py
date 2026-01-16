@@ -11,6 +11,7 @@ from db_connect import get_conn
 from search_sql import search_by_name
 from datetime import timedelta
 
+
 # ============================================================
 # USER LOGIN
 # ============================================================
@@ -18,6 +19,7 @@ from datetime import timedelta
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 app.permanent_session_lifetime = timedelta(hours=12)
+
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -94,6 +96,8 @@ def change_password():
     cur = conn.cursor()
 
    
+
+  
 
     cur.execute("""
         UPDATE search.users
@@ -685,6 +689,8 @@ def search_all():
         if len(parts) == 2:
             date_start = parts[0].strip()
             date_end = parts[1].strip()
+    print("DEBUG date_start =", date_start)
+    print("DEBUG date_end   =", date_end)
     last_x_days = request.args.get("last_x_days", "").strip()
     sex = request.args.get("sex", "").strip()
     race = request.args.get("race", "").strip()
@@ -692,7 +698,7 @@ def search_all():
     issuing_county = request.args.get("issuing_county", "").strip()
     sid = request.args.get("sid", "").strip()
     dob = request.args.get("dob", "").strip()
-    print("DEBUG dob:", dob)
+    
 
     
     conn = get_conn()

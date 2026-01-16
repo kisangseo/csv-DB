@@ -48,6 +48,8 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
             BETWEEN CAST(? AS date) AND CAST(? AS date)
         """
         params.extend([date_start, date_end])
+        print("DEBUG SQL =", sql)
+        print("DEBUG params =", params)
 
     if sex:
         sql += " AND sex = ?"

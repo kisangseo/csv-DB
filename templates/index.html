@@ -17,7 +17,7 @@
     <form id="searchForm" onsubmit="search(event)">
       <input type="text" id="name" name="name" placeholder="Name">
       <input type="text" id="case_number" name="case_number" placeholder="Case Number">
-      <input type="text" id="intake_date" name="intake_date" placeholder="Select Date Range">
+      <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
       <input type="hidden" id="intake_date_hidden" name="intake_date">
       <button type="submit">Search</button>
       <!-- Advanced Search -->
@@ -37,7 +37,7 @@
             type="text"
             id="dob"
             name="dob"
-            placeholder="Date of Birth"
+            placeholder="Select date or type MM/DD/YYYY"
           />
 
           
@@ -111,21 +111,31 @@
     
     
       flatpickr("#intake_date", {
-          mode: "range",
-          dateFormat: "Y-m-d",
-          allowInput: false,
-          onChange: function(selectedDates) {
-            updateDateFields(selectedDates);
-        },
+        mode: "range",
 
-          onClose: function(selectedDates) {
-            updateDateFields(selectedDates);
+        // INTERNAL format (do NOT change)
+        dateFormat: "Y-m-d",
+
+        // USER-visible input
+        altInput: true,
+        altFormat: "m/d/Y",
+        allowInput: true,
+
+        onChange: function (selectedDates) {
+          updateDateFields(selectedDates);
+        },
+        onClose: function (selectedDates) {
+          updateDateFields(selectedDates);
         }
       });
       flatpickr("#dob", {
-        dateFormat: "Y-m-d",
+        dateFormat: "Y-m-d",   // internal (do NOT change)
+        altInput: true,
+        altFormat: "m/d/Y",    // what users see & type
         allowInput: true
       });
+
+      
       
     </script>
       
