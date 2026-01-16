@@ -618,6 +618,14 @@ def ingest_bcso_active_warrants_csv(_=None):
             # 4) Insert each row into SQL
             for _, row in df.iterrows():
                 row = row.where(pd.notna(row), None)
+                record_type = row.get("Record Type") or row.get("record_type")
+
+                is_update = (
+                    isinstance(record_type, str)
+                    and record_type.strip().lower() == "update warrant"
+                )
+
+                print("DEBUG record_type:", record_type, "is_update =", is_update)
 
                 full_name = f"{row.get('last_name')}, {row.get('first_name')}".strip(", ")
                 
@@ -641,7 +649,73 @@ def ingest_bcso_active_warrants_csv(_=None):
                     "address": row.get("lka"),
                 }
 
-                record_id = insert_search_record_active_warrants(cursor, record)
+                # 1) Try to find existing Active Warrant by case_number (update scenario)
+                cursor.execute("""
+                    SELECT TOP 1 record_id
+                    FROM search.records
+                    WHERE department = 'BCSO_ACTIVE_WARRANTS'
+                    AND case_number = ?
+                    ORDER BY record_id DESC
+                """, record.get("case_number"))
+
+                existing = cursor.fetchone()
+                
+
+                if existing:
+                    record_id = existing[0]
+                    print(
+                        f"DEBUG UPDATE START | case_number={record.get('case_number')} "
+                        f"| record_id={record_id} "
+                        f"| source_file={blob.name}"
+                    )
+                    
+
+                    # 2) UPDATE rule:
+                    # - if incoming is empty/None, keep existing
+                    # - if incoming differs and is non-empty, overwrite
+                    cursor.execute("""
+                        UPDATE search.records
+                        SET
+                            source_file       = COALESCE(NULLIF(?, ''), source_file),
+                            full_name         = COALESCE(NULLIF(?, ''), full_name),
+                            warrant_id_number = COALESCE(NULLIF(?, ''), warrant_id_number),
+                            warrant_type      = COALESCE(NULLIF(?, ''), warrant_type),
+                            issue_date        = COALESCE(?, issue_date),
+                            warrant_status    = COALESCE(NULLIF(?, ''), warrant_status),
+                            sid               = COALESCE(NULLIF(?, ''), sid),
+                            date_of_birth     = COALESCE(?, date_of_birth),
+                            race              = COALESCE(NULLIF(?, ''), race),
+                            sex               = COALESCE(NULLIF(?, ''), sex),
+                            issuing_county    = COALESCE(NULLIF(?, ''), issuing_county),
+                            address           = COALESCE(NULLIF(?, ''), address),
+                            notes             = COALESCE(NULLIF(?, ''), notes)
+                        WHERE record_id = ?
+                    """,
+                        record.get("source_file") or "",
+                        record.get("full_name") or "",
+                        record.get("warrant_id_number") or "",
+                        record.get("warrant_type") or "",
+                        record.get("issue_date"),                 # dates: pass None or YYYY-MM-DD
+                        record.get("warrant_status") or "",
+                        (str(record.get("sid")) if record.get("sid") is not None else ""),
+                        record.get("date_of_birth"),
+                        record.get("race") or "",
+                        record.get("sex") or "",
+                        record.get("issuing_county") or "",
+                        record.get("address") or "",
+                        (record.get("notes") or ""),              # safe even if notes isn't present yet
+                        record_id
+                    )
+
+                else:
+                    # 3) No existing case_number -> insert new
+                    record_id = insert_search_record_active_warrants(cursor, record)
+                print(
+                    f"DEBUG UPDATE COMPLETE | case_number={record.get('case_number')} "
+                    f"| record_id={record_id}"
+                )
+
+                # Keep raw payload for traceability either way
                 insert_raw_record(cursor, record_id, blob.name, row.to_dict())
                 inserted += 1
 
