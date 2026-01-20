@@ -219,7 +219,7 @@
 
             const title = document.createElement("h2");
             const DISPLAY_NAMES = {
-              "fsdw": "Warrant of Restitution",
+              "warrant of restitution - mdec": "Warrant of Restitution - MDEC",
               "doc jail population": "DoC Jail Population",
               "baltimore jail population": "Baltimore Jail Population",
               "field services department": "Civil Papers",
@@ -292,7 +292,7 @@
                 "Current Disposition"
               ];
             } 
-              else if (dept === "Fsdw") {
+              else if (dept.toLowerCase() === "warrant of restitution - mdec") {
               headers = [
                   "Name",
                   "Case Number",
@@ -327,7 +327,7 @@
               ];
             
               
-              
+              console.log("DEPT KEY:", dept);
             } 
             
               else if (
