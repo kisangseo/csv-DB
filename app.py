@@ -565,6 +565,10 @@ def run_active_warrants():
     ingest_bcso_active_warrants_csv()
     return "OK"
 
+@app.route("/run-warrant-of-restitution", methods=["POST"])
+def run_warrant_of_restitution():
+    return {"OK"}
+
 # ============================================================
 # SEARCH ENDPOINT
 # ============================================================
