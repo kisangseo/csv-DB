@@ -565,15 +565,15 @@ def ingest_bcso_active_warrants_csv(_=None):
                 parts = [p.strip() for p in line.split(",")]
                 print("RAW PARTS:", parts)
 
-                if len(parts) < 12:
+                if len(parts) < 13:
                     print("SKIPPING malformed line:", line)
                     continue
 
                 # Columns 0–11 are fixed (ending with sex)
-                fixed = parts[0:12]
+                fixed = parts[0:13]
 
                 # Columns 12+ are the address (street, city, state, zip, etc)
-                lka = ", ".join(parts[12:]).strip()
+                lka = ", ".join(parts[13:]).strip()
 
                 fixed.append(lka)
                 rows.append(fixed)
@@ -591,11 +591,12 @@ def ingest_bcso_active_warrants_csv(_=None):
                 "dob",
                 "race",
                 "sex",
+                "notes",
                 "lka"
             ])
 
             # IMPORTANT: Skip old/wrong-format files (like survey_0.csv with 46 columns)
-            if df.shape[1] != 13:
+            if df.shape[1] != 14:
                 print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob.name)
                 continue
 
@@ -612,6 +613,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                 "dob",
                 "race",
                 "sex",
+                "notes",
                 "lka"
             ]
           
@@ -646,6 +648,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                     "sex": row.get("sex"),
 
                     "issuing_county": row.get("issuing_county"),
+                    "notes": row.get("notes"),
                     "address": row.get("lka"),
                 }
 
