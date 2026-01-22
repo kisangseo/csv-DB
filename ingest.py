@@ -691,7 +691,11 @@ def ingest_bcso_active_warrants_csv(_=None):
                             sex               = COALESCE(NULLIF(?, ''), sex),
                             issuing_county    = COALESCE(NULLIF(?, ''), issuing_county),
                             address           = COALESCE(NULLIF(?, ''), address),
-                            notes             = COALESCE(NULLIF(?, ''), notes)
+                            notes = CASE
+                                WHEN ? IS NULL OR ? = '' THEN notes
+                                WHEN notes IS NULL OR notes = '' THEN ?
+                                ELSE CONCAT(notes, ', ', ?)
+                            END
                         WHERE record_id = ?
                     """,
                         record.get("source_file") or "",
@@ -706,7 +710,10 @@ def ingest_bcso_active_warrants_csv(_=None):
                         record.get("sex") or "",
                         record.get("issuing_county") or "",
                         record.get("address") or "",
-                        (record.get("notes") or ""),              # safe even if notes isn't present yet
+                        (record.get("notes") or ""),
+                        (record.get("notes") or ""),
+                        (record.get("notes") or ""),
+                        (record.get("notes") or ""),
                         record_id
                     )
 
