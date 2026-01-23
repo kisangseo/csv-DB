@@ -691,7 +691,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                             sex               = COALESCE(NULLIF(?, ''), sex),
                             issuing_county    = COALESCE(NULLIF(?, ''), issuing_county),
                             notes             = COALESCE(NULLIF(?, ''), notes),
-                            address           = COALESCE(NULLIF(?, ''), address),
+                            address           = COALESCE(NULLIF(?, ''), address)
                             
                             
                         WHERE record_id = ?
