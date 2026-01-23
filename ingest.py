@@ -690,10 +690,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                             race              = COALESCE(NULLIF(?, ''), race),
                             sex               = COALESCE(NULLIF(?, ''), sex),
                             issuing_county    = COALESCE(NULLIF(?, ''), issuing_county),
-                            notes = CASE
-                                WHEN ? IS NULL OR ? = '' THEN notes
-                                WHEN notes IS NULL OR notes = '' THEN ?
-                                ELSE CONCAT(notes, ', ', ?)
+                            notes             = COALESCE(NULLIF(?, ''), notes),
                             address           = COALESCE(NULLIF(?, ''), address),
                             
                             END
