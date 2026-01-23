@@ -693,7 +693,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                             notes             = COALESCE(NULLIF(?, ''), notes),
                             address           = COALESCE(NULLIF(?, ''), address),
                             
-                            END
+                            
                         WHERE record_id = ?
                     """,
                         record.get("source_file") or "",
