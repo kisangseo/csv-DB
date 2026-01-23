@@ -648,11 +648,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                     "sex": row.get("sex"),
 
                     "issuing_county": row.get("issuing_county"),
-                    "notes": (
-                        row.get("notes")
-                        if row.get("notes") not in ["", '""', None]
-                        else None
-                    ),
+                    "notes": row.get("notes"),
                     "address": row.get("lka"),
                 }
 
@@ -711,7 +707,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                         record.get("race") or "",
                         record.get("sex") or "",
                         record.get("issuing_county") or "",
-                        (record.get("notes") if record.get("notes") not in ["", '""', None] else None),
+                        record.get("notes") or "",
                         record.get("address") or "",
                         
                        
