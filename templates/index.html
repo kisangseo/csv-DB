@@ -406,6 +406,19 @@
               } else {
                 // 🔁 default behavior (everything else)
                 cells = headers.map(h => {
+
+                  // ✅ Global Address formatting
+                  if (h === "Address") {
+                    const fullAddress =
+                      [row.address, row.city, row.state]
+                        .filter(Boolean)
+                        .join(", ") +
+                      (row.postal_code ? ` ${row.postal_code}` : "");
+
+                    return fullAddress;
+                  }
+
+                  // Normal behavior for all other fields
                   const key = FIELD_MAP[h] || h;
                   return row[key];
                 });
