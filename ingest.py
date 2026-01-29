@@ -290,7 +290,11 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
     conn = get_conn()
     try:
         cursor = conn.cursor()
-
+        cursor.execute("""
+            DELETE FROM search.records
+            WHERE department = 'FIELD SERVICES DEPARTMENT'
+            AND source_file = ?
+        """, blob_name)
         for _, row in df.iterrows():
             record = {
                 "department": "FIELD SERVICES DEPARTMENT",
@@ -905,7 +909,7 @@ def ingest_baltimore_jail_population():
     ingest_population_from_table(
         table_name="jail_population",
         display_department="Baltimore Jail Population",
-        source_file="baltimorejailpopulation_20251228.pdf"
+        source_file="baltimorejailpopulation_20260128.pdf"
     )
 
 def ingest_doc_jail_population():

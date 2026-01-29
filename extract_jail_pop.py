@@ -3,8 +3,8 @@ import re
 from datetime import datetime
 
 REPORT_DATE = datetime(2025, 12, 28).date()
-SOURCE_FILE = "baltimorejailpopulation_20251228.pdf"
-PDF_PATH = "baltimorejailpopulation_20251228.pdf"
+SOURCE_FILE = "baltimorejailpopulation_20260128.pdf"
+PDF_PATH = "baltimorejailpopulation_20260128.pdf"
 
 records = []
 
@@ -92,7 +92,7 @@ def get_conn():
     )
 
 REPORT_DATE = datetime(2025, 12, 28).date()
-SOURCE_FILE = "baltimorejailpopulation_20251228.pdf"
+SOURCE_FILE = "baltimorejailpopulation_20260128.pdf"
 
 sql = """
 INSERT INTO jail_population (
