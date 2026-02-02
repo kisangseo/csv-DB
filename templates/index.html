@@ -344,7 +344,7 @@
                 ];
               }
               else if (dept === "Warrants") {
-
+                  return; //skip displaying it
               headers = [
                 "Name",
                 "SID",
@@ -412,8 +412,8 @@
                     const fullAddress =
                       [row.address, row.city, row.state]
                         .filter(Boolean)
-                        .join(", ") +
-                      (row.postal_code ? ` ${row.postal_code}` : "");
+                        .join(", ");
+                     
 
                     return fullAddress;
                   }
