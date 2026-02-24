@@ -570,20 +570,16 @@ def run_active_warrants():
 def run_warrant_of_restitution():
     return {"OK"}
 
-from flask import request
 
+from ingest import ingest_wor
 @app.route("/ingest-wor", methods=["POST"])
 def ingest_wor_route():
-    blob_name = request.json["blob_name"]
-    from ingest import ingest_wor_csv
-    ingest_wor_csv(blob_name)
-
+    ingest_wor()
     return {"status": "success"}
 
 # ============================================================
 # SEARCH ENDPOINT
 # ============================================================
-
 
 
 

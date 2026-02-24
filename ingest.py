@@ -815,54 +815,90 @@ def ingest_new_warrant_csv():
     finally:
         conn.close()
 
-def ingest_wor_csv(blob_name):
+def ingest_wor(_=None):
     from azure.storage.blob import BlobServiceClient
-    import io
     import os
     import pandas as pd
+    import io
+
+    container_name = "warrantscsv"
 
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     )
-
-    container_name = "warrantscsv"
-
-    blob_client = blob_service_client.get_blob_client(
-        container=container_name,
-        blob=blob_name
-    )
-
-    data = blob_client.download_blob().readall()
-    df = pd.read_csv(io.BytesIO(data), header=None)
+    container_client = blob_service_client.get_container_client(container_name)
 
     conn = get_conn()
 
     try:
         cursor = conn.cursor()
 
-        for _, row in df.iterrows():
+        # 1) Get already ingested files
+        cursor.execute("""
+            SELECT DISTINCT source_file
+            FROM search.records
+            WHERE department = 'Warrant of Restitution'
+        """)
+        already_ingested = {row[0] for row in cursor.fetchall()}
 
-            record = {
-                "department": "Warrant of Restitution",
-                "source_file": blob_name,
+        inserted = 0
 
-                "full_name": str(row[6]).strip() if pd.notna(row[6]) else None,
-                "case_number": str(row[3]).strip() if pd.notna(row[3]) else None,
+        # 2) Loop through blobs
+        for blob in container_client.list_blobs():
+            if not blob.name.endswith(".csv"):
+                continue
 
-                "intake_date": safe_sql_date(row[1]),
-                "issue_date": safe_sql_date(row[2]),
+            if blob.name in already_ingested:
+                print("SKIPPING (already ingested):", blob.name)
+                continue
 
-                "address": str(row[7]).strip() if pd.notna(row[7]) else None,
+            print("INGESTING:", blob.name)
 
-                "court_document_type": str(row[4]).strip() if pd.notna(row[4]) else None,
-                "disposition": str(row[10]).strip() if pd.notna(row[10]) else None,
-                "notes": str(row[12]).strip() if pd.notna(row[12]) else None,
-            }
+            blob_client = container_client.get_blob_client(blob.name)
+            data = blob_client.download_blob().readall()
 
-            record_id = insert_search_record_fsdw(cursor, record)
-            insert_raw_record(cursor, record_id, blob_name, row.to_dict())
+            if not data.strip():
+                print("SKIPPING (empty file):", blob.name)
+                continue
+
+            # 3) Headerless CSV from MAKE
+            df = pd.read_csv(io.BytesIO(data), header=None)
+
+            # Expecting 13 columns based on your MAKE order
+            if df.shape[1] < 13:
+                print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob.name)
+                continue
+
+            for _, row in df.iterrows():
+                row = row.where(pd.notna(row), None)
+
+                record = {
+                    "department": "Warrant of Restitution",
+                    "source_file": blob.name,
+
+                    "full_name": row[6],
+                    "case_number": row[3],
+
+                    "intake_date": safe_sql_date_epoch(row[1]),
+                    "issue_date": safe_sql_date_epoch(row[2]),
+
+                    "court_document_type": row[4],
+                    "disposition": row[10],
+
+                    "address": row[7],
+                    "notes": row[12],
+                }
+
+                record_id = insert_search_record_fsdw(cursor, record)
+                insert_raw_record(cursor, record_id, blob.name, row.to_dict())
+
+                inserted += 1
+
+                if inserted % 1000 == 0:
+                    print(f"Inserted {inserted} records...")
 
         conn.commit()
+        print(f"Done. Inserted {inserted} Warrant of Restitution records.")
 
     finally:
         conn.close()
