@@ -815,7 +815,7 @@ def ingest_new_warrant_csv():
     finally:
         conn.close()
 
-def ingest_wor_csv():
+def ingest_wor_csv(blob_name):
     from azure.storage.blob import BlobServiceClient
     import io
     import os
@@ -825,8 +825,7 @@ def ingest_wor_csv():
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     )
 
-    container_name = "fscsv"
-    blob_name = "Warrant_of_Restitution_Data_Management_Table_for_size_est(survey).csv"
+    container_name = "warrantscsv"
 
     blob_client = blob_service_client.get_blob_client(
         container=container_name,
@@ -834,74 +833,37 @@ def ingest_wor_csv():
     )
 
     data = blob_client.download_blob().readall()
-    df = pd.read_csv(io.BytesIO(data), low_memory=False)
-
-    print("WOR DF ROWS:", len(df))
+    df = pd.read_csv(io.BytesIO(data), header=None)
 
     conn = get_conn()
+
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT 1")
 
-        batch_size = 1000
+        for _, row in df.iterrows():
 
-        for i, (_, row) in enumerate(df.iterrows(), start=1):
             record = {
                 "department": "Warrant of Restitution",
                 "source_file": blob_name,
 
-                "full_name": (
-                    None
-                    if pd.isna(row.get("Tenant, Defendant, or Respondent Name"))
-                    else str(row.get("Tenant, Defendant, or Respondent Name")).strip()
-                ),
+                "full_name": str(row[6]).strip() if pd.notna(row[6]) else None,
+                "case_number": str(row[3]).strip() if pd.notna(row[3]) else None,
 
-                "case_number": (
-                    None
-                    if pd.isna(row.get("Case Number"))
-                    else str(row.get("Case Number")).strip()
-                ),
+                "intake_date": safe_sql_date(row[1]),
+                "issue_date": safe_sql_date(row[2]),
 
-                "intake_date": safe_sql_date(row.get("Intake Date")),
-                "issue_date": safe_sql_date(row.get("Court Issued Date")),
+                "address": str(row[7]).strip() if pd.notna(row[7]) else None,
 
-                "address": (
-                    None
-                    if pd.isna(row.get("Tenant, Defendant or Respondent Address"))
-                    else str(row.get("Tenant, Defendant or Respondent Address")).strip()
-                ),
-
-                "city": None,
-                "state": None,
-                "postal_code": None,
-
-                "court_document_type": (
-                    None
-                    if pd.isna(row.get("Court Document Type"))
-                    else str(row.get("Court Document Type")).strip()
-                ),
-
-                "disposition": (
-                    None
-                    if pd.isna(row.get("Adminstrative Status"))
-                    else str(row.get("Adminstrative Status")).strip()
-                ),
-
-                "notes": (
-                    None
-                    if pd.isna(row.get("Comments"))
-                    else str(row.get("Comments")).strip()
-                ),
+                "court_document_type": str(row[4]).strip() if pd.notna(row[4]) else None,
+                "disposition": str(row[10]).strip() if pd.notna(row[10]) else None,
+                "notes": str(row[12]).strip() if pd.notna(row[12]) else None,
             }
 
             record_id = insert_search_record_fsdw(cursor, record)
             insert_raw_record(cursor, record_id, blob_name, row.to_dict())
 
-            if i % batch_size == 0:
-                conn.commit()
-                print(f">>> WOR committed {i} rows")
-
         conn.commit()
+
     finally:
         conn.close()
 
