@@ -112,15 +112,19 @@ for blob in container_client.list_blobs():
     records = []
 
     # ============================
-    # PARSE PDF (EXACT SAME LOGIC)
+    # PARSE PDF (EXACT SAME AS JAIL POP)
     # ============================
     print("DEBUG: Extracting text rows...")
 
     with pdfplumber.open(PDF_PATH) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
+            
             if not text:
                 continue
+            
+
+            
 
             for line in text.split("\n"):
                 line = line.strip()

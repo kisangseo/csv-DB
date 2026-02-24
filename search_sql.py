@@ -10,7 +10,6 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         facility AS facility,
         case_number AS case_number,
         address AS address,
-        
         notes AS notes,
         warrant_type AS warrant_type,
         court_document_type,
@@ -19,7 +18,6 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         warrant_status AS warrant_status,
         disposition AS disposition,
         warrant_id_number,
-        
         sex AS sex,
         race AS race,
         issuing_county AS issuing_county,

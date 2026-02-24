@@ -73,18 +73,13 @@ def ingest_one_doc_csv(blob_name):
 
     conn = get_conn()
     cursor = conn.cursor()
-    # ✅ SKIP if already ingested
-    if already_ingested(cursor, DEPARTMENT_NAME, blob_name):
-        print("SKIP (already ingested):", blob_name)
-        conn.close()
-        return
+ 
 
-    # Delete old rows for this same snapshot file
+    # ✅ Snapshot reset: keep ONLY today's jail list
     cursor.execute("""
         DELETE FROM search.records
         WHERE department = ?
-          AND source_file = ?
-    """, DEPARTMENT_NAME, blob_name)
+    """, DEPARTMENT_NAME)
 
     inserted = 0
 

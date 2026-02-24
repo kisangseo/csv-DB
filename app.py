@@ -570,113 +570,19 @@ def run_active_warrants():
 def run_warrant_of_restitution():
     return {"OK"}
 
+from flask import request
+
+@app.route("/ingest-wor", methods=["POST"])
+def ingest_wor_route():
+    blob_name = request.json["blob_name"]
+    from ingest import ingest_wor_csv
+    ingest_wor_csv(blob_name)
+
+    return {"status": "success"}
+
 # ============================================================
 # SEARCH ENDPOINT
 # ============================================================
-
-
-
-
-# LEGACY CSV SEARCH (parked, not deleted)
-def legacy_search_all():
-    if df.empty:
-        return jsonify({"error": "No data loaded"}), 500
-
-    params = {
-        k: request.args.get(k, "").strip().lower()
-        for k in ["name", "address", "case_number", "intake_date"]
-    }
-
-    all_filtered = {}
-
-    for dept, records in PROCESSED.items():
-        dept_df = pd.DataFrame(records)
-        search_df = dept_df.copy()
-
-        search_df.columns = [normalize_col(c) for c in search_df.columns]
-
-       
-
-        # TEXT FILTERS
-        for key, val in params.items():
-            if key == "intake_date":
-                continue
-            if not val:
-                continue
-
-            user_tokens = [clean_str(t) for t in val.split() if t.strip()]
-
-            possible_cols = [
-                c for c in search_df.columns if key.replace("_", " ") in c
-            ]
-
-            if not possible_cols:
-                continue
-
-            col = possible_cols[0]
-
-            def matches(cell):
-                if cell is None:
-                    return False
-
-                raw = str(cell).lower()
-                for p in string.punctuation:
-                    raw = raw.replace(p, " ")
-
-                cell_tokens = [clean_str(t) for t in raw.split() if t.strip()]
-
-                for ut in user_tokens:
-                    if not any(ut in ct or fuzzy_match(ct, ut) for ct in cell_tokens):
-                        return False
-                return True
-
-            search_df = search_df[search_df[col].apply(matches)]
-
-        # DATE FILTERING
-        dr = params["intake_date"]
-        if dr:
-            raw = dr.replace("  ", " ").strip()
-
-            if "to" in raw:
-                parts = [p.strip() for p in raw.split("to")]
-                if len(parts) == 2 and parts[0] and parts[1]:
-                    start_str, end_str = parts
-                else:
-                    start_str = end_str = parts[0]
-            else:
-                start_str = end_str = raw
-
-            start = pd.to_datetime(start_str, errors="coerce")
-            end = pd.to_datetime(end_str, errors="coerce")
-
-            dept_lower = dept.lower()
-
-            if dept_lower == "domestic violence department":
-                date_col = "hearing date"
-            else:
-                date_col = "intake date"
-
-            if normalize_col(date_col) in search_df.columns:
-                clean = (
-                    search_df[normalize_col(date_col)]
-                    .astype(str)
-                    .str.replace(",", "")
-                    .str.strip()
-                )
-                parsed = pd.to_datetime(clean, errors="coerce")
-                mask = (parsed >= start) & (parsed <= end)
-                search_df = search_df[mask.fillna(False)]
-
-        if not search_df.empty:
-            filtered = dept_df.loc[search_df.index]
-            limited = filtered.head(200)
-
-            all_filtered[dept] = {
-                "count": len(limited),
-                "records": limited.to_dict(orient="records"),
-            }
-
-    return jsonify(all_filtered)
 
 
 
