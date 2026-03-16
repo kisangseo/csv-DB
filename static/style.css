@@ -478,9 +478,10 @@ textarea.modal-control {
 
 .address-fields-inline {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 140px;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 130px;
+  gap: 4px;
   align-items: end;
+  width: 100%;
 }
 
 .address-main-col,
@@ -490,6 +491,10 @@ textarea.modal-control {
   gap: 6px;
 }
 
+.address-inline-row .address-main-col .modal-control {
+  width: 100%;
+}
+
 .address-inline-row .address-apt-col .modal-control {
-  max-width: 140px;
+  max-width: 130px;
 }
