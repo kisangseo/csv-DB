@@ -58,7 +58,7 @@
             <option value="Asian/Pacific Islander">Asian/Pacific Islander</option>
             <option value="Multi-Race">Multi-Race</option>
             <option value="Indian or Alaskan Native">Indian or Alaskan Native</option>
-            <option value="Other">Other</option>
+            <option value="Unknown">Unknown</option>
           </select>
 
           <select id="issuing_county">
@@ -86,6 +86,8 @@
             <option value="Washington County">Washington County</option>
             <option value="Wicomico County">Wicomico County</option>
             <option value="Worcester County">Worcester County</option>
+            <option value="Baltimore City">Baltimore City</option>
+            <option value="Outside of Maryland">Outside of Maryland</option>
           </select>
 
           <input
@@ -271,12 +273,14 @@
           "Talbot County",
           "Washington County",
           "Wicomico County",
-          "Worcester County"
+          "Worcester County",
+          "Baltimore City",
+          "Outside of Maryland"
         ],
         warrant_status: ["Active", "Served", "Detainer", "Quashed"],
         warrant_type: ["Arrest Warrant VOP", "Arrest Warrant FTA", "Civil", "Juvenile", "Body Attachment", "Other"],
         sex: ["Male", "Female", "Other"],
-        race: ["Black", "White", "Asian/Pacific Islander", "Multi-Race", "Indian or Alaskan Native", "Other"]
+        race: ["Black", "White", "Asian/Pacific Islander", "Multi-Race", "Indian or Alaskan Native", "Unknown"]
       };
 
       const REQUIRED_FIELDS_BY_TABLE = {
@@ -438,13 +442,15 @@
         }
 
         status.textContent = "Saved successfully.";
-        setTimeout(() => {
-          closeModal();
-        }, 400);
+        closeModal();
+
+        await search({ preventDefault: () => {} });
       }
 
       async function search(event) {
-        event.preventDefault();
+        if (event && typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
 
         const status = document.getElementById("statusMessage");
         const resultsDiv = document.getElementById("results");
