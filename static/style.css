@@ -380,6 +380,15 @@ table td.name-col {
   cursor: pointer;
 }
 
+.table-actions-cell {
+  display: flex;
+  gap: 8px;
+}
+
+.danger-btn {
+  background: #c0392b;
+}
+
 .modal {
   position: fixed;
   inset: 0;

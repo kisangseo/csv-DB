@@ -21,6 +21,36 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 app.permanent_session_lifetime = timedelta(hours=12)
 
 
+def get_current_permission() -> str:
+    permission = (session.get("permission") or "").strip().lower()
+    if permission:
+        return permission
+
+    user_id = session.get("user_id")
+    if not user_id:
+        return ""
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT permission FROM search.users WHERE user_id = ?", user_id)
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    permission = (row[0] if row and row[0] else "").strip().lower()
+    session["permission"] = permission
+    return permission
+
+
+def can_edit_records() -> bool:
+    return get_current_permission() in {"admin", "edit"}
+
+
+def can_delete_records() -> bool:
+    return get_current_permission() == "admin"
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
@@ -39,7 +69,7 @@ def login():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT user_id, password_hash, must_change_password
+        SELECT user_id, password_hash, must_change_password, permission
         FROM search.users
         WHERE email = ? AND is_active = 1
     """, email)
@@ -49,12 +79,13 @@ def login():
     if not row:
         return "Invalid login", 401
 
-    user_id, pw, must_change = row
+    user_id, pw, must_change, permission = row
 
     if password != pw:
         return "Invalid login", 401
     session.permanent = True
     session["user_id"] = user_id
+    session["permission"] = (permission or "").strip().lower()
 
     if must_change:
         return redirect("/change-password")
@@ -71,7 +102,7 @@ def home():
     if "user_id" not in session:
         return redirect("/login")
 
-    return render_template("index.html")
+    return render_template("index.html", user_permission=get_current_permission())
 @app.route("/change-password", methods=["GET","POST"])
 def change_password():
     if "user_id" not in session:
@@ -617,6 +648,8 @@ def table_definitions():
 def create_record():
     if "user_id" not in session:
         return jsonify({"error": "Unauthorized"}), 401
+    if not can_edit_records():
+        return jsonify({"error": "You do not have permission to add records"}), 403
 
     payload = request.get_json(silent=True) or {}
     table_name = (payload.get("table") or "").strip()
@@ -679,6 +712,8 @@ def create_record():
 def update_record(record_id):
     if "user_id" not in session:
         return jsonify({"error": "Unauthorized"}), 401
+    if not can_edit_records():
+        return jsonify({"error": "You do not have permission to edit records"}), 403
 
     payload = request.get_json(silent=True) or {}
     updates = payload.get("fields") or {}
@@ -714,6 +749,26 @@ def update_record(record_id):
             f"UPDATE search.records SET {', '.join(set_parts)} WHERE record_id = ?",
             tuple(values)
         )
+        if cur.rowcount == 0:
+            return jsonify({"error": "Record not found"}), 404
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"status": "success"})
+
+
+@app.route("/records/<int:record_id>", methods=["DELETE"])
+def delete_record(record_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    if not can_delete_records():
+        return jsonify({"error": "Only admins can delete records"}), 403
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM search.records WHERE record_id = ?", record_id)
         if cur.rowcount == 0:
             return jsonify({"error": "Record not found"}), 404
         conn.commit()
