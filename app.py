@@ -234,6 +234,47 @@ def get_col(subdf: pd.DataFrame, logical_key: str):
 # ============================================================
 
 
+
+
+TABLE_DEFINITIONS = {
+    "Warrants to Audit": {
+        "department": "Active Warrants",
+        "fields": [
+            "full_name", "case_number", "issue_date", "date_of_birth",
+            "sex", "race", "issuing_county", "disposition"
+        ]
+    },
+    "Baltimore Jail Population": {
+        "department": "Baltimore Jail Population",
+        "fields": ["sid", "full_name", "date_of_birth", "facility"]
+    },
+    "BCSO Active Warrants": {
+        "department": "BCSO_ACTIVE_WARRANTS",
+        "fields": [
+            "issuing_county", "case_number", "warrant_id_number", "warrant_type",
+            "issue_date", "warrant_status", "full_name", "sid", "date_of_birth",
+            "race", "sex", "address", "notes"
+        ]
+    },
+    "Warrant of Restitution - MDEC": {
+        "department": "WARRANT OF RESTITUTION - MDEC",
+        "fields": ["full_name", "case_number", "address", "court_document_type", "intake_date", "disposition"]
+    },
+    "Field Services Department": {
+        "department": "Field Services Department",
+        "fields": ["full_name", "case_number", "address", "intake_date", "disposition", "notes"]
+    }
+}
+
+ALL_EDITABLE_COLUMNS = {
+    "department", "source_file", "first_name", "last_name", "full_name", "date_of_birth", "sid",
+    "case_number", "warrant_id_number", "warrant_type", "warrant_status", "issue_date", "intake_date",
+    "address", "city", "state", "postal_code", "court_document_type", "disposition", "notes",
+    "sex", "race", "issuing_county", "facility"
+}
+
+DATE_FIELDS = {"date_of_birth", "issue_date", "intake_date"}
+
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
@@ -559,6 +600,119 @@ for rec in PROCESSED.get("Field Services Department - Civil Intake", []):
     print(rec)
     break  # print just first row
 """
+
+
+@app.route("/table_definitions")
+def table_definitions():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    return jsonify(TABLE_DEFINITIONS)
+
+
+@app.route("/records", methods=["POST"])
+def create_record():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    table_name = (payload.get("table") or "").strip()
+    table_info = TABLE_DEFINITIONS.get(table_name)
+    if not table_info:
+        return jsonify({"error": "Invalid table selection"}), 400
+
+    fields = payload.get("fields") or {}
+    insert_data = {"department": table_info["department"], "source_file": "manual_entry"}
+
+    for column in table_info["fields"]:
+        if column not in ALL_EDITABLE_COLUMNS:
+            continue
+        value = fields.get(column)
+        if value is None:
+            continue
+        clean_value = str(value).strip()
+        if clean_value == "":
+            continue
+        if column in DATE_FIELDS:
+            parsed = pd.to_datetime(clean_value, errors="coerce")
+            clean_value = None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+            if clean_value is None:
+                continue
+        insert_data[column] = clean_value
+
+    if "full_name" not in insert_data:
+        first = insert_data.get("first_name", "")
+        last = insert_data.get("last_name", "")
+        combined = f"{first} {last}".strip()
+        if combined:
+            insert_data["full_name"] = combined
+
+    columns = list(insert_data.keys())
+    placeholders = ", ".join(["?"] * len(columns))
+    sql = f"""
+        INSERT INTO search.records ({", ".join(columns)})
+        OUTPUT INSERTED.record_id
+        VALUES ({placeholders})
+    """
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(sql, tuple(insert_data[c] for c in columns))
+        record_id = cur.fetchone()[0]
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"status": "success", "record_id": record_id})
+
+
+@app.route("/records/<int:record_id>", methods=["PATCH"])
+def update_record(record_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    updates = payload.get("fields") or {}
+
+    set_parts = []
+    values = []
+
+    for column, value in updates.items():
+        if column not in ALL_EDITABLE_COLUMNS:
+            continue
+
+        clean_value = ("" if value is None else str(value)).strip()
+        if clean_value == "":
+            db_value = None
+        elif column in DATE_FIELDS:
+            parsed = pd.to_datetime(clean_value, errors="coerce")
+            db_value = None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+        else:
+            db_value = clean_value
+
+        set_parts.append(f"{column} = ?")
+        values.append(db_value)
+
+    if not set_parts:
+        return jsonify({"error": "No valid fields provided"}), 400
+
+    values.append(record_id)
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE search.records SET {', '.join(set_parts)} WHERE record_id = ?",
+            tuple(values)
+        )
+        if cur.rowcount == 0:
+            return jsonify({"error": "Record not found"}), 404
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"status": "success"})
+
 @app.route("/run-active-warrants", methods=["POST"])
 def run_active_warrants():
     
