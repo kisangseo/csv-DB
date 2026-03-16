@@ -474,3 +474,22 @@ textarea.modal-control {
     grid-template-columns: 1fr;
   }
 }
+
+
+.address-fields-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: 10px;
+  align-items: end;
+}
+
+.address-main-col,
+.address-apt-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.address-inline-row .address-apt-col .modal-control {
+  max-width: 140px;
+}
