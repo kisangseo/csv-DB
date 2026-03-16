@@ -19,6 +19,7 @@
       <input type="text" id="case_number" name="case_number" placeholder="Case Number">
       <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
       <input type="hidden" id="intake_date_hidden" name="intake_date">
+      <button type="button" id="addRecordBtn" class="secondary-btn">Add</button>
       <button type="submit">Search</button>
       <!-- Advanced Search -->
       <details class="advanced-search" closed>
@@ -79,6 +80,21 @@
     <p id="statusMessage"></p>
 
     <div id="results"></div>
+
+    <div id="recordModal" class="modal hidden">
+      <div class="modal-content">
+        <h3 id="modalTitle">Add Record</h3>
+        <label for="tableSelect">Select table</label>
+        <select id="tableSelect"></select>
+        <div id="dynamicFields" class="dynamic-fields"></div>
+        <div class="modal-actions">
+          <button type="button" id="saveRecordBtn">Save</button>
+          <button type="button" id="cancelRecordBtn" class="secondary-btn">Cancel</button>
+        </div>
+        <p id="modalStatus"></p>
+      </div>
+    </div>
+
 
     <!-- Flatpickr JS -->
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
@@ -141,7 +157,7 @@
       
 
     <script>
-       const FIELD_MAP = {
+      const FIELD_MAP = {
         "Name": "name",
         "SID": "sid",
         "Case Number": "case_number",
@@ -151,7 +167,6 @@
         "Date": "record_date",
         "Warrant Status": "warrant_status",
         "Type": "court_document_type",
-        
         "Status": "disposition",
         "Date of Birth": "date_of_birth",
         "Facility": "facility",
@@ -159,36 +174,176 @@
         "Race": "race",
         "Issuing County": "issuing_county",
         "1st Charge": "disposition",
-
-
-        // future-proofing (won’t be used yet, but safe)
         "Intake Date": "intake_date",
         "Court Document Type": "court_document_type",
         "Current Disposition": "disposition",
         "Respondent Name": "name",
         "Event Date": "record_date",
-        "Event Type": "disposition"
-
-        
+        "Event Type": "disposition",
+        "LKA": "address",
+        "Warrant ID Number": "warrant_id_number",
+        "Order Type": "court_document_type",
+        "Hearing Date": "record_date",
+        "Order Status": "warrant_status",
+        "Notes": "notes"
       };
+
+      const FIELD_LABELS = {
+        full_name: "Name",
+        case_number: "Case Number",
+        issue_date: "Issue Date",
+        date_of_birth: "Date of Birth",
+        sex: "Sex",
+        race: "Race",
+        issuing_county: "Issuing County",
+        disposition: "Disposition",
+        sid: "SID",
+        facility: "Facility",
+        warrant_id_number: "Warrant ID Number",
+        warrant_type: "Warrant Type",
+        warrant_status: "Warrant Status",
+        address: "Address",
+        notes: "Notes",
+        court_document_type: "Type",
+        intake_date: "Intake Date"
+      };
+
+      const TABLE_FIELD_MAP = {
+        "Warrants to Audit": ["full_name","case_number","issue_date","date_of_birth","sex","race","issuing_county","disposition"],
+        "Baltimore Jail Population": ["sid","full_name","date_of_birth","facility"],
+        "BCSO Active Warrants": ["issuing_county","case_number","warrant_id_number","warrant_type","issue_date","warrant_status","full_name","sid","date_of_birth","race","sex","address","notes"],
+        "Warrant of Restitution - MDEC": ["full_name","case_number","address","court_document_type","intake_date","disposition"],
+        "Field Services Department": ["full_name","case_number","address","intake_date","disposition","notes"]
+      };
+
+      const DEPT_TO_TABLE = {
+        "active warrants": "Warrants to Audit",
+        "baltimore jail population": "Baltimore Jail Population",
+        "bcso active warrants": "BCSO Active Warrants",
+        "warrant of restitution - mdec": "Warrant of Restitution - MDEC",
+        "field services department": "Field Services Department",
+        "field services department - civil intake": "Field Services Department",
+        "field services department - civil survey": "Field Services Department",
+        "field services department - warrants": "Field Services Department"
+      };
+
+      let tableDefinitions = {};
+      let activeEditContext = null;
+
+      function openModal({mode, tableName, values = {}, recordId = null}) {
+        const modal = document.getElementById("recordModal");
+        const title = document.getElementById("modalTitle");
+        const tableSelect = document.getElementById("tableSelect");
+        const status = document.getElementById("modalStatus");
+        status.textContent = "";
+
+        activeEditContext = {mode, recordId};
+        title.textContent = mode === "edit" ? "Edit Record" : "Add Record";
+        tableSelect.value = tableName || tableSelect.options[0]?.value;
+        tableSelect.disabled = mode === "edit";
+        renderDynamicFields(tableSelect.value, values);
+
+        modal.classList.remove("hidden");
+      }
+
+      function closeModal() {
+        document.getElementById("recordModal").classList.add("hidden");
+        activeEditContext = null;
+      }
+
+      function renderDynamicFields(tableName, values = {}) {
+        const fieldsDiv = document.getElementById("dynamicFields");
+        fieldsDiv.innerHTML = "";
+        const fields = (tableDefinitions[tableName] && tableDefinitions[tableName].fields) || TABLE_FIELD_MAP[tableName] || [];
+
+        fields.forEach(field => {
+          const wrapper = document.createElement("div");
+          const label = document.createElement("label");
+          label.textContent = FIELD_LABELS[field] || field;
+
+          const input = document.createElement("input");
+          input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+          input.dataset.field = field;
+          input.value = values[field] ?? "";
+
+          wrapper.appendChild(label);
+          wrapper.appendChild(input);
+          fieldsDiv.appendChild(wrapper);
+        });
+      }
+
+      async function loadTableDefinitions() {
+        const response = await fetch(`${window.location.origin}/table_definitions`);
+        tableDefinitions = await response.json();
+        const tableSelect = document.getElementById("tableSelect");
+        tableSelect.innerHTML = "";
+        Object.keys(tableDefinitions).forEach(tableName => {
+          const opt = document.createElement("option");
+          opt.value = tableName;
+          opt.textContent = tableName;
+          tableSelect.appendChild(opt);
+        });
+      }
+
+      function mapRowToFields(dept, row) {
+        const tableName = DEPT_TO_TABLE[dept.toLowerCase()] || "Field Services Department";
+        const fields = (tableDefinitions[tableName] && tableDefinitions[tableName].fields) || TABLE_FIELD_MAP[tableName] || [];
+        const out = {};
+
+        fields.forEach(field => {
+          if (field === "full_name") out[field] = row.name || "";
+          else if (field === "issue_date") out[field] = row.record_date || "";
+          else out[field] = row[field] || "";
+        });
+        return {tableName, out};
+      }
+
+      async function saveRecord() {
+        const status = document.getElementById("modalStatus");
+        const tableName = document.getElementById("tableSelect").value;
+        const inputs = Array.from(document.querySelectorAll("#dynamicFields input"));
+        const fields = {};
+        inputs.forEach(input => fields[input.dataset.field] = input.value);
+
+        const isEdit = activeEditContext && activeEditContext.mode === "edit";
+        const url = isEdit
+          ? `${window.location.origin}/records/${activeEditContext.recordId}`
+          : `${window.location.origin}/records`;
+        const method = isEdit ? "PATCH" : "POST";
+        const payload = isEdit ? {fields} : {table: tableName, fields};
+
+        const response = await fetch(url, {
+          method,
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const err = await response.json();
+          status.textContent = err.error || "Unable to save.";
+          return;
+        }
+
+        status.textContent = "Saved successfully.";
+        setTimeout(() => {
+          closeModal();
+          document.getElementById("searchForm").requestSubmit();
+        }, 400);
+      }
+
       async function search(event) {
         event.preventDefault();
 
         const status = document.getElementById("statusMessage");
         const resultsDiv = document.getElementById("results");
-
-        // Show loading state
         resultsDiv.innerHTML = "";
         status.textContent = "Searching...";
         status.classList.add("loading");
 
-        // Read date from hidden field (always set by flatpickr)
-        let d = document.getElementById("intake_date_hidden").value;
-
         const params = new URLSearchParams({
           name: document.getElementById("name").value,
           case_number: document.getElementById("case_number").value,
-          intake_date: d,
+          intake_date: document.getElementById("intake_date_hidden").value,
           last_x_days: document.getElementById("last_x_days").value,
           sex: document.getElementById("sex").value,
           race: document.getElementById("race").value,
@@ -196,10 +351,10 @@
           sid: document.getElementById("sid").value,
           dob: document.getElementById("dob").value
         });
+
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
           const data = await response.json();
-
           status.classList.remove("loading");
 
           if (Object.keys(data).length === 0) {
@@ -213,7 +368,6 @@
           for (const [dept, info] of Object.entries(data)) {
             const rows = info.records;
             const count = info.count;
-
             const div = document.createElement("div");
             div.className = "department";
 
@@ -224,23 +378,17 @@
               "baltimore jail population": "Baltimore Jail Population",
               "field services department": "Landlord Tenant",
               "active warrants": "Warrants to Audit",
-
             };
-
             title.textContent = DISPLAY_NAMES[dept.toLowerCase()] || dept;
-          
             div.appendChild(title);
 
+            const content = document.createElement("div");
+            content.className = "department-content";
             const countText = document.createElement("div");
             countText.className = "count";
             countText.textContent = `Results: ${count} record${count !== 1 ? "s" : ""}`;
-
-            // ✅ collapsible container (we'll put count + table inside this)
-            const content = document.createElement("div");
-            content.className = "department-content";
             content.appendChild(countText);
 
-            // ✅ click-to-collapse on the title
             title.style.cursor = "pointer";
             title.textContent = `▼ ${title.textContent}`;
             title.addEventListener("click", () => {
@@ -250,112 +398,16 @@
 
             const table = document.createElement("table");
             let headers = [];
-
-            if (dept === "Domestic Violence Department") {
-              headers = [
-                "Name",
-                "Case Number",
-                "Address",
-                "Order Type",
-                "Hearing Date",
-                "Order Status"
-              ];
-            } else if (dept.toLowerCase() === "bcso active warrants") {
-                headers = [
-                  "Issuing County",
-                  "Case Number",
-                  "Warrant ID Number",
-                  "Warrant Type",
-                  "Issue Date",
-                  "Warrant Status",
-                  "Name",
-                  "SID",
-                  "Date of Birth",
-                  "Race",
-                  "Sex",
-                  "LKA",
-                  "Notes"
-                ];
-        
-
-            } else if (dept === "Field Services Department - Civil Intake"
-                    || dept === "Field Services Department - Civil Survey"
-                    
-                    
-                    || dept === "Field Services Department - Warrants") {
-
-              headers = [
-                "Name",
-                "Case Number",
-                "Address",
-                "Court Document Type",
-                "Intake Date",
-                "Current Disposition"
-              ];
-            } 
-              else if (dept.toLowerCase() === "warrant of restitution - mdec") {
-              headers = [
-                  "Name",
-                  "Case Number",
-                  "Address",
-                  "Type",
-                  "Date",
-                  "Status"
-              ];
-          }
-              else if (dept.toLowerCase() === "active warrants") {
-              headers = [
-                "Name",
-                "Case Number",
-                "Issue Date",
-                "Date of Birth",
-                "Sex",
-                "Race",
-                "Issuing County",
-                "1st Charge"
-              ];
+            if (dept.toLowerCase() === "bcso active warrants") {
+              headers = ["Issuing County","Case Number","Warrant ID Number","Warrant Type","Issue Date","Warrant Status","Name","SID","Date of Birth","Race","Sex","LKA","Notes"];
+            } else if (dept.toLowerCase() === "active warrants") {
+              headers = ["Name","Case Number","Issue Date","Date of Birth","Sex","Race","Issuing County","1st Charge"];
+            } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
+              headers = ["SID","Name","Date of Birth","Facility"];
+            } else {
+              headers = ["Name","Case Number","Address","Court Document Type","Intake Date","Current Disposition"];
             }
-              else if (dept === dept === "Field Services Department - Civil" ||
-                    dept === "Field Services Department") {
-
-              headers = [
-                
-                "Respondent Name",
-                "Case Number",
-                "Address",
-                "Event Date",
-                "Event Type"
-              ];
-            
-              
-              
-            } 
-            
-              else if (
-                dept.toLowerCase() === "baltimore jail population"
-                || dept.toLowerCase() === "doc jail population"
-              ) {
-
-                headers = [
-                  "SID",
-                  "Name",
-                  "Date of Birth",
-                  "Facility"
-                ];
-              }
-              else if (dept === "Warrants") {
-                  return; //skip displaying it
-              headers = [
-                "Name",
-                "SID",
-                "Case Number",
-                "Address",
-                "Warrant Type",
-                "Issue Date",
-                "Warrant Status"
-              ];
-
-            }
+            headers.push("Edit");
 
             const thead = document.createElement("thead");
             const headerRow = document.createElement("tr");
@@ -368,78 +420,40 @@
             table.appendChild(thead);
 
             const tbody = document.createElement("tbody");
-
             rows.forEach(row => {
               const tr = document.createElement("tr");
-
-              let cells;
-              if (dept.toLowerCase() === "bcso active warrants") {
-                console.log("DEBUG BCSO ROW:", row.record_date, row.warrant_id_number);
-                cells = [
-                  row.issuing_county,
-                  row.case_number,
-                  row.warrant_id_number,
-                  row.warrant_type,
-                  row.record_date,   // ✅ NOT issue_date
-                  row.warrant_status,
-                  row.name,
-                  row.sid,
-                  row.date_of_birth,
-                  row.race,
-                  row.sex,
-                  row.address,        // LKA
-                  row.notes
-                ];
-              }
-              // ✅ Active Warrants: explicit order
-              else if (dept.toLowerCase() === "active warrants") {
-                cells = [
-                  row.name,
-                  row.case_number,
-                  row.record_date,
-                  row.date_of_birth,
-                  row.sex,
-                  row.race,
-                  row.issuing_county,
-                  row.disposition
-                ];
-              } else {
-                // 🔁 default behavior (everything else)
-                cells = headers.map(h => {
-
-                  // ✅ Global Address formatting
-                  if (h === "Address") {
-                    const fullAddress =
-                      [row.address, row.city, row.state]
-                        .filter(Boolean)
-                        .join(", ");
-                     
-
-                    return fullAddress;
-                  }
-
-                  // Normal behavior for all other fields
-                  const key = FIELD_MAP[h] || h;
-                  return row[key];
-                });
-              }
-
+              const dataHeaders = headers.slice(0, -1);
+              const cells = dataHeaders.map(h => {
+                if (h === "Address") return [row.address, row.city, row.state].filter(Boolean).join(", ");
+                const key = FIELD_MAP[h] || h;
+                return row[key] ?? "";
+              });
 
               cells.forEach(val => {
                 const td = document.createElement("td");
-                td.textContent = val ?? "";
+                td.textContent = val;
                 tr.appendChild(td);
               });
+
+              const editTd = document.createElement("td");
+              const editBtn = document.createElement("button");
+              editBtn.type = "button";
+              editBtn.textContent = "Edit";
+              editBtn.className = "table-action-btn";
+              editBtn.addEventListener("click", () => {
+                const {tableName, out} = mapRowToFields(dept, row);
+                openModal({mode: "edit", tableName, values: out, recordId: row.record_id});
+              });
+              editTd.appendChild(editBtn);
+              tr.appendChild(editTd);
 
               tbody.appendChild(tr);
             });
 
             table.appendChild(tbody);
-
             const wrapper = document.createElement("div");
             wrapper.className = "results-table-wrapper";
             wrapper.appendChild(table);
-
             content.appendChild(wrapper);
             div.appendChild(content);
             resultsDiv.appendChild(div);
@@ -450,6 +464,15 @@
           status.textContent = "Error occurred during search.";
         }
       }
+
+      document.getElementById("addRecordBtn").addEventListener("click", () => {
+        openModal({mode: "add", tableName: document.getElementById("tableSelect").value || Object.keys(tableDefinitions)[0]});
+      });
+      document.getElementById("tableSelect").addEventListener("change", (e) => renderDynamicFields(e.target.value));
+      document.getElementById("cancelRecordBtn").addEventListener("click", closeModal);
+      document.getElementById("saveRecordBtn").addEventListener("click", saveRecord);
+
+      loadTableDefinitions();
     </script>
 
   

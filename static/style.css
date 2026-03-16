@@ -353,3 +353,59 @@ table td {
 table td.name-col {
   text-align: left !important;
 }
+.secondary-btn {
+  background: #2d6cff !important;
+}
+
+.table-action-btn {
+  background: #2d6cff;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal.hidden { display: none; }
+
+.modal-content {
+  background: #fff;
+  border-radius: 10px;
+  padding: 18px;
+  width: min(700px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.dynamic-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.dynamic-fields label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dynamic-fields input {
+  width: 100%;
+  padding: 8px;
+}
+
+.modal-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+}

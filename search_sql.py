@@ -4,6 +4,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
 
     sql = """
     SELECT
+        record_id,
         full_name AS name,
         sid AS sid,
         FORMAT(date_of_birth, 'yyyy-MM-dd') AS date_of_birth,
