@@ -184,6 +184,10 @@
       
 
     <script>
+      const USER_PERMISSION = {{ (user_permission or "") | tojson }};
+      const CAN_EDIT = ["admin", "edit"].includes((USER_PERMISSION || "").toLowerCase());
+      const CAN_DELETE = (USER_PERMISSION || "").toLowerCase() === "admin";
+
       const FIELD_MAP = {
         "Name": "name",
         "SID": "sid",
@@ -392,6 +396,12 @@
       }
 
       async function saveRecord() {
+        if (!CAN_EDIT) {
+          const status = document.getElementById("modalStatus");
+          status.textContent = "You do not have permission to edit records.";
+          return;
+        }
+
         const status = document.getElementById("modalStatus");
         const tableName = document.getElementById("tableSelect").value;
         const inputs = Array.from(document.querySelectorAll("#dynamicFields input, #dynamicFields select, #dynamicFields textarea"));
@@ -507,7 +517,7 @@
             } else {
               headers = ["Name","Case Number","Address","Court Document Type","Intake Date","Current Disposition"];
             }
-            headers.push("Edit");
+            headers.push("Actions");
 
             const thead = document.createElement("thead");
             const headerRow = document.createElement("tr");
@@ -535,17 +545,57 @@
                 tr.appendChild(td);
               });
 
-              const editTd = document.createElement("td");
+              const actionsTd = document.createElement("td");
+              actionsTd.className = "table-actions-cell";
+
               const editBtn = document.createElement("button");
               editBtn.type = "button";
               editBtn.textContent = "Edit";
               editBtn.className = "table-action-btn";
               editBtn.addEventListener("click", () => {
+                if (!CAN_EDIT) {
+                  alert("You do not have permission to edit records.");
+                  return;
+                }
                 const {tableName, out} = mapRowToFields(dept, row);
                 openModal({mode: "edit", tableName, values: out, recordId: row.record_id});
               });
-              editTd.appendChild(editBtn);
-              tr.appendChild(editTd);
+              actionsTd.appendChild(editBtn);
+
+              const deleteBtn = document.createElement("button");
+              deleteBtn.type = "button";
+              deleteBtn.textContent = "Delete";
+              deleteBtn.className = "table-action-btn danger-btn";
+              deleteBtn.addEventListener("click", async () => {
+                if (!CAN_DELETE) {
+                  alert("You do not have permission to delete records.");
+                  return;
+                }
+
+                const confirmed = window.confirm("Are you sure you want to delete this record?");
+                if (!confirmed) {
+                  return;
+                }
+
+                const response = await fetch(`${window.location.origin}/records/${row.record_id}`, {
+                  method: "DELETE"
+                });
+
+                if (!response.ok) {
+                  let errText = "Unable to delete record.";
+                  try {
+                    const err = await response.json();
+                    errText = err.error || errText;
+                  } catch (_) {}
+                  alert(errText);
+                  return;
+                }
+
+                tr.remove();
+              });
+              actionsTd.appendChild(deleteBtn);
+
+              tr.appendChild(actionsTd);
 
               tbody.appendChild(tr);
             });
@@ -566,6 +616,10 @@
       }
 
       document.getElementById("addRecordBtn").addEventListener("click", () => {
+        if (!CAN_EDIT) {
+          alert("You do not have permission to add records.");
+          return;
+        }
         openModal({mode: "add", tableName: document.getElementById("tableSelect").value || Object.keys(tableDefinitions)[0]});
       });
       document.getElementById("tableSelect").addEventListener("change", (e) => renderDynamicFields(e.target.value));
