@@ -41,8 +41,10 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         params.append(f"%{token}%")
 
     if case_number:
-        normalized_case_number = "".join(ch for ch in str(case_number) if ch not in {"/", " "})
-        sql += " AND REPLACE(REPLACE(case_number, '/', ''), ' ', '') LIKE ?"
+        normalized_case_number = "".join(
+            ch for ch in str(case_number) if ch not in {"/", " ", "-"}
+        )
+        sql += " AND REPLACE(REPLACE(REPLACE(case_number, '/', ''), ' ', ''), '-', '') LIKE ?"
         params.append(f"%{normalized_case_number}%")
     if date_start and date_end:
         sql += """
