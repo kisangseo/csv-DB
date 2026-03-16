@@ -401,11 +401,37 @@ table td.name-col {
   overflow-y: auto;
 }
 
+.modal-table-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.modal-table-row label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.modal-table-row select {
+  max-width: 320px;
+}
+
 .dynamic-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
   margin-top: 10px;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.modal-field.full-width {
+  grid-column: 1 / -1;
 }
 
 .dynamic-fields label {
@@ -413,13 +439,29 @@ table td.name-col {
   font-weight: 600;
 }
 
-.dynamic-fields input {
+.modal-control {
   width: 100%;
   padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+textarea.modal-control {
+  min-height: 78px;
+  resize: vertical;
 }
 
 .modal-actions {
   margin-top: 14px;
   display: flex;
   gap: 10px;
+}
+
+
+@media (max-width: 640px) {
+  .dynamic-fields {
+    grid-template-columns: 1fr;
+  }
 }
