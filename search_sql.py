@@ -53,8 +53,16 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         print("DEBUG params =", params)
 
     if sex:
-        sql += " AND sex = ?"
-        params.append(sex)
+        normalized_sex = sex.strip().lower()
+        if normalized_sex == "male":
+            sql += " AND LOWER(sex) IN (?, ?)"
+            params.extend(["male", "m"])
+        elif normalized_sex == "female":
+            sql += " AND LOWER(sex) IN (?, ?)"
+            params.extend(["female", "f"])
+        else:
+            sql += " AND LOWER(sex) = ?"
+            params.append(normalized_sex)
 
     if last_x_days:
         sql += """

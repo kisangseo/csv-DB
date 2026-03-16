@@ -46,24 +46,47 @@
           
           <select id="sex">
             <option value="">Sex (Any)</option>
-            <option value="M">Male</option>
-            <option value="F">Female</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
           </select>
 
           <select id="race">
             <option value="">Race (Any)</option>
-            <option value="black">Black</option>
-            <option value="white">White</option>
-            <option value="hispanic">Hispanic</option>
-            <option value="asian">Asian</option>
-            <option value="other">Other</option>
+            <option value="Black">Black</option>
+            <option value="White">White</option>
+            <option value="Asian/Pacific Islander">Asian/Pacific Islander</option>
+            <option value="Multi-Race">Multi-Race</option>
+            <option value="Indian or Alaskan Native">Indian or Alaskan Native</option>
+            <option value="Other">Other</option>
           </select>
 
-          <input
-            type="text"
-            id="issuing_county"
-            placeholder="Issuing County"
-          >
+          <select id="issuing_county">
+            <option value="">Issuing County (Any)</option>
+            <option value="Allegany County">Allegany County</option>
+            <option value="Anne Arundel County">Anne Arundel County</option>
+            <option value="Baltimore County">Baltimore County</option>
+            <option value="Calvert County">Calvert County</option>
+            <option value="Caroline County">Caroline County</option>
+            <option value="Carroll County">Carroll County</option>
+            <option value="Cecil County">Cecil County</option>
+            <option value="Charles County">Charles County</option>
+            <option value="Dorchester County">Dorchester County</option>
+            <option value="Frederick County">Frederick County</option>
+            <option value="Garrett County">Garrett County</option>
+            <option value="Harford County">Harford County</option>
+            <option value="Howard County">Howard County</option>
+            <option value="Kent County">Kent County</option>
+            <option value="Montgomery County">Montgomery County</option>
+            <option value="Prince George's County">Prince George's County</option>
+            <option value="Queen Anne's County">Queen Anne's County</option>
+            <option value="St. Mary's County">St. Mary's County</option>
+            <option value="Somerset County">Somerset County</option>
+            <option value="Talbot County">Talbot County</option>
+            <option value="Washington County">Washington County</option>
+            <option value="Wicomico County">Wicomico County</option>
+            <option value="Worcester County">Worcester County</option>
+          </select>
 
           <input
             type="number"
@@ -218,6 +241,38 @@
         "Field Services Department": ["full_name","case_number","address","intake_date","disposition","notes"]
       };
 
+      const BCSO_DROPDOWN_OPTIONS = {
+        issuing_county: [
+          "Allegany County",
+          "Anne Arundel County",
+          "Baltimore County",
+          "Calvert County",
+          "Caroline County",
+          "Carroll County",
+          "Cecil County",
+          "Charles County",
+          "Dorchester County",
+          "Frederick County",
+          "Garrett County",
+          "Harford County",
+          "Howard County",
+          "Kent County",
+          "Montgomery County",
+          "Prince George's County",
+          "Queen Anne's County",
+          "St. Mary's County",
+          "Somerset County",
+          "Talbot County",
+          "Washington County",
+          "Wicomico County",
+          "Worcester County"
+        ],
+        warrant_status: ["Active", "Served", "Detainer", "Quashed"],
+        warrant_type: ["Arrest Warrant VOP", "Arrest Warrant FTA", "Civil", "Juvenile", "Body Attachment", "Other"],
+        sex: ["Male", "Female", "Other"],
+        race: ["Black", "White", "Asian/Pacific Islander", "Multi-Race", "Indian or Alaskan Native", "Other"]
+      };
+
       const REQUIRED_FIELDS_BY_TABLE = {
         "BCSO Active Warrants": ["case_number", "issue_date", "full_name", "warrant_status"]
       };
@@ -268,11 +323,29 @@
           const isRequired = (REQUIRED_FIELDS_BY_TABLE[tableName] || []).includes(field);
           label.textContent = `${FIELD_LABELS[field] || field}${isRequired ? " *" : ""}`;
 
-          const input = document.createElement("input");
-          input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+          const bcsoOptions = tableName === "BCSO Active Warrants" ? BCSO_DROPDOWN_OPTIONS[field] : null;
+          const input = bcsoOptions ? document.createElement("select") : document.createElement("input");
           input.dataset.field = field;
-          input.value = values[field] ?? "";
           input.required = isRequired;
+
+          if (bcsoOptions) {
+            const emptyOption = document.createElement("option");
+            emptyOption.value = "";
+            emptyOption.textContent = `Select ${FIELD_LABELS[field] || field}`;
+            input.appendChild(emptyOption);
+
+            bcsoOptions.forEach(optionValue => {
+              const option = document.createElement("option");
+              option.value = optionValue;
+              option.textContent = optionValue;
+              input.appendChild(option);
+            });
+
+            input.value = values[field] ?? "";
+          } else {
+            input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+            input.value = values[field] ?? "";
+          }
 
           wrapper.appendChild(label);
           wrapper.appendChild(input);
