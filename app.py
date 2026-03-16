@@ -276,7 +276,7 @@ ALL_EDITABLE_COLUMNS = {
 DATE_FIELDS = {"date_of_birth", "issue_date", "intake_date"}
 
 REQUIRED_FIELDS_BY_TABLE = {
-    "BCSO Active Warrants": {"case_number", "issue_date", "full_name", "warrant_status"}
+    "BCSO Active Warrants": {"case_number", "warrant_type", "issue_date", "full_name", "warrant_status"}
 }
 
 CORS(app)

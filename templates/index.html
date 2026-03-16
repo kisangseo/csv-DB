@@ -109,8 +109,10 @@
     <div id="recordModal" class="modal hidden">
       <div class="modal-content">
         <h3 id="modalTitle">Add Record</h3>
-        <label for="tableSelect">Select table</label>
-        <select id="tableSelect"></select>
+        <div class="modal-table-row">
+          <label for="tableSelect">Select table</label>
+          <select id="tableSelect"></select>
+        </div>
         <div id="dynamicFields" class="dynamic-fields"></div>
         <div class="modal-actions">
           <button type="button" id="saveRecordBtn">Save</button>
@@ -274,7 +276,7 @@
       };
 
       const REQUIRED_FIELDS_BY_TABLE = {
-        "BCSO Active Warrants": ["case_number", "issue_date", "full_name", "warrant_status"]
+        "BCSO Active Warrants": ["case_number", "warrant_type", "issue_date", "full_name", "warrant_status"]
       };
 
       const DEPT_TO_TABLE = {
@@ -319,12 +321,20 @@
 
         fields.forEach(field => {
           const wrapper = document.createElement("div");
+          wrapper.className = "modal-field";
+          if (["address", "notes"].includes(field)) {
+            wrapper.classList.add("full-width");
+          }
+
           const label = document.createElement("label");
           const isRequired = (REQUIRED_FIELDS_BY_TABLE[tableName] || []).includes(field);
           label.textContent = `${FIELD_LABELS[field] || field}${isRequired ? " *" : ""}`;
 
           const bcsoOptions = tableName === "BCSO Active Warrants" ? BCSO_DROPDOWN_OPTIONS[field] : null;
-          const input = bcsoOptions ? document.createElement("select") : document.createElement("input");
+          const input = field === "notes"
+            ? document.createElement("textarea")
+            : (bcsoOptions ? document.createElement("select") : document.createElement("input"));
+          input.classList.add("modal-control");
           input.dataset.field = field;
           input.required = isRequired;
 
@@ -343,7 +353,9 @@
 
             input.value = values[field] ?? "";
           } else {
-            input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+            if (field !== "notes") {
+              input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+            }
             input.value = values[field] ?? "";
           }
 
@@ -382,7 +394,7 @@
       async function saveRecord() {
         const status = document.getElementById("modalStatus");
         const tableName = document.getElementById("tableSelect").value;
-        const inputs = Array.from(document.querySelectorAll("#dynamicFields input"));
+        const inputs = Array.from(document.querySelectorAll("#dynamicFields input, #dynamicFields select, #dynamicFields textarea"));
         const fields = {};
         inputs.forEach(input => fields[input.dataset.field] = input.value);
 
