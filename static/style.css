@@ -38,6 +38,16 @@ form {
   margin: 20px auto 30px;
   max-width: 900px;
 }
+
+.search-top-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
 /* ===== Modern Inputs ===== */
 #searchForm input[type="text"] {
   padding: 10px 14px;
@@ -186,6 +196,10 @@ tr:hover {
   form {
     flex-direction: column;
     max-width: 100%;
+  }
+
+  .search-top-row {
+    flex-wrap: wrap;
   }
 
   input, button {

@@ -15,12 +15,14 @@
     <h1>BCSO Search Portal</h1>
 
     <form id="searchForm" onsubmit="search(event)">
-      <input type="text" id="name" name="name" placeholder="Name">
-      <input type="text" id="case_number" name="case_number" placeholder="Case Number">
-      <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
-      <input type="hidden" id="intake_date_hidden" name="intake_date">
-      <button type="button" id="addRecordBtn" class="secondary-btn">Add</button>
-      <button type="submit">Search</button>
+      <div class="search-top-row">
+        <input type="text" id="name" name="name" placeholder="Name">
+        <input type="text" id="case_number" name="case_number" placeholder="Case Number">
+        <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
+        <input type="hidden" id="intake_date_hidden" name="intake_date">
+        <button type="button" id="addRecordBtn" class="secondary-btn">Add</button>
+        <button type="submit">Search</button>
+      </div>
       <!-- Advanced Search -->
       <details class="advanced-search" closed>
         <summary>Advanced Search</summary>
@@ -216,6 +218,10 @@
         "Field Services Department": ["full_name","case_number","address","intake_date","disposition","notes"]
       };
 
+      const REQUIRED_FIELDS_BY_TABLE = {
+        "BCSO Active Warrants": ["case_number", "issue_date", "full_name", "warrant_status"]
+      };
+
       const DEPT_TO_TABLE = {
         "active warrants": "Warrants to Audit",
         "baltimore jail population": "Baltimore Jail Population",
@@ -259,12 +265,14 @@
         fields.forEach(field => {
           const wrapper = document.createElement("div");
           const label = document.createElement("label");
-          label.textContent = FIELD_LABELS[field] || field;
+          const isRequired = (REQUIRED_FIELDS_BY_TABLE[tableName] || []).includes(field);
+          label.textContent = `${FIELD_LABELS[field] || field}${isRequired ? " *" : ""}`;
 
           const input = document.createElement("input");
           input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
           input.dataset.field = field;
           input.value = values[field] ?? "";
+          input.required = isRequired;
 
           wrapper.appendChild(label);
           wrapper.appendChild(input);
@@ -305,6 +313,14 @@
         const fields = {};
         inputs.forEach(input => fields[input.dataset.field] = input.value);
 
+        const requiredFields = REQUIRED_FIELDS_BY_TABLE[tableName] || [];
+        const missingFields = requiredFields.filter(field => !String(fields[field] || "").trim());
+        if (missingFields.length > 0) {
+          const labels = missingFields.map(field => FIELD_LABELS[field] || field);
+          status.textContent = `Missing required fields: ${labels.join(", ")}`;
+          return;
+        }
+
         const isEdit = activeEditContext && activeEditContext.mode === "edit";
         const url = isEdit
           ? `${window.location.origin}/records/${activeEditContext.recordId}`
@@ -327,7 +343,6 @@
         status.textContent = "Saved successfully.";
         setTimeout(() => {
           closeModal();
-          document.getElementById("searchForm").requestSubmit();
         }, 400);
       }
 
@@ -471,6 +486,12 @@
       document.getElementById("tableSelect").addEventListener("change", (e) => renderDynamicFields(e.target.value));
       document.getElementById("cancelRecordBtn").addEventListener("click", closeModal);
       document.getElementById("saveRecordBtn").addEventListener("click", saveRecord);
+      document.querySelector("#recordModal .modal-content").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          saveRecord();
+        }
+      });
 
       loadTableDefinitions();
     </script>
