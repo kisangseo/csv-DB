@@ -275,6 +275,10 @@ ALL_EDITABLE_COLUMNS = {
 
 DATE_FIELDS = {"date_of_birth", "issue_date", "intake_date"}
 
+REQUIRED_FIELDS_BY_TABLE = {
+    "BCSO Active Warrants": {"case_number", "issue_date", "full_name", "warrant_status"}
+}
+
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
@@ -621,6 +625,11 @@ def create_record():
         return jsonify({"error": "Invalid table selection"}), 400
 
     fields = payload.get("fields") or {}
+    required_fields = REQUIRED_FIELDS_BY_TABLE.get(table_name, set())
+    missing_fields = [field for field in required_fields if not str(fields.get(field, "")).strip()]
+    if missing_fields:
+        return jsonify({"error": f"Missing required fields: {', '.join(sorted(missing_fields))}"}), 400
+
     insert_data = {"department": table_info["department"], "source_file": "manual_entry"}
 
     for column in table_info["fields"]:
