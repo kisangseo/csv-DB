@@ -310,6 +310,11 @@ REQUIRED_FIELDS_BY_TABLE = {
     "BCSO Active Warrants": {"case_number", "warrant_type", "issue_date", "full_name", "warrant_status"}
 }
 
+EDITABLE_DEPARTMENTS = {
+    "active warrants",
+    "bcso_active_warrants",
+}
+
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
@@ -745,12 +750,17 @@ def update_record(record_id):
     conn = get_conn()
     try:
         cur = conn.cursor()
+        cur.execute("SELECT department FROM search.records WHERE record_id = ?", record_id)
+        existing = cur.fetchone()
+        if not existing:
+            return jsonify({"error": "Record not found"}), 404
+        if str(existing[0] or "").strip().lower() not in EDITABLE_DEPARTMENTS:
+            return jsonify({"error": "Editing is only allowed for Warrants to Audit and BCSO Active Warrants"}), 403
+
         cur.execute(
             f"UPDATE search.records SET {', '.join(set_parts)} WHERE record_id = ?",
             tuple(values)
         )
-        if cur.rowcount == 0:
-            return jsonify({"error": "Record not found"}), 404
         conn.commit()
     finally:
         conn.close()
@@ -768,9 +778,14 @@ def delete_record(record_id):
     conn = get_conn()
     try:
         cur = conn.cursor()
-        cur.execute("DELETE FROM search.records WHERE record_id = ?", record_id)
-        if cur.rowcount == 0:
+        cur.execute("SELECT department FROM search.records WHERE record_id = ?", record_id)
+        existing = cur.fetchone()
+        if not existing:
             return jsonify({"error": "Record not found"}), 404
+        if str(existing[0] or "").strip().lower() not in EDITABLE_DEPARTMENTS:
+            return jsonify({"error": "Deleting is only allowed for Warrants to Audit and BCSO Active Warrants"}), 403
+
+        cur.execute("DELETE FROM search.records WHERE record_id = ?", record_id)
         conn.commit()
     finally:
         conn.close()
