@@ -790,11 +790,6 @@ def search_all():
     finally:
         conn.close()
     
-    sex = sex if sex in ("M", "F") else None
-
-    
-    
-
     grouped = {}
     for r in records:
         dept = r["department"].title()
