@@ -287,6 +287,10 @@
         "BCSO Active Warrants": ["case_number", "warrant_type", "issue_date", "full_name", "warrant_status"]
       };
 
+      const BCSO_VIRTUAL_FIELDS = {
+        apt_unit: "Apt/Unit #"
+      };
+
       const DEPT_TO_TABLE = {
         "active warrants": "Warrants to Audit",
         "baltimore jail population": "Baltimore Jail Population",
@@ -333,7 +337,9 @@
         fields.forEach(field => {
           const wrapper = document.createElement("div");
           wrapper.className = "modal-field";
-          if (["address", "notes"].includes(field)) {
+          if (field === "address" && tableName === "BCSO Active Warrants") {
+            wrapper.classList.add("full-width", "address-inline-row");
+          } else if (["address", "notes"].includes(field)) {
             wrapper.classList.add("full-width");
           }
 
@@ -341,37 +347,70 @@
           const isRequired = (REQUIRED_FIELDS_BY_TABLE[tableName] || []).includes(field);
           label.textContent = `${FIELD_LABELS[field] || field}${isRequired ? " *" : ""}`;
 
-          const bcsoOptions = tableName === "BCSO Active Warrants" ? BCSO_DROPDOWN_OPTIONS[field] : null;
-          const input = field === "notes"
-            ? document.createElement("textarea")
-            : (bcsoOptions ? document.createElement("select") : document.createElement("input"));
-          input.classList.add("modal-control");
-          input.dataset.field = field;
-          input.required = isRequired;
+          if (field === "address" && tableName === "BCSO Active Warrants") {
+            const row = document.createElement("div");
+            row.className = "address-fields-inline";
 
-          if (bcsoOptions) {
-            const emptyOption = document.createElement("option");
-            emptyOption.value = "";
-            emptyOption.textContent = `Select ${FIELD_LABELS[field] || field}`;
-            input.appendChild(emptyOption);
-
-            bcsoOptions.forEach(optionValue => {
-              const option = document.createElement("option");
-              option.value = optionValue;
-              option.textContent = optionValue;
-              input.appendChild(option);
-            });
-
+            const addressCol = document.createElement("div");
+            addressCol.className = "address-main-col";
+            const input = document.createElement("input");
+            input.classList.add("modal-control");
+            input.dataset.field = field;
+            input.type = "text";
+            input.required = isRequired;
             input.value = values[field] ?? "";
+            addressCol.appendChild(label);
+            addressCol.appendChild(input);
+
+            const aptCol = document.createElement("div");
+            aptCol.className = "address-apt-col";
+            const aptLabel = document.createElement("label");
+            aptLabel.textContent = BCSO_VIRTUAL_FIELDS.apt_unit;
+            const aptInput = document.createElement("input");
+            aptInput.classList.add("modal-control");
+            aptInput.dataset.field = "apt_unit";
+            aptInput.type = "text";
+            aptInput.value = "";
+            aptCol.appendChild(aptLabel);
+            aptCol.appendChild(aptInput);
+
+            row.appendChild(addressCol);
+            row.appendChild(aptCol);
+            wrapper.appendChild(row);
           } else {
-            if (field !== "notes") {
-              input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+            const bcsoOptions = tableName === "BCSO Active Warrants" ? BCSO_DROPDOWN_OPTIONS[field] : null;
+            const input = field === "notes"
+              ? document.createElement("textarea")
+              : (bcsoOptions ? document.createElement("select") : document.createElement("input"));
+            input.classList.add("modal-control");
+            input.dataset.field = field;
+            input.required = isRequired;
+
+            if (bcsoOptions) {
+              const emptyOption = document.createElement("option");
+              emptyOption.value = "";
+              emptyOption.textContent = `Select ${FIELD_LABELS[field] || field}`;
+              input.appendChild(emptyOption);
+
+              bcsoOptions.forEach(optionValue => {
+                const option = document.createElement("option");
+                option.value = optionValue;
+                option.textContent = optionValue;
+                input.appendChild(option);
+              });
+
+              input.value = values[field] ?? "";
+            } else {
+              if (field !== "notes") {
+                input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+              }
+              input.value = values[field] ?? "";
             }
-            input.value = values[field] ?? "";
+
+            wrapper.appendChild(label);
+            wrapper.appendChild(input);
           }
 
-          wrapper.appendChild(label);
-          wrapper.appendChild(input);
           fieldsDiv.appendChild(wrapper);
         });
       }
@@ -421,6 +460,13 @@
         const inputs = Array.from(document.querySelectorAll("#dynamicFields input, #dynamicFields select, #dynamicFields textarea"));
         const fields = {};
         inputs.forEach(input => fields[input.dataset.field] = input.value);
+
+        if (tableName === "BCSO Active Warrants" && "apt_unit" in fields) {
+          const apt = String(fields.apt_unit || "").trim();
+          const address = String(fields.address || "").trim();
+          fields.address = apt ? `${address}${address ? ", " : ""}${apt}` : address;
+          delete fields.apt_unit;
+        }
 
         const requiredFields = REQUIRED_FIELDS_BY_TABLE[tableName] || [];
         const missingFields = requiredFields.filter(field => !String(fields[field] || "").trim());
