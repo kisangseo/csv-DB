@@ -299,6 +299,7 @@
       };
 
       const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants"]);
+      const ADD_ALLOWED_TABLES = new Set(["Warrants to Audit", "BCSO Active Warrants"]);
 
       let tableDefinitions = {};
       let activeEditContext = null;
@@ -380,12 +381,14 @@
         tableDefinitions = await response.json();
         const tableSelect = document.getElementById("tableSelect");
         tableSelect.innerHTML = "";
-        Object.keys(tableDefinitions).forEach(tableName => {
+        Object.keys(tableDefinitions)
+          .filter(tableName => ADD_ALLOWED_TABLES.has(tableName))
+          .forEach(tableName => {
           const opt = document.createElement("option");
           opt.value = tableName;
           opt.textContent = tableName;
           tableSelect.appendChild(opt);
-        });
+          });
       }
 
       function mapRowToFields(dept, row) {
@@ -410,6 +413,11 @@
 
         const status = document.getElementById("modalStatus");
         const tableName = document.getElementById("tableSelect").value;
+        if (!ADD_ALLOWED_TABLES.has(tableName)) {
+          status.textContent = "Adding records is only available for Warrants to Audit and BCSO Active Warrants.";
+          return;
+        }
+
         const inputs = Array.from(document.querySelectorAll("#dynamicFields input, #dynamicFields select, #dynamicFields textarea"));
         const fields = {};
         inputs.forEach(input => fields[input.dataset.field] = input.value);
