@@ -683,11 +683,7 @@
       }
 
       document.getElementById("addRecordBtn").addEventListener("click", () => {
-        if (!CAN_EDIT) {
-          alert("You do not have permission to add records.");
-          return;
-        }
-        openModal({mode: "add", tableName: document.getElementById("tableSelect").value || Object.keys(tableDefinitions)[0]});
+        window.location.href = "https://arcg.is/1O1zjf1";
       });
       document.getElementById("tableSelect").addEventListener("change", (e) => renderDynamicFields(e.target.value));
       document.getElementById("cancelRecordBtn").addEventListener("click", closeModal);
