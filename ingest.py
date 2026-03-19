@@ -383,6 +383,11 @@ def create_apt_split_copy_for_blob(blob_service_client, container_name, blob_nam
     if blob_name.lower().endswith(APT_COPY_SUFFIX):
         return False, "already_copy"
 
+    out_blob_name = f"{blob_name[:-4]}{APT_COPY_SUFFIX}"
+    out_blob_client = blob_service_client.get_blob_client(container=container_name, blob=out_blob_name)
+    if out_blob_client.exists():
+        return False, "copy_exists"
+
     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
     data = blob_client.download_blob().readall()
     df = pd.read_csv(io.BytesIO(data))
@@ -400,10 +405,8 @@ def create_apt_split_copy_for_blob(blob_service_client, container_name, blob_nam
         anchor_col = "TenantAddress" if "TenantAddress" in out_df.columns else address_col
         out_df = _move_column_right_of(out_df, "AptUnit", anchor_col)
 
-    out_blob_name = f"{blob_name[:-4]}{APT_COPY_SUFFIX}"
-    out_blob_client = blob_service_client.get_blob_client(container=container_name, blob=out_blob_name)
     payload = out_df.to_csv(index=False).encode("utf-8")
-    out_blob_client.upload_blob(payload, overwrite=True)
+    out_blob_client.upload_blob(payload, overwrite=False)
     return True, out_blob_name
 
 
@@ -512,12 +515,30 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
 
     container_client = blob_service_client.get_container_client(container_name)
 
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT source_file
+            FROM search.records
+            WHERE department = 'FIELD SERVICES DEPARTMENT'
+        """)
+        already_ingested = {row[0] for row in cursor.fetchall() if row[0]}
+    finally:
+        conn.close()
+
     for blob in container_client.list_blobs():
         name = blob.name
 
-        if name.startswith("Odyssey-JobOutput-") and name.endswith(".csv"):
-            print("Ingesting:", name)
-            ingest_odyssey_civil_from_blob(name, container_name)
+        if not (name.startswith("Odyssey-JobOutput-") and name.endswith(".csv")):
+            continue
+
+        if name in already_ingested:
+            print("SKIPPING (already ingested):", name)
+            continue
+
+        print("Ingesting:", name)
+        ingest_odyssey_civil_from_blob(name, container_name)
 
     conn = get_conn()
     try:
