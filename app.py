@@ -293,14 +293,14 @@ TABLE_DEFINITIONS = {
     },
     "Field Services Department": {
         "department": "Field Services Department",
-        "fields": ["full_name", "case_number", "address", "intake_date", "disposition", "notes"]
+        "fields": ["full_name", "case_number", "address", "apt", "intake_date", "disposition", "notes"]
     }
 }
 
 ALL_EDITABLE_COLUMNS = {
     "department", "source_file", "first_name", "last_name", "full_name", "date_of_birth", "sid",
     "case_number", "warrant_id_number", "warrant_type", "warrant_status", "issue_date", "intake_date",
-    "address", "city", "state", "postal_code", "court_document_type", "disposition", "notes",
+    "address", "apt", "city", "state", "postal_code", "court_document_type", "disposition", "notes",
     "sex", "race", "issuing_county", "facility"
 }
 
