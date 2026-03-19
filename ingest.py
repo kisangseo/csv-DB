@@ -233,6 +233,14 @@ def insert_search_record_odyssey(cursor, record):
 
 
 APT_RE = re.compile(r"(?i)\bapt\.?\s*#?\s*([A-Za-z0-9-]+)\b")
+ADDRESS_COLUMN_CANDIDATES = (
+    "TenantAddress",
+    "Address",
+    "address",
+    "Street Address",
+    "street_address",
+)
+APT_COPY_SUFFIX = "_with_apt_unit.csv"
 
 
 def split_address_and_apt(address):
@@ -350,6 +358,114 @@ def read_csv_from_blob(container_name, blob_name):
     data = blob_client.download_blob().readall()
     return pd.read_csv(io.BytesIO(data))
 
+
+def _pick_address_column(columns):
+    for candidate in ADDRESS_COLUMN_CANDIDATES:
+        if candidate in columns:
+            return candidate
+    return None
+
+
+def _move_column_right_of(df, column_name, anchor_column):
+    if column_name not in df.columns or anchor_column not in df.columns:
+        return df
+
+    columns = list(df.columns)
+    columns.remove(column_name)
+    anchor_idx = columns.index(anchor_column)
+    columns.insert(anchor_idx + 1, column_name)
+    return df[columns]
+
+
+def create_apt_split_copy_for_blob(blob_service_client, container_name, blob_name):
+    if not blob_name.lower().endswith(".csv"):
+        return False, "not_csv"
+    if blob_name.lower().endswith(APT_COPY_SUFFIX):
+        return False, "already_copy"
+
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+    data = blob_client.download_blob().readall()
+    df = pd.read_csv(io.BytesIO(data))
+
+    out_df = df.copy()
+    address_col = _pick_address_column(out_df.columns)
+
+    if "AptUnit" not in out_df.columns:
+        out_df["AptUnit"] = None
+
+    if address_col:
+        parsed = out_df[address_col].apply(split_address_and_apt)
+        out_df[address_col] = parsed.apply(lambda x: x[0])
+        out_df["AptUnit"] = out_df["AptUnit"].where(out_df["AptUnit"].notna(), parsed.apply(lambda x: x[1]))
+        anchor_col = "TenantAddress" if "TenantAddress" in out_df.columns else address_col
+        out_df = _move_column_right_of(out_df, "AptUnit", anchor_col)
+
+    out_blob_name = f"{blob_name[:-4]}{APT_COPY_SUFFIX}"
+    out_blob_client = blob_service_client.get_blob_client(container=container_name, blob=out_blob_name)
+    payload = out_df.to_csv(index=False).encode("utf-8")
+    out_blob_client.upload_blob(payload, overwrite=True)
+    return True, out_blob_name
+
+
+def reorder_aptunit_in_existing_copies(container_name="fscsv"):
+    blob_service_client = BlobServiceClient.from_connection_string(
+        os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    )
+    container_client = blob_service_client.get_container_client(container_name)
+
+    updated = 0
+    skipped = 0
+    for blob in container_client.list_blobs():
+        blob_name = blob.name
+        if not blob_name.lower().endswith(APT_COPY_SUFFIX):
+            skipped += 1
+            continue
+
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+        data = blob_client.download_blob().readall()
+        df = pd.read_csv(io.BytesIO(data))
+
+        if "AptUnit" not in df.columns or "TenantAddress" not in df.columns:
+            skipped += 1
+            continue
+
+        tenant_idx = list(df.columns).index("TenantAddress")
+        apt_idx = list(df.columns).index("AptUnit")
+        if apt_idx == tenant_idx + 1:
+            skipped += 1
+            continue
+
+        df = _move_column_right_of(df, "AptUnit", "TenantAddress")
+        payload = df.to_csv(index=False).encode("utf-8")
+        blob_client.upload_blob(payload, overwrite=True)
+        updated += 1
+        print(f"Reordered AptUnit next to TenantAddress in: {blob_name}")
+
+    print(f"AptUnit reorder finished. updated={updated}, skipped={skipped}, container={container_name}")
+
+
+def create_apt_split_copies_for_all_csv_blobs(container_name="fscsv"):
+    blob_service_client = BlobServiceClient.from_connection_string(
+        os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    )
+    container_client = blob_service_client.get_container_client(container_name)
+
+    copied = 0
+    skipped = 0
+    for blob in container_client.list_blobs():
+        made_copy, detail = create_apt_split_copy_for_blob(
+            blob_service_client=blob_service_client,
+            container_name=container_name,
+            blob_name=blob.name,
+        )
+        if made_copy:
+            copied += 1
+            print(f"Created apt/unit split copy: {detail}")
+        else:
+            skipped += 1
+
+    print(f"APT copy job finished. copied={copied}, skipped={skipped}, container={container_name}")
+
 def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
     df = read_csv_from_blob(container_name, blob_name)
 
@@ -387,6 +503,9 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
         conn.close()
 
 def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
+    create_apt_split_copies_for_all_csv_blobs(container_name)
+    reorder_aptunit_in_existing_copies(container_name)
+
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     )
