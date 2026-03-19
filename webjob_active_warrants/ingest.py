@@ -232,7 +232,7 @@ def insert_search_record_odyssey(cursor, record):
     return cursor.fetchone()[0]
 
 
-APT_RE = re.compile(r"(?i)\bapt\.?\s*([A-Za-z0-9-]+)\b")
+APT_RE = re.compile(r"(?i)\bapt\.?\s*#?\s*([A-Za-z0-9-]+)\b")
 
 
 def split_address_and_apt(address):
@@ -246,12 +246,12 @@ def split_address_and_apt(address):
     if not match:
         return text, None
 
-    apt_value = match.group(1).strip()
+    apt_value = match.group(1).strip().lstrip("#")
     cleaned = (text[:match.start()] + " " + text[match.end():]).strip()
     cleaned = re.sub(r"\s+,", ",", cleaned)
     cleaned = re.sub(r",\s*,", ", ", cleaned)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
-    return cleaned or None, (f"APT {apt_value}" if apt_value else None)
+    return cleaned or None, (apt_value if apt_value else None)
 
 
 def ensure_records_apt_column(cursor):
@@ -274,7 +274,14 @@ def normalize_existing_fsd_apt_records(cursor):
 
     for record_id, address, existing_apt in rows:
         normalized_address, parsed_apt = split_address_and_apt(address)
-        apt_to_store = existing_apt or parsed_apt
+        clean_existing_apt = None
+        if existing_apt is not None:
+            existing_match = APT_RE.search(str(existing_apt))
+            if existing_match:
+                clean_existing_apt = existing_match.group(1).strip().lstrip("#")
+            else:
+                clean_existing_apt = str(existing_apt).strip() or None
+        apt_to_store = clean_existing_apt or parsed_apt
         if normalized_address != address or apt_to_store != existing_apt:
             cursor.execute(
                 """

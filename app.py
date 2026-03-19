@@ -19,6 +19,57 @@ from datetime import timedelta
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 app.permanent_session_lifetime = timedelta(hours=12)
+APT_SPLIT_RE = re.compile(r"(?i)\bapt\.?\s*#?\s*([A-Za-z0-9-]+)\b")
+_apt_backfill_attempted = False
+
+
+def split_address_and_apt(address):
+    if address is None:
+        return None, None
+    text = str(address).strip()
+    if not text:
+        return None, None
+
+    match = APT_SPLIT_RE.search(text)
+    if not match:
+        return text, None
+
+    apt_value = match.group(1).strip().lstrip("#")
+    cleaned = (text[:match.start()] + " " + text[match.end():]).strip()
+    cleaned = re.sub(r"\s+,", ",", cleaned)
+    cleaned = re.sub(r",\s*,", ", ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
+    return cleaned or None, (apt_value if apt_value else None)
+
+
+def backfill_landlord_tenant_apt(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT record_id, address, apt
+        FROM search.records
+        WHERE (
+            LOWER(LTRIM(RTRIM(department))) = 'field services department'
+            OR case_number LIKE '%-LT-%'
+        )
+        AND address IS NOT NULL
+        AND LOWER(address) LIKE '%apt%'
+    """)
+
+    for record_id, address, existing_apt in cur.fetchall():
+        normalized_address, parsed_apt = split_address_and_apt(address)
+        clean_existing_apt = (str(existing_apt).strip() if existing_apt is not None else "")
+        existing_match = APT_SPLIT_RE.search(clean_existing_apt)
+        if existing_match:
+            clean_existing_apt = existing_match.group(1).strip().lstrip("#")
+        clean_existing_apt = clean_existing_apt or None
+        apt_to_store = clean_existing_apt or parsed_apt
+        if normalized_address != address or apt_to_store != existing_apt:
+            cur.execute(
+                "UPDATE search.records SET address = ?, apt = ? WHERE record_id = ?",
+                normalized_address,
+                apt_to_store,
+                record_id,
+            )
 
 
 def get_current_permission() -> str:
@@ -818,6 +869,7 @@ def ingest_wor_route():
 
 @app.route("/search_all")
 def search_all():
+    global _apt_backfill_attempted
     query = request.args.get("name", "").strip()
     case_number = request.args.get("case_number", "").strip()
     date_start = None
@@ -843,6 +895,10 @@ def search_all():
     
     conn = get_conn()
     try:
+        if not _apt_backfill_attempted:
+            backfill_landlord_tenant_apt(conn)
+            conn.commit()
+            _apt_backfill_attempted = True
         records = search_by_name(
             conn,
             query,
