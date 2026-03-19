@@ -577,7 +577,7 @@
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
               headers = ["SID","Name","Date of Birth","Facility"];
             } else {
-              headers = ["Name","Case Number","Address","APT","Court Document Type","Intake Date","Current Disposition"];            }
+              headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Intake Date","Current Disposition"];            }
             headers.push("Actions");
 
             const thead = document.createElement("thead");
