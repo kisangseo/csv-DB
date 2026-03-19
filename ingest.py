@@ -5,6 +5,7 @@ from azure.storage.blob import BlobServiceClient
 import io
 import os
 import pyodbc
+import re
 print("USING INGEST.PY FROM:", __file__)
 
 
@@ -201,13 +202,14 @@ def insert_search_record_odyssey(cursor, record):
         case_number,
         intake_date,
         address,
+        apt,
         city,
         state,
         disposition,
         notes
     )
     OUTPUT INSERTED.record_id
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     def clean(v):
@@ -220,6 +222,7 @@ def insert_search_record_odyssey(cursor, record):
         record.get("case_number"),
         record.get("intake_date"),
         record.get("address"),
+        record.get("apt"),
         record.get("city"),
         record.get("state"),
         record.get("disposition"),
@@ -227,6 +230,69 @@ def insert_search_record_odyssey(cursor, record):
     ))
     cursor.execute(sql, *values)
     return cursor.fetchone()[0]
+
+
+APT_RE = re.compile(r"(?i)\bapt\.?\s*#?\s*([A-Za-z0-9-]+)\b")
+
+
+def split_address_and_apt(address):
+    if address is None:
+        return None, None
+    text = str(address).strip()
+    if not text:
+        return None, None
+
+    match = APT_RE.search(text)
+    if not match:
+        return text, None
+
+    apt_value = match.group(1).strip().lstrip("#")
+    cleaned = (text[:match.start()] + " " + text[match.end():]).strip()
+    cleaned = re.sub(r"\s+,", ",", cleaned)
+    cleaned = re.sub(r",\s*,", ", ", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
+    return cleaned or None, (apt_value if apt_value else None)
+
+
+def ensure_records_apt_column(cursor):
+    cursor.execute("""
+        IF COL_LENGTH('search.records', 'apt') IS NULL
+        BEGIN
+            ALTER TABLE search.records ADD apt NVARCHAR(100) NULL
+        END
+    """)
+
+
+def normalize_existing_fsd_apt_records(cursor):
+    ensure_records_apt_column(cursor)
+    cursor.execute("""
+        SELECT record_id, address, apt
+        FROM search.records
+        WHERE LOWER(LTRIM(RTRIM(department))) = 'field services department'
+    """)
+    rows = cursor.fetchall()
+
+    for record_id, address, existing_apt in rows:
+        normalized_address, parsed_apt = split_address_and_apt(address)
+        clean_existing_apt = None
+        if existing_apt is not None:
+            existing_match = APT_RE.search(str(existing_apt))
+            if existing_match:
+                clean_existing_apt = existing_match.group(1).strip().lstrip("#")
+            else:
+                clean_existing_apt = str(existing_apt).strip() or None
+        apt_to_store = clean_existing_apt or parsed_apt
+        if normalized_address != address or apt_to_store != existing_apt:
+            cursor.execute(
+                """
+                UPDATE search.records
+                SET address = ?, apt = ?
+                WHERE record_id = ?
+                """,
+                normalized_address,
+                apt_to_store,
+                record_id,
+            )
     
 
 def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
@@ -290,19 +356,22 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
     conn = get_conn()
     try:
         cursor = conn.cursor()
+        ensure_records_apt_column(cursor)
         cursor.execute("""
             DELETE FROM search.records
             WHERE department = 'FIELD SERVICES DEPARTMENT'
             AND source_file = ?
         """, blob_name)
         for _, row in df.iterrows():
+            address, apt = split_address_and_apt(row.get("TenantAddress"))
             record = {
                 "department": "FIELD SERVICES DEPARTMENT",
                 "source_file": blob_name,
                 "full_name": row.get("DefendantName"),
                 "case_number": row.get("CaseNumber"),
                 "intake_date": safe_sql_date(row.get("EventDate")),
-                "address": row.get("TenantAddress"),
+                "address": address,
+                "apt": apt,
                 "city": row.get("TenantCity"),
                 "state": row.get("TenantState"),
                 "postal_code": None,
@@ -330,6 +399,14 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
         if name.startswith("Odyssey-JobOutput-") and name.endswith(".csv"):
             print("Ingesting:", name)
             ingest_odyssey_civil_from_blob(name, container_name)
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        normalize_existing_fsd_apt_records(cursor)
+        conn.commit()
+    finally:
+        conn.close()
 
 def ingest_population_from_table(table_name, display_department, source_file):
     """
