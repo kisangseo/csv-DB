@@ -14,7 +14,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         notes AS notes,
         warrant_type AS warrant_type,
         court_document_type,
-        intake_date,
+        FORMAT(intake_date, 'yyyy-MM-dd') AS intake_date,
         FORMAT(COALESCE(issue_date, intake_date), 'yyyy-MM-dd') AS record_date,
         warrant_status AS warrant_status,
         disposition AS disposition,
