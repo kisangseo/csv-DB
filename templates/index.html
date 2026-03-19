@@ -246,8 +246,7 @@
         "Baltimore Jail Population": ["sid","full_name","date_of_birth","facility"],
         "BCSO Active Warrants": ["issuing_county","case_number","warrant_id_number","warrant_type","issue_date","warrant_status","full_name","sid","date_of_birth","race","sex","address","notes"],
         "Warrant of Restitution - MDEC": ["full_name","case_number","address","court_document_type","intake_date","disposition"],
-        "Field Services Department": ["full_name","case_number","address","intake_date","disposition","notes"]
-      };
+        "Field Services Department": ["full_name","case_number","address","apt","intake_date","disposition","notes"]      };
 
       const BCSO_DROPDOWN_OPTIONS = {
         issuing_county: [
@@ -577,8 +576,7 @@
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
               headers = ["SID","Name","Date of Birth","Facility"];
             } else {
-              headers = ["Name","Case Number","Address","Court Document Type","Intake Date","Current Disposition"];
-            }
+              headers = ["Name","Case Number","Address","APT","Court Document Type","Intake Date","Current Disposition"];            }
             headers.push("Actions");
 
             const thead = document.createElement("thead");
