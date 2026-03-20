@@ -20,6 +20,17 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 app.permanent_session_lifetime = timedelta(hours=12)
 APT_SPLIT_RE = re.compile(r"(?i)\bapt\.?\s*#?\s*([A-Za-z0-9-]+)\b")
+STREET_SUFFIXES = (
+    "aly", "allee", "ave", "avenue", "blvd", "boulevard", "cir", "circle",
+    "court", "ct", "dr", "drive", "hwy", "highway", "lane", "ln", "parkway",
+    "pkwy", "pl", "place", "rd", "road", "st", "streat", "street", "ter",
+    "terrace", "way",
+)
+STREET_SUFFIX_SPLIT_RE = re.compile(
+    r"(?i)^(.*\b(?:"
+    + "|".join(STREET_SUFFIXES)
+    + r")\.?)(?:\s*,\s*|\s+)(.+)$"
+)
 ODYSSEY_FILE_DATE_RE = re.compile(r"(?i)^Odyssey-JobOutput-([A-Za-z]+ \d{1,2}, \d{4})")
 _apt_backfill_attempted = False
 
@@ -32,15 +43,21 @@ def split_address_and_apt(address):
         return None, None
 
     match = APT_SPLIT_RE.search(text)
-    if not match:
+    if match:
+        apt_value = match.group(1).strip().lstrip("#")
+        cleaned = (text[:match.start()] + " " + text[match.end():]).strip()
+        cleaned = re.sub(r"\s+,", ",", cleaned)
+        cleaned = re.sub(r",\s*,", ", ", cleaned)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
+        return cleaned or None, (apt_value if apt_value else None)
+
+    suffix_match = STREET_SUFFIX_SPLIT_RE.match(text)
+    if not suffix_match:
         return text, None
 
-    apt_value = match.group(1).strip().lstrip("#")
-    cleaned = (text[:match.start()] + " " + text[match.end():]).strip()
-    cleaned = re.sub(r"\s+,", ",", cleaned)
-    cleaned = re.sub(r",\s*,", ", ", cleaned)
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
-    return cleaned or None, (apt_value if apt_value else None)
+    street = re.sub(r"\s{2,}", " ", suffix_match.group(1)).strip(" ,")
+    trailing = suffix_match.group(2).strip(" ,")
+    return (street or None), (trailing or None)
 
 
 def backfill_landlord_tenant_apt(conn):
@@ -53,7 +70,6 @@ def backfill_landlord_tenant_apt(conn):
             OR case_number LIKE '%-LT-%'
         )
         AND address IS NOT NULL
-        AND LOWER(address) LIKE '%apt%'
     """)
 
     for record_id, address, existing_apt in cur.fetchall():
