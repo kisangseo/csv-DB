@@ -33,6 +33,12 @@ STREET_SUFFIX_SPLIT_RE = re.compile(
 )
 ODYSSEY_FILE_DATE_RE = re.compile(r"(?i)^Odyssey-JobOutput-([A-Za-z]+ \d{1,2}, \d{4})")
 _apt_backfill_attempted = False
+ENABLE_APT_BACKFILL_ON_SEARCH = os.environ.get("ENABLE_APT_BACKFILL_ON_SEARCH", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def split_address_and_apt(address):
@@ -62,6 +68,7 @@ def split_address_and_apt(address):
 
 def backfill_landlord_tenant_apt(conn):
     cur = conn.cursor()
+    cur.timeout = 5
     cur.execute("""
         SELECT TOP 2000 record_id, address, apt
         FROM search.records
@@ -987,10 +994,14 @@ def search_all():
     
     conn = get_conn()
     try:
-        if not _apt_backfill_attempted:
-            backfill_landlord_tenant_apt(conn)
-            conn.commit()
-            _apt_backfill_attempted = True
+        if ENABLE_APT_BACKFILL_ON_SEARCH and not _apt_backfill_attempted:
+            try:
+                backfill_landlord_tenant_apt(conn)
+                conn.commit()
+            except Exception as exc:
+                print(f"WARN apt backfill skipped due to error: {exc}")
+            finally:
+                _apt_backfill_attempted = True
         records = search_by_name(
             conn,
             query,
