@@ -11,12 +11,19 @@ body {
 
 /* ===== Page Container ===== */
 .container {
-  max-width: 1600px;
+  width: calc(100% - 80px);
   margin: 0 auto;
   background: white;
   padding: 40px 50px;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+}
+
+@media (max-width: 768px) {
+  .container {
+    width: calc(100% - 32px);
+    padding: 24px 16px;
+  }
 }
 
 
