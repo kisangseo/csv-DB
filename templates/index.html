@@ -540,7 +540,15 @@
 
           status.textContent = "Search complete.";
 
-          for (const [dept, info] of Object.entries(data)) {
+          const orderedEntries = Object.entries(data).sort(([deptA], [deptB]) => {
+            const aIsBcso = deptA.toLowerCase() === "bcso active warrants";
+            const bIsBcso = deptB.toLowerCase() === "bcso active warrants";
+            if (aIsBcso && !bIsBcso) return -1;
+            if (!aIsBcso && bIsBcso) return 1;
+            return deptA.localeCompare(deptB);
+          });
+
+          for (const [dept, info] of orderedEntries) {
             const rows = info.records;
             const count = info.count;
             const div = document.createElement("div");
