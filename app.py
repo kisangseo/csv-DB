@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, redirect, session
+from flask import Flask, request, jsonify, render_template, redirect, session, send_file
 from flask_cors import CORS
 import os
 import re
@@ -369,6 +369,7 @@ EDITABLE_DEPARTMENTS = {
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+LATEST_LT_WITH_APT_BLOB_NAME = "latest_landlord_tenant_with_apt.csv"
 
 # Your actual containers:
 CONTAINERS = {
@@ -698,6 +699,25 @@ def table_definitions():
     if "user_id" not in session:
         return jsonify({"error": "Unauthorized"}), 401
     return jsonify(TABLE_DEFINITIONS)
+
+
+@app.route("/downloads/latest-landlord-tenant-with-apt.csv")
+def download_latest_landlord_tenant_with_apt():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, "fscsv")
+    blob = container.get_blob_client(LATEST_LT_WITH_APT_BLOB_NAME)
+    if not blob.exists():
+        return jsonify({"error": "Latest landlord/tenant file is not ready yet."}), 404
+
+    data = blob.download_blob().readall()
+    return send_file(
+        pd.io.common.BytesIO(data),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=LATEST_LT_WITH_APT_BLOB_NAME,
+    )
 
 
 @app.route("/records", methods=["POST"])

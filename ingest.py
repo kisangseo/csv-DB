@@ -241,6 +241,7 @@ ADDRESS_COLUMN_CANDIDATES = (
     "street_address",
 )
 APT_COPY_SUFFIX = "_with_apt_unit.csv"
+LATEST_LT_WITH_APT_BLOB_NAME = "latest_landlord_tenant_with_apt.csv"
 
 
 def split_address_and_apt(address):
@@ -469,6 +470,72 @@ def create_apt_split_copies_for_all_csv_blobs(container_name="fscsv"):
 
     print(f"APT copy job finished. copied={copied}, skipped={skipped}, container={container_name}")
 
+
+def _is_landlord_tenant_df(df):
+    if "CaseNumber" in df.columns:
+        case_numbers = df["CaseNumber"].fillna("").astype(str)
+        if case_numbers.str.contains("-LT-", case=False).any():
+            return True
+    if "CourtDocumentType" in df.columns:
+        doc_types = df["CourtDocumentType"].fillna("").astype(str)
+        if doc_types.str.contains("landlord|tenant", case=False, regex=True).any():
+            return True
+    return False
+
+
+def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
+    blob_service_client = BlobServiceClient.from_connection_string(
+        os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    )
+    container_client = blob_service_client.get_container_client(container_name)
+
+    candidates = []
+    for blob in container_client.list_blobs():
+        blob_name = blob.name
+        if not blob_name.lower().endswith(APT_COPY_SUFFIX):
+            continue
+        candidates.append(blob)
+
+    if not candidates:
+        print("No apt-split Odyssey copies found; skipping latest landlord/tenant export.")
+        return None
+
+    newest_blob_date = max(blob.last_modified.date() for blob in candidates if blob.last_modified)
+    newest_day_blobs = [
+        blob for blob in candidates
+        if blob.last_modified and blob.last_modified.date() == newest_blob_date
+    ]
+
+    merged_frames = []
+    for blob in newest_day_blobs:
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
+        data = blob_client.download_blob().readall()
+        df = pd.read_csv(io.BytesIO(data))
+
+        if "AptUnit" not in df.columns:
+            continue
+        if not _is_landlord_tenant_df(df):
+            continue
+
+        merged_frames.append(df)
+
+    if not merged_frames:
+        print("No matching landlord/tenant apt files found for latest day; skipping export.")
+        return None
+
+    combined_df = pd.concat(merged_frames, ignore_index=True)
+    output_blob = blob_service_client.get_blob_client(
+        container=container_name,
+        blob=LATEST_LT_WITH_APT_BLOB_NAME
+    )
+    output_payload = combined_df.to_csv(index=False).encode("utf-8")
+    output_blob.upload_blob(output_payload, overwrite=True)
+    print(
+        f"Wrote {LATEST_LT_WITH_APT_BLOB_NAME} with {len(combined_df)} rows "
+        f"from {len(merged_frames)} files dated {newest_blob_date}."
+    )
+    return LATEST_LT_WITH_APT_BLOB_NAME
+
 def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
     df = read_csv_from_blob(container_name, blob_name)
 
@@ -508,6 +575,7 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
 def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
     create_apt_split_copies_for_all_csv_blobs(container_name)
     reorder_aptunit_in_existing_copies(container_name)
+    build_latest_landlord_tenant_with_apt_blob(container_name)
 
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
