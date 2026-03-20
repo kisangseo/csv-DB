@@ -3,12 +3,17 @@ from flask_cors import CORS
 import os
 import re
 import string
+import csv
+import json
+import tempfile
+import threading
+import uuid
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
 from azure.storage.blob import ContainerClient
 from db_connect import get_conn
-from search_sql import search_by_name
+from search_sql import search_by_name, build_search_sql
 from datetime import timedelta, datetime
 
 
@@ -449,6 +454,9 @@ CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 LATEST_LT_WITH_APT_BLOB_NAME = "latest_landlord_tenant_with_apt.csv"
+EXPORT_CONTAINER_NAME = os.environ.get("EXPORT_CONTAINER_NAME", "fscsv")
+EXPORTS_BLOB_PREFIX = os.environ.get("EXPORTS_BLOB_PREFIX", "exports")
+
 
 # Your actual containers:
 CONTAINERS = {
@@ -960,6 +968,264 @@ def ingest_wor_route():
     ingest_wor()
     return {"status": "success"}
 
+
+def parse_search_filters(source):
+    query = source.get("name", "").strip()
+    case_number = source.get("case_number", "").strip()
+    date_start = None
+    date_end = None
+
+    intake_date = source.get("intake_date", "").strip()
+    if " to " in intake_date:
+        parts = intake_date.split(" to ")
+        if len(parts) == 2:
+            date_start = parts[0].strip()
+            date_end = parts[1].strip()
+
+    last_x_days = source.get("last_x_days", "").strip()
+    sex = source.get("sex", "").strip()
+    race = source.get("race", "").strip()
+    issuing_county = source.get("issuing_county", "").strip()
+    sid = source.get("sid", "").strip()
+    dob = source.get("dob", "").strip()
+
+    return {
+        "query": query,
+        "case_number": case_number or None,
+        "date_start": date_start,
+        "date_end": date_end,
+        "last_x_days": last_x_days or None,
+        "sex": sex or None,
+        "race": race or None,
+        "issuing_county": issuing_county or None,
+        "sid": sid or None,
+        "dob": dob or None,
+    }
+
+
+def ensure_exports_table(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        IF OBJECT_ID('search.exports', 'U') IS NULL
+        BEGIN
+            CREATE TABLE search.exports (
+                token NVARCHAR(100) NOT NULL PRIMARY KEY,
+                url NVARCHAR(2000) NULL,
+                status NVARCHAR(50) NOT NULL,
+                error NVARCHAR(MAX) NULL,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+        END
+    """)
+    conn.commit()
+
+
+def _sanitize_column_name(name, used):
+    safe = re.sub(r"[^0-9a-zA-Z_]+", "_", str(name)).strip("_").lower()
+    if not safe:
+        safe = "raw"
+    candidate = safe
+    idx = 2
+    while candidate in used:
+        candidate = f"{safe}_{idx}"
+        idx += 1
+    used.add(candidate)
+    return candidate
+
+
+def _iter_export_rows(cursor, filters):
+    select_sql = """
+        r.record_id,
+        r.full_name,
+        r.sid,
+        r.date_of_birth,
+        r.facility,
+        r.case_number,
+        r.address,
+        r.apt,
+        r.notes,
+        r.warrant_type,
+        r.court_document_type,
+        r.intake_date,
+        COALESCE(r.issue_date, r.intake_date) AS record_date,
+        r.warrant_status,
+        r.disposition,
+        r.warrant_id_number,
+        r.sex,
+        r.race,
+        r.issuing_county,
+        r.department,
+        r.source_file,
+        r.created_at,
+        rr.raw_payload
+    """
+    from_sql = """
+        search.records r
+        LEFT JOIN search.raw_records rr ON rr.record_id = r.record_id
+    """
+    sql, params = build_search_sql(
+        select_sql=select_sql,
+        from_sql=from_sql,
+        name_query=filters["query"],
+        case_number=filters["case_number"],
+        dob=filters["dob"],
+        sex=filters["sex"],
+        race=filters["race"],
+        date_start=filters["date_start"],
+        date_end=filters["date_end"],
+        issuing_county=filters["issuing_county"],
+        last_x_days=filters["last_x_days"],
+        sid=filters["sid"],
+    )
+    sql += " AND LOWER(LTRIM(RTRIM(r.department))) = 'field services department'"
+    cursor.execute(sql, params)
+
+    columns = [col[0] for col in cursor.description]
+    while True:
+        batch = cursor.fetchmany(500)
+        if not batch:
+            break
+        for row in batch:
+            mapped = dict(zip(columns, row))
+            raw_payload = mapped.pop("raw_payload", None)
+            flattened = {}
+            if raw_payload:
+                if isinstance(raw_payload, (bytes, bytearray)):
+                    raw_payload = raw_payload.decode("utf-8", errors="ignore")
+                if isinstance(raw_payload, str):
+                    try:
+                        raw_payload = json.loads(raw_payload)
+                    except Exception:
+                        raw_payload = {}
+                if isinstance(raw_payload, dict):
+                    for k, v in raw_payload.items():
+                        flattened[f"raw_{k}"] = v
+            yield mapped, flattened
+
+
+def run_export_csv_job(token, filters):
+    conn = get_conn()
+    tmp_path = None
+    try:
+        ensure_exports_table(conn)
+        cur = conn.cursor()
+        cur.execute("UPDATE search.exports SET status = 'processing', updated_at = SYSUTCDATETIME() WHERE token = ?", token)
+        conn.commit()
+
+        raw_keys = []
+        seen = set()
+        preview_cur = conn.cursor()
+        for _, flattened in _iter_export_rows(preview_cur, filters):
+            for key in flattened.keys():
+                if key not in seen:
+                    seen.add(key)
+                    raw_keys.append(key)
+
+        base_headers = [
+            "record_id", "full_name", "sid", "date_of_birth", "facility", "case_number",
+            "address", "apt", "notes", "warrant_type", "court_document_type", "intake_date",
+            "record_date", "warrant_status", "disposition", "warrant_id_number", "sex",
+            "race", "issuing_county", "department", "source_file", "created_at"
+        ]
+
+        used = set(base_headers)
+        raw_header_map = {k: _sanitize_column_name(k, used) for k in raw_keys}
+        headers = base_headers + [raw_header_map[k] for k in raw_keys]
+
+        with tempfile.NamedTemporaryFile(mode="w", newline="", encoding="utf-8", suffix=".csv", delete=False) as tmp:
+            tmp_path = tmp.name
+            writer = csv.DictWriter(tmp, fieldnames=headers, extrasaction="ignore")
+            writer.writeheader()
+
+            write_cur = conn.cursor()
+            for base_row, flattened in _iter_export_rows(write_cur, filters):
+                out = dict(base_row)
+                for raw_key, raw_value in flattened.items():
+                    out[raw_header_map.get(raw_key, raw_key)] = raw_value
+                writer.writerow(out)
+
+        container = ContainerClient.from_connection_string(CONNECTION_STRING, EXPORT_CONTAINER_NAME)
+        blob_name = f"{EXPORTS_BLOB_PREFIX}/landlord_tenant_export_{token}.csv"
+        blob_client = container.get_blob_client(blob_name)
+        with open(tmp_path, "rb") as data:
+            blob_client.upload_blob(data, overwrite=True)
+
+        blob_url = blob_client.url
+        cur.execute(
+            "UPDATE search.exports SET status = 'ready', url = ?, updated_at = SYSUTCDATETIME() WHERE token = ?",
+            blob_url, token
+        )
+        conn.commit()
+    except Exception as exc:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE search.exports SET status = 'failed', error = ?, updated_at = SYSUTCDATETIME() WHERE token = ?",
+            str(exc), token
+        )
+        conn.commit()
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        conn.close()
+
+
+@app.route("/export-csv", methods=["POST"])
+def export_csv():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    filters = parse_search_filters(payload)
+
+    conn = get_conn()
+    try:
+        ensure_exports_table(conn)
+        token = uuid.uuid4().hex
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO search.exports (token, status) VALUES (?, 'started')",
+            token
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    thread = threading.Thread(target=run_export_csv_job, args=(token, filters), daemon=True)
+    thread.start()
+
+    return jsonify({"status": "started", "token": token})
+
+
+@app.route("/export-status")
+def export_status():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    token = request.args.get("token", "").strip()
+    if not token:
+        return jsonify({"error": "token is required"}), 400
+
+    conn = get_conn()
+    try:
+        ensure_exports_table(conn)
+        cur = conn.cursor()
+        cur.execute("SELECT status, url, error FROM search.exports WHERE token = ?", token)
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return jsonify({"error": "token not found"}), 404
+
+    status, url, error = row
+    if status == "ready":
+        return jsonify({"status": "ready", "url": url})
+    if status == "failed":
+        return jsonify({"status": "failed", "error": error})
+    return jsonify({"status": "processing"})
+
+
 # ============================================================
 # SEARCH ENDPOINT
 # ============================================================
@@ -969,29 +1235,8 @@ def ingest_wor_route():
 @app.route("/search_all")
 def search_all():
     global _apt_backfill_attempted
-    query = request.args.get("name", "").strip()
-    case_number = request.args.get("case_number", "").strip()
-    date_start = None
-    date_end = None
+    filters = parse_search_filters(request.args)
 
-    intake_date = request.args.get("intake_date", "").strip()
-    if " to " in intake_date:
-        parts = intake_date.split(" to ")
-        if len(parts) == 2:
-            date_start = parts[0].strip()
-            date_end = parts[1].strip()
-    print("DEBUG date_start =", date_start)
-    print("DEBUG date_end   =", date_end)
-    last_x_days = request.args.get("last_x_days", "").strip()
-    sex = request.args.get("sex", "").strip()
-    race = request.args.get("race", "").strip()
-    race = race if race else None
-    issuing_county = request.args.get("issuing_county", "").strip()
-    sid = request.args.get("sid", "").strip()
-    dob = request.args.get("dob", "").strip()
-    
-
-    
     conn = get_conn()
     try:
         if ENABLE_APT_BACKFILL_ON_SEARCH and not _apt_backfill_attempted:
@@ -1004,16 +1249,16 @@ def search_all():
                 _apt_backfill_attempted = True
         records = search_by_name(
             conn,
-            query,
-            date_start=date_start,
-            date_end=date_end,
-            case_number=case_number or None,
-            sid=sid or None,
-            dob=dob or None,
-            sex=sex or None,
-            race=race,
-            issuing_county=issuing_county or None,
-            last_x_days=last_x_days or None,
+            filters["query"],
+            date_start=filters["date_start"],
+            date_end=filters["date_end"],
+            case_number=filters["case_number"],
+            sid=filters["sid"],
+            dob=filters["dob"],
+            sex=filters["sex"],
+            race=filters["race"],
+            issuing_county=filters["issuing_county"],
+            last_x_days=filters["last_x_days"],
             limit=200
         )
     finally:
