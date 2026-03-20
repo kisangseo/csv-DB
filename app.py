@@ -1115,10 +1115,9 @@ def run_export_csv_job(token, filters):
         conn.commit()
 
         base_headers = [
-            "record_id", "full_name", "sid", "date_of_birth", "facility", "case_number",
+            "record_id", "full_name", "sid", "case_number",
             "address", "apt", "notes", "warrant_type", "court_document_type", "intake_date",
-            "record_date", "warrant_status", "disposition", "warrant_id_number", "sex",
-            "race", "issuing_county", "department", "source_file", "created_at"
+            "record_date", "warrant_status", "disposition", "warrant_id_number"
         ]
 
         headers = base_headers
