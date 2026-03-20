@@ -221,6 +221,7 @@
         "LKA": "address",
         "Warrant ID Number": "warrant_id_number",
         "Order Type": "court_document_type",
+        "Case Type": "court_document_type",
         "Hearing Date": "record_date",
         "Order Status": "warrant_status",
         "Notes": "notes",
@@ -771,7 +772,7 @@
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
               headers = ["SID","Name","Date of Birth","Facility"];
             } else if (dept.toLowerCase() === "field services department") {
-              headers = ["Name","Case Number","Address","APT/Unit","Event Type","Event Date","Notes"];
+              headers = ["Name","Case Number","Address","APT/Unit","Event Type","Event Date","Case Type"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             headers.push("Actions");
