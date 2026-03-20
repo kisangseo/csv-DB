@@ -318,6 +318,68 @@
         "field services department - warrants"
       ]);
       const ADD_ALLOWED_TABLES = new Set(["Warrants to Audit", "BCSO Active Warrants"]);
+      const DATE_SORT_DIRECTIONS = { asc: "asc", desc: "desc" };
+
+      function parseDateForSort(value) {
+        if (!value) return Number.NaN;
+        const parsed = Date.parse(value);
+        if (!Number.isNaN(parsed)) return parsed;
+        const mmddyyyy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+        const match = String(value).trim().match(mmddyyyy);
+        if (!match) return Number.NaN;
+        const [, m, d, y] = match;
+        return Date.parse(`${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`);
+      }
+
+      function sortTableByDate(table, columnIndex, direction) {
+        const tbody = table.querySelector("tbody");
+        if (!tbody) return;
+        const rows = Array.from(tbody.querySelectorAll("tr"));
+        const sign = direction === DATE_SORT_DIRECTIONS.asc ? 1 : -1;
+
+        rows.sort((a, b) => {
+          const aText = a.children[columnIndex]?.textContent?.trim() || "";
+          const bText = b.children[columnIndex]?.textContent?.trim() || "";
+          const aDate = parseDateForSort(aText);
+          const bDate = parseDateForSort(bText);
+          const aHasDate = !Number.isNaN(aDate);
+          const bHasDate = !Number.isNaN(bDate);
+
+          if (aHasDate && bHasDate && aDate !== bDate) return (aDate - bDate) * sign;
+          if (aHasDate !== bHasDate) return (aHasDate ? -1 : 1);
+          return aText.localeCompare(bText) * sign;
+        });
+
+        rows.forEach((row) => tbody.appendChild(row));
+      }
+
+      function wireDateHeaderSort(table, th, columnIndex) {
+        const sortButton = document.createElement("button");
+        sortButton.type = "button";
+        sortButton.className = "date-sort-btn";
+        sortButton.setAttribute("aria-label", "Sort by date");
+        sortButton.dataset.direction = DATE_SORT_DIRECTIONS.asc;
+        sortButton.textContent = "↕";
+
+        sortButton.addEventListener("click", () => {
+          const currentDirection = sortButton.dataset.direction || DATE_SORT_DIRECTIONS.asc;
+          const nextDirection =
+            currentDirection === DATE_SORT_DIRECTIONS.asc
+              ? DATE_SORT_DIRECTIONS.desc
+              : DATE_SORT_DIRECTIONS.asc;
+
+          table.querySelectorAll(".date-sort-btn").forEach((btn) => {
+            btn.textContent = "↕";
+            btn.dataset.direction = DATE_SORT_DIRECTIONS.asc;
+          });
+
+          sortButton.dataset.direction = nextDirection;
+          sortButton.textContent = nextDirection === DATE_SORT_DIRECTIONS.asc ? "↑" : "↓";
+          sortTableByDate(table, columnIndex, nextDirection);
+        });
+
+        th.appendChild(sortButton);
+      }
 
       let tableDefinitions = {};
       let activeEditContext = null;
@@ -627,14 +689,17 @@
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
               headers = ["SID","Name","Date of Birth","Facility"];
             } else {
-              headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Intake Date","Current Disposition"];            }
+              headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             headers.push("Actions");
 
             const thead = document.createElement("thead");
             const headerRow = document.createElement("tr");
-            headers.forEach(h => {
+            headers.forEach((h, headerIndex) => {
               const th = document.createElement("th");
               th.textContent = h;
+              if (/date/i.test(h)) {
+                wireDateHeaderSort(table, th, headerIndex);
+              }
               headerRow.appendChild(th);
             });
             thead.appendChild(headerRow);

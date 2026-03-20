@@ -397,6 +397,28 @@ table td {
 table td.name-col {
   text-align: left !important;
 }
+
+.date-sort-btn {
+  margin-left: 6px;
+  border: 1px solid #cfd6e6;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #2d6cff;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.date-sort-btn:hover {
+  background: #eef3ff;
+}
+
+.date-sort-btn:focus {
+  outline: 2px solid #2d6cff55;
+  outline-offset: 1px;
+}
+
 .secondary-btn {
   background: #2d6cff !important;
 }
