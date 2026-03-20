@@ -6,6 +6,7 @@ import io
 import os
 import pyodbc
 import re
+from datetime import datetime
 print("USING INGEST.PY FROM:", __file__)
 
 
@@ -242,6 +243,7 @@ ADDRESS_COLUMN_CANDIDATES = (
 )
 APT_COPY_SUFFIX = "_with_apt_unit.csv"
 LATEST_LT_WITH_APT_BLOB_NAME = "latest_landlord_tenant_with_apt.csv"
+ODYSSEY_FILE_DATE_RE = re.compile(r"(?i)^Odyssey-JobOutput-([A-Za-z]+ \d{1,2}, \d{4})")
 
 
 def split_address_and_apt(address):
@@ -483,6 +485,20 @@ def _is_landlord_tenant_df(df):
     return False
 
 
+def _extract_odyssey_file_date_from_name(blob_name):
+    match = ODYSSEY_FILE_DATE_RE.match(blob_name)
+    if not match:
+        return None
+    raw_date = match.group(1).strip()
+    try:
+        return datetime.strptime(raw_date, "%B %d, %Y").date()
+    except ValueError:
+        try:
+            return datetime.strptime(raw_date, "%B %e, %Y").date()
+        except ValueError:
+            return None
+
+
 def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -492,6 +508,8 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
     candidates = []
     for blob in container_client.list_blobs():
         blob_name = blob.name
+        if not blob_name.startswith("Odyssey-JobOutput-"):
+            continue
         if not blob_name.lower().endswith(APT_COPY_SUFFIX):
             continue
         candidates.append(blob)
@@ -500,10 +518,22 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
         print("No apt-split Odyssey copies found; skipping latest landlord/tenant export.")
         return None
 
-    newest_blob_date = max(blob.last_modified.date() for blob in candidates if blob.last_modified)
+    candidate_dates = [
+        _extract_odyssey_file_date_from_name(blob.name) or (blob.last_modified.date() if blob.last_modified else None)
+        for blob in candidates
+    ]
+    candidate_dates = [d for d in candidate_dates if d is not None]
+    if not candidate_dates:
+        print("No usable dates on Odyssey apt-split files; skipping latest landlord/tenant export.")
+        return None
+
+    newest_blob_date = max(candidate_dates)
     newest_day_blobs = [
         blob for blob in candidates
-        if blob.last_modified and blob.last_modified.date() == newest_blob_date
+        if (
+            _extract_odyssey_file_date_from_name(blob.name)
+            or (blob.last_modified.date() if blob.last_modified else None)
+        ) == newest_blob_date
     ]
 
     merged_frames = []
