@@ -383,6 +383,8 @@
 
       let tableDefinitions = {};
       let activeEditContext = null;
+      let lastSearchFilters = null;
+      let exportPollTimer = null;
 
       function openModal({mode, tableName, values = {}, recordId = null}) {
         const modal = document.getElementById("recordModal");
@@ -605,6 +607,74 @@
         await search({ preventDefault: () => {} });
       }
 
+
+      function getCurrentSearchFilters() {
+        return {
+          name: document.getElementById("name").value,
+          case_number: document.getElementById("case_number").value,
+          intake_date: document.getElementById("intake_date_hidden").value,
+          last_x_days: document.getElementById("last_x_days").value,
+          sex: document.getElementById("sex").value,
+          race: document.getElementById("race").value,
+          issuing_county: document.getElementById("issuing_county").value,
+          sid: document.getElementById("sid").value,
+          dob: document.getElementById("dob").value
+        };
+      }
+
+      async function startCsvExport(statusEl, linkEl) {
+        if (!lastSearchFilters) {
+          statusEl.textContent = "Run a search first.";
+          return;
+        }
+
+        statusEl.textContent = "Starting export...";
+        linkEl.style.display = "none";
+        linkEl.removeAttribute("href");
+
+        const response = await fetch(`${window.location.origin}/export-csv`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(lastSearchFilters)
+        });
+
+        if (!response.ok) {
+          statusEl.textContent = "Failed to start export.";
+          return;
+        }
+
+        const data = await response.json();
+        const token = data.token;
+        statusEl.textContent = "Export started. Building CSV...";
+
+        if (exportPollTimer) {
+          clearInterval(exportPollTimer);
+        }
+
+        exportPollTimer = setInterval(async () => {
+          const pollResponse = await fetch(`${window.location.origin}/export-status?token=${encodeURIComponent(token)}`);
+          if (!pollResponse.ok) {
+            return;
+          }
+
+          const pollData = await pollResponse.json();
+          if (pollData.status === "ready") {
+            clearInterval(exportPollTimer);
+            exportPollTimer = null;
+            statusEl.textContent = "CSV ready.";
+            linkEl.href = pollData.url;
+            linkEl.style.display = "inline";
+            linkEl.textContent = "Download CSV";
+          } else if (pollData.status === "failed") {
+            clearInterval(exportPollTimer);
+            exportPollTimer = null;
+            statusEl.textContent = pollData.error || "Export failed.";
+          } else {
+            statusEl.textContent = "Export processing...";
+          }
+        }, 2000);
+      }
+
       async function search(event) {
         if (event && typeof event.preventDefault === "function") {
           event.preventDefault();
@@ -616,17 +686,9 @@
         status.textContent = "Searching...";
         status.classList.add("loading");
 
-        const params = new URLSearchParams({
-          name: document.getElementById("name").value,
-          case_number: document.getElementById("case_number").value,
-          intake_date: document.getElementById("intake_date_hidden").value,
-          last_x_days: document.getElementById("last_x_days").value,
-          sex: document.getElementById("sex").value,
-          race: document.getElementById("race").value,
-          issuing_county: document.getElementById("issuing_county").value,
-          sid: document.getElementById("sid").value,
-          dob: document.getElementById("dob").value
-        });
+        const filterPayload = getCurrentSearchFilters();
+        lastSearchFilters = {...filterPayload};
+        const params = new URLSearchParams(filterPayload);
 
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
@@ -665,6 +727,26 @@
             };
             title.textContent = DISPLAY_NAMES[dept.toLowerCase()] || dept;
             div.appendChild(title);
+
+            if (dept.toLowerCase() === "field services department") {
+              const exportWrap = document.createElement("div");
+              exportWrap.className = "lt-export-controls";
+              const exportBtn = document.createElement("button");
+              exportBtn.type = "button";
+              exportBtn.textContent = "Download CSV";
+              const exportStatus = document.createElement("span");
+              exportStatus.className = "lt-export-status";
+              const exportLink = document.createElement("a");
+              exportLink.style.display = "none";
+              exportLink.target = "_blank";
+              exportLink.rel = "noopener noreferrer";
+
+              exportBtn.addEventListener("click", () => startCsvExport(exportStatus, exportLink));
+              exportWrap.appendChild(exportBtn);
+              exportWrap.appendChild(exportStatus);
+              exportWrap.appendChild(exportLink);
+              div.appendChild(exportWrap);
+            }
 
             const content = document.createElement("div");
             content.className = "department-content";

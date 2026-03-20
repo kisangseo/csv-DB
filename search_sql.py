@@ -1,9 +1,141 @@
+from typing import List, Optional, Tuple
+
+
+def _build_filters_sql(
+    name_query: str,
+    case_number: Optional[str] = None,
+    dob: Optional[str] = None,
+    sex: Optional[str] = None,
+    race: Optional[str] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+    issuing_county: Optional[str] = None,
+    last_x_days: Optional[str] = None,
+    sid: Optional[str] = None,
+) -> Tuple[str, List[object]]:
+    name_tokens = [t for t in (name_query or "").strip().split() if t]
+    where_clauses = ["1=1"]
+    params: List[object] = []
+
+    for token in name_tokens:
+        where_clauses.append("full_name LIKE ?")
+        params.append(f"%{token}%")
+
+    if case_number:
+        normalized_case_number = "".join(
+            ch for ch in str(case_number) if ch not in {"/", " ", "-"}
+        )
+        where_clauses.append(
+            "REPLACE(REPLACE(REPLACE(case_number, '/', ''), ' ', ''), '-', '') LIKE ?"
+        )
+        params.append(f"%{normalized_case_number}%")
+
+    if date_start and date_end:
+        where_clauses.append(
+            """
+            COALESCE(issue_date, intake_date)
+                BETWEEN CAST(? AS date) AND CAST(? AS date)
+            """.strip()
+        )
+        params.extend([date_start, date_end])
+
+    if sex:
+        normalized_sex = sex.strip().lower()
+        if normalized_sex == "male":
+            where_clauses.append("LOWER(sex) IN (?, ?)")
+            params.extend(["male", "m"])
+        elif normalized_sex == "female":
+            where_clauses.append("LOWER(sex) IN (?, ?)")
+            params.extend(["female", "f"])
+        else:
+            where_clauses.append("LOWER(sex) = ?")
+            params.append(normalized_sex)
+
+    if last_x_days:
+        where_clauses.append(
+            """
+            (
+                issue_date IS NOT NULL
+                OR intake_date IS NOT NULL
+            )
+            """.strip()
+        )
+        where_clauses.append(
+            "COALESCE(issue_date, intake_date) >= DATEADD(day, -?, CAST(GETDATE() AS date))"
+        )
+        params.append(int(last_x_days))
+
+    if race:
+        where_clauses.append("LOWER(race) = ?")
+        params.append(race.lower())
+
+    if issuing_county:
+        where_clauses.append(
+            """
+            issuing_county IS NOT NULL
+            AND LTRIM(RTRIM(issuing_county)) != ''
+            AND LOWER(issuing_county) LIKE ?
+            """.strip()
+        )
+        params.append(f"%{issuing_county.lower()}%")
+
+    if sid:
+        where_clauses.append("sid = ?")
+        params.append(str(sid))
+
+    if dob:
+        where_clauses.append("date_of_birth = CAST(? AS date)")
+        params.append(dob)
+
+    return "\n    AND ".join(where_clauses), params
+
+
+def build_search_sql(
+    select_sql: str,
+    from_sql: str,
+    name_query: str,
+    case_number: Optional[str] = None,
+    dob: Optional[str] = None,
+    sex: Optional[str] = None,
+    race: Optional[str] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+    issuing_county: Optional[str] = None,
+    last_x_days: Optional[str] = None,
+    sid: Optional[str] = None,
+    order_by: str = "created_at DESC",
+    extra_where: Optional[List[str]] = None,
+) -> Tuple[str, List[object]]:
+    where_sql, params = _build_filters_sql(
+        name_query=name_query,
+        case_number=case_number,
+        dob=dob,
+        sex=sex,
+        race=race,
+        date_start=date_start,
+        date_end=date_end,
+        issuing_county=issuing_county,
+        last_x_days=last_x_days,
+        sid=sid,
+    )
+
+    if extra_where:
+        where_sql = "\n    AND ".join([where_sql] + [clause for clause in extra_where if clause])
+
+    sql = f"""
+    SELECT
+        {select_sql}
+    FROM {from_sql}
+    WHERE {where_sql}
+    ORDER BY {order_by}
+    """
+    return sql, params
+
+
 def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, limit=100):
-    name_tokens = [t for t in name_query.strip().split() if t]
     cursor = conn.cursor()
 
-    sql = """
-    SELECT
+    select_sql = """
         record_id,
         full_name AS name,
         sid AS sid,
@@ -30,79 +162,31 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
                 THEN 'BCSO Active Warrants'
             ELSE department
         END AS department
-    FROM search.records
-    WHERE 1=1
-    
     """
 
-    params = []
+    sql, params = build_search_sql(
+        select_sql=select_sql,
+        from_sql="search.records",
+        name_query=name_query,
+        case_number=case_number,
+        dob=dob,
+        sex=sex,
+        race=race,
+        date_start=date_start,
+        date_end=date_end,
+        issuing_county=issuing_county,
+        last_x_days=last_x_days,
+        sid=sid,
+    )
 
-    for token in name_tokens:
-        sql += " AND full_name LIKE ?"
-        params.append(f"%{token}%")
-
-    if case_number:
-        normalized_case_number = "".join(
-            ch for ch in str(case_number) if ch not in {"/", " ", "-"}
-        )
-        sql += " AND REPLACE(REPLACE(REPLACE(case_number, '/', ''), ' ', ''), '-', '') LIKE ?"
-        params.append(f"%{normalized_case_number}%")
-    if date_start and date_end:
-        sql += """
-        AND COALESCE(issue_date, intake_date)
-            BETWEEN CAST(? AS date) AND CAST(? AS date)
-        """
-        params.extend([date_start, date_end])
-        print("DEBUG SQL =", sql)
-        print("DEBUG params =", params)
-
-    if sex:
-        normalized_sex = sex.strip().lower()
-        if normalized_sex == "male":
-            sql += " AND LOWER(sex) IN (?, ?)"
-            params.extend(["male", "m"])
-        elif normalized_sex == "female":
-            sql += " AND LOWER(sex) IN (?, ?)"
-            params.extend(["female", "f"])
-        else:
-            sql += " AND LOWER(sex) = ?"
-            params.append(normalized_sex)
-
-    if last_x_days:
-        sql += """
-        AND (
-            issue_date IS NOT NULL
-            OR intake_date IS NOT NULL
-        )
-        AND COALESCE(issue_date, intake_date) >=
-            DATEADD(day, -?, CAST(GETDATE() AS date))
-        """
-        params.append(int(last_x_days))
-    if race:
-        sql += " AND LOWER(race) = ?"
-        params.append(race.lower())
-    if issuing_county:
-        sql += """
-        AND issuing_county IS NOT NULL
-        AND LTRIM(RTRIM(issuing_county)) != ''
-        AND LOWER(issuing_county) LIKE ?
-        """
-        params.append(f"%{issuing_county.lower()}%")
-    if sid:
-        sql += " AND sid = ?"
-        params.append(str(sid))
-    if dob:
-        sql += " AND date_of_birth = CAST(? AS date)"
-        params.append(dob)
-
-    sql += " ORDER BY created_at DESC"
-
-    
     cursor.execute(sql, params)
 
     columns = [col[0] for col in cursor.description]
     rows = cursor.fetchall()
+    if limit:
+        rows = rows[:limit]
 
     return [dict(zip(columns, row)) for row in rows]
+
 
 print("🔥 USING CAST DATE VERSION 🔥")
