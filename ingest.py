@@ -234,6 +234,17 @@ def insert_search_record_odyssey(cursor, record):
 
 
 APT_RE = re.compile(r"(?i)\bapt\.?\s*#?\s*([A-Za-z0-9-]+)\b")
+STREET_SUFFIXES = (
+    "aly", "allee", "ave", "avenue", "blvd", "boulevard", "cir", "circle",
+    "court", "ct", "dr", "drive", "hwy", "highway", "lane", "ln", "parkway",
+    "pkwy", "pl", "place", "rd", "road", "st", "streat", "street", "ter",
+    "terrace", "way",
+)
+STREET_SUFFIX_RE = re.compile(
+    r"(?i)^(.*\b(?:"
+    + "|".join(STREET_SUFFIXES)
+    + r")\.?)(?:\s*,\s*|\s+)(.+)$"
+)
 ADDRESS_COLUMN_CANDIDATES = (
     "TenantAddress",
     "Address",
@@ -254,15 +265,21 @@ def split_address_and_apt(address):
         return None, None
 
     match = APT_RE.search(text)
-    if not match:
+    if match:
+        apt_value = match.group(1).strip().lstrip("#")
+        cleaned = (text[:match.start()] + " " + text[match.end():]).strip()
+        cleaned = re.sub(r"\s+,", ",", cleaned)
+        cleaned = re.sub(r",\s*,", ", ", cleaned)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
+        return cleaned or None, (apt_value if apt_value else None)
+
+    suffix_match = STREET_SUFFIX_RE.match(text)
+    if not suffix_match:
         return text, None
 
-    apt_value = match.group(1).strip().lstrip("#")
-    cleaned = (text[:match.start()] + " " + text[match.end():]).strip()
-    cleaned = re.sub(r"\s+,", ",", cleaned)
-    cleaned = re.sub(r",\s*,", ", ", cleaned)
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,")
-    return cleaned or None, (apt_value if apt_value else None)
+    street = re.sub(r"\s{2,}", " ", suffix_match.group(1)).strip(" ,")
+    trailing = suffix_match.group(2).strip(" ,")
+    return (street or None), (trailing or None)
 
 
 def ensure_records_apt_column(cursor):
