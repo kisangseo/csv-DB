@@ -1116,7 +1116,7 @@ def run_export_csv_job(token, filters):
 
         base_headers = [
             "record_id", "full_name", "case_number",
-            "address", "apt", "notes", "warrant_type", "court_document_type", "intake_date",
+            "address", "apt", "city", "state", "postal_code", "notes", "warrant_type", "court_document_type", "intake_date",
             "record_date", "disposition"
         ]
 
