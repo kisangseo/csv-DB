@@ -104,6 +104,7 @@ def build_search_sql(
     last_x_days: Optional[str] = None,
     sid: Optional[str] = None,
     order_by: str = "created_at DESC",
+    extra_where: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
     where_sql, params = _build_filters_sql(
         name_query=name_query,
@@ -117,6 +118,9 @@ def build_search_sql(
         last_x_days=last_x_days,
         sid=sid,
     )
+
+    if extra_where:
+        where_sql = "\n    AND ".join([where_sql] + [clause for clause in extra_where if clause])
 
     sql = f"""
     SELECT
@@ -178,7 +182,9 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
     cursor.execute(sql, params)
 
     columns = [col[0] for col in cursor.description]
-    rows = cursor.fetchmany(limit)
+    rows = cursor.fetchall()
+    if limit:
+        rows = rows[:limit]
 
     return [dict(zip(columns, row)) for row in rows]
 

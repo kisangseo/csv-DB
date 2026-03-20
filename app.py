@@ -1077,8 +1077,8 @@ def _iter_export_rows(cursor, filters):
         issuing_county=filters["issuing_county"],
         last_x_days=filters["last_x_days"],
         sid=filters["sid"],
+        extra_where=["LOWER(LTRIM(RTRIM(r.department))) = 'field services department'"],
     )
-    sql += " AND LOWER(LTRIM(RTRIM(r.department))) = 'field services department'"
     cursor.execute(sql, params)
 
     columns = [col[0] for col in cursor.description]
