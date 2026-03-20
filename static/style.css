@@ -550,3 +550,15 @@ textarea.modal-control {
 .address-inline-row .address-apt-col .modal-control {
   max-width: 130px;
 }
+
+.lt-export-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.lt-export-status {
+  color: #555;
+  font-size: 14px;
+}
