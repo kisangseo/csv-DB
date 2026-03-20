@@ -23,9 +23,10 @@
         <button type="button" id="addRecordBtn" class="secondary-btn">Add</button>
         <button type="submit">Search</button>
       </div>
-      <!-- Advanced Search -->
-      <details class="advanced-search" closed>
-        <summary>Advanced Search</summary>
+      <div class="advanced-tools">
+        <!-- Advanced Search -->
+        <details class="advanced-search" closed>
+          <summary>Advanced Search</summary>
       
         
 
@@ -98,8 +99,12 @@
             placeholder="In the last X days"
           >
           
-        </div>
-      </details>
+          </div>
+        </details>
+        <a class="latest-lt-download-link" href="/downloads/latest-landlord-tenant-with-apt.csv">
+          Download latest landlord/tenant CSV (APT{% if latest_lt_file_date %} — {{ latest_lt_file_date }}{% endif %})
+        </a>
+      </div>
       
     </form>
 

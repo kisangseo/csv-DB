@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, redirect, session
+from flask import Flask, request, jsonify, render_template, redirect, session, send_file
 from flask_cors import CORS
 import os
 import re
@@ -9,7 +9,7 @@ import chardet
 from azure.storage.blob import ContainerClient
 from db_connect import get_conn
 from search_sql import search_by_name
-from datetime import timedelta
+from datetime import timedelta, datetime
 
 
 # ============================================================
@@ -20,6 +20,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 app.permanent_session_lifetime = timedelta(hours=12)
 APT_SPLIT_RE = re.compile(r"(?i)\bapt\.?\s*#?\s*([A-Za-z0-9-]+)\b")
+ODYSSEY_FILE_DATE_RE = re.compile(r"(?i)^Odyssey-JobOutput-([A-Za-z]+ \d{1,2}, \d{4})")
 _apt_backfill_attempted = False
 
 
@@ -148,12 +149,58 @@ def login():
 def require_login():
     if "user_id" not in session:
         return redirect("/login")
+
+
+def extract_odyssey_date_label(blob_name: str) -> str:
+    match = ODYSSEY_FILE_DATE_RE.match(blob_name or "")
+    return match.group(1).strip() if match else ""
+
+
+def get_latest_landlord_tenant_file_date_label() -> str:
+    if not CONNECTION_STRING:
+        return ""
+
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, "fscsv")
+    newest_blob = None
+    newest_date = None
+    for blob in container.list_blobs():
+        name = blob.name
+        if not name.startswith("Odyssey-JobOutput-"):
+            continue
+        if not name.lower().endswith("_with_apt_unit.csv"):
+            continue
+
+        label = extract_odyssey_date_label(name)
+        parsed_date = None
+        if label:
+            try:
+                parsed_date = datetime.strptime(label, "%B %d, %Y").date()
+            except ValueError:
+                parsed_date = None
+        if parsed_date is None and blob.last_modified:
+            parsed_date = blob.last_modified.date()
+            label = parsed_date.strftime("%B %d, %Y")
+
+        if parsed_date is None:
+            continue
+
+        if newest_date is None or parsed_date > newest_date:
+            newest_date = parsed_date
+            newest_blob = (name, label)
+
+    return newest_blob[1] if newest_blob else ""
+
+
 @app.route("/")
 def home():
     if "user_id" not in session:
         return redirect("/login")
 
-    return render_template("index.html", user_permission=get_current_permission())
+    return render_template(
+        "index.html",
+        user_permission=get_current_permission(),
+        latest_lt_file_date=get_latest_landlord_tenant_file_date_label(),
+    )
 @app.route("/change-password", methods=["GET","POST"])
 def change_password():
     if "user_id" not in session:
@@ -369,6 +416,7 @@ EDITABLE_DEPARTMENTS = {
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+LATEST_LT_WITH_APT_BLOB_NAME = "latest_landlord_tenant_with_apt.csv"
 
 # Your actual containers:
 CONTAINERS = {
@@ -698,6 +746,25 @@ def table_definitions():
     if "user_id" not in session:
         return jsonify({"error": "Unauthorized"}), 401
     return jsonify(TABLE_DEFINITIONS)
+
+
+@app.route("/downloads/latest-landlord-tenant-with-apt.csv")
+def download_latest_landlord_tenant_with_apt():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, "fscsv")
+    blob = container.get_blob_client(LATEST_LT_WITH_APT_BLOB_NAME)
+    if not blob.exists():
+        return jsonify({"error": "Latest landlord/tenant file is not ready yet."}), 404
+
+    data = blob.download_blob().readall()
+    return send_file(
+        pd.io.common.BytesIO(data),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=LATEST_LT_WITH_APT_BLOB_NAME,
+    )
 
 
 @app.route("/records", methods=["POST"])
