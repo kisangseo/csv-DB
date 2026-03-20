@@ -1114,15 +1114,6 @@ def run_export_csv_job(token, filters):
         cur.execute("UPDATE search.exports SET status = 'processing', updated_at = SYSUTCDATETIME() WHERE token = ?", token)
         conn.commit()
 
-        raw_keys = []
-        seen = set()
-        preview_cur = conn.cursor()
-        for _, flattened in _iter_export_rows(preview_cur, filters):
-            for key in flattened.keys():
-                if key not in seen:
-                    seen.add(key)
-                    raw_keys.append(key)
-
         base_headers = [
             "record_id", "full_name", "sid", "date_of_birth", "facility", "case_number",
             "address", "apt", "notes", "warrant_type", "court_document_type", "intake_date",
@@ -1130,9 +1121,7 @@ def run_export_csv_job(token, filters):
             "race", "issuing_county", "department", "source_file", "created_at"
         ]
 
-        used = set(base_headers)
-        raw_header_map = {k: _sanitize_column_name(k, used) for k in raw_keys}
-        headers = base_headers + [raw_header_map[k] for k in raw_keys]
+        headers = base_headers
 
         with tempfile.NamedTemporaryFile(mode="w", newline="", encoding="utf-8", suffix=".csv", delete=False) as tmp:
             tmp_path = tmp.name
@@ -1140,11 +1129,8 @@ def run_export_csv_job(token, filters):
             writer.writeheader()
 
             write_cur = conn.cursor()
-            for base_row, flattened in _iter_export_rows(write_cur, filters):
-                out = dict(base_row)
-                for raw_key, raw_value in flattened.items():
-                    out[raw_header_map.get(raw_key, raw_key)] = raw_value
-                writer.writerow(out)
+            for base_row, _ in _iter_export_rows(write_cur, filters):
+                writer.writerow(dict(base_row))
 
         container = ContainerClient.from_connection_string(CONNECTION_STRING, EXPORT_CONTAINER_NAME)
         blob_name = f"{EXPORTS_BLOB_PREFIX}/landlord_tenant_export_{token}.csv"
