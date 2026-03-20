@@ -8,6 +8,7 @@ import json
 import tempfile
 import threading
 import uuid
+import io
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
@@ -1151,7 +1152,7 @@ def run_export_csv_job(token, filters):
         with open(tmp_path, "rb") as data:
             blob_client.upload_blob(data, overwrite=True)
 
-        blob_url = blob_client.url
+        blob_url = f"/export-download?token={token}"
         cur.execute(
             "UPDATE search.exports SET status = 'ready', url = ?, updated_at = SYSUTCDATETIME() WHERE token = ?",
             blob_url, token
@@ -1224,6 +1225,44 @@ def export_status():
     if status == "failed":
         return jsonify({"status": "failed", "error": error})
     return jsonify({"status": "processing"})
+
+
+@app.route("/export-download")
+def export_download():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    token = request.args.get("token", "").strip()
+    if not token:
+        return jsonify({"error": "token is required"}), 400
+
+    conn = get_conn()
+    try:
+        ensure_exports_table(conn)
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM search.exports WHERE token = ?", token)
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return jsonify({"error": "token not found"}), 404
+    if row[0] != "ready":
+        return jsonify({"error": "export not ready"}), 409
+
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, EXPORT_CONTAINER_NAME)
+    blob_name = f"{EXPORTS_BLOB_PREFIX}/landlord_tenant_export_{token}.csv"
+    blob_client = container.get_blob_client(blob_name)
+    if not blob_client.exists():
+        return jsonify({"error": "export file not found"}), 404
+
+    data = blob_client.download_blob().readall()
+    return send_file(
+        io.BytesIO(data),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"landlord_tenant_export_{token}.csv",
+    )
 
 
 # ============================================================
