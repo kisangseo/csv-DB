@@ -1259,7 +1259,7 @@ def search_all():
             race=filters["race"],
             issuing_county=filters["issuing_county"],
             last_x_days=filters["last_x_days"],
-            limit=200
+            limit=None
         )
     finally:
         conn.close()
@@ -1268,9 +1268,6 @@ def search_all():
     for r in records:
         dept = r["department"].title()
         grouped.setdefault(dept, []).append(r)
-    MAX_PER_DEPT = 200
-    for dept in grouped:
-        grouped[dept] = grouped[dept][:MAX_PER_DEPT]
 
     response = {}
     for dept, rows in grouped.items():
