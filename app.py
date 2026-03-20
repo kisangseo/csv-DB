@@ -63,13 +63,18 @@ def split_address_and_apt(address):
 def backfill_landlord_tenant_apt(conn):
     cur = conn.cursor()
     cur.execute("""
-        SELECT record_id, address, apt
+        SELECT TOP 2000 record_id, address, apt
         FROM search.records
         WHERE (
             LOWER(LTRIM(RTRIM(department))) = 'field services department'
             OR case_number LIKE '%-LT-%'
         )
         AND address IS NOT NULL
+        AND (
+            apt IS NULL
+            OR LTRIM(RTRIM(CAST(apt AS NVARCHAR(100)))) = ''
+        )
+        ORDER BY record_id DESC
     """)
 
     for record_id, address, existing_apt in cur.fetchall():
