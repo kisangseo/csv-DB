@@ -310,7 +310,13 @@
         "field services department - warrants": "Field Services Department"
       };
 
-      const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants"]);
+      const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants", "field services department"]);
+      const LANDLORD_TENANT_DEPARTMENTS = new Set([
+        "field services department",
+        "field services department - civil intake",
+        "field services department - civil survey",
+        "field services department - warrants"
+      ]);
       const ADD_ALLOWED_TABLES = new Set(["Warrants to Audit", "BCSO Active Warrants"]);
 
       let tableDefinitions = {};
@@ -449,6 +455,34 @@
           else out[field] = row[field] || "";
         });
         return {tableName, out};
+      }
+
+      async function saveLandlordTenantInlineEdit(row, tr, actionsTd, editBtn, deleteBtn) {
+        const addressInput = tr.querySelector('input[data-inline-field="address"]');
+        const aptInput = tr.querySelector('input[data-inline-field="apt"]');
+        const addressValue = addressInput ? addressInput.value.trim() : "";
+        const aptValue = aptInput ? aptInput.value.trim() : "";
+
+        const response = await fetch(`${window.location.origin}/records/${row.record_id}`, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({fields: {address: addressValue, apt: aptValue}})
+        });
+
+        if (!response.ok) {
+          let errText = "Unable to save record.";
+          try {
+            const err = await response.json();
+            errText = err.error || errText;
+          } catch (_) {}
+          alert(errText);
+          return;
+        }
+
+        row.address = addressValue;
+        row.apt = aptValue;
+        actionsTd.dataset.editing = "";
+        await search({preventDefault: () => {}});
       }
 
       async function saveRecord() {
@@ -624,55 +658,113 @@
 
               const actionsTd = document.createElement("td");
               actionsTd.className = "table-actions-cell";
-              const isActionableDept = ACTIONABLE_DEPARTMENTS.has((dept || "").toLowerCase());
+              const deptKey = (dept || "").toLowerCase();
+              const isActionableDept = ACTIONABLE_DEPARTMENTS.has(deptKey);
+              const isLandlordTenantDept = LANDLORD_TENANT_DEPARTMENTS.has(deptKey);
 
               if (isActionableDept) {
                 const editBtn = document.createElement("button");
                 editBtn.type = "button";
                 editBtn.textContent = "Edit";
                 editBtn.className = "table-action-btn";
-                editBtn.addEventListener("click", () => {
+                editBtn.addEventListener("click", async () => {
                   if (!CAN_EDIT) {
                     alert("You do not have permission to edit records.");
                     return;
                   }
-                  const {tableName, out} = mapRowToFields(dept, row);
-                  openModal({mode: "edit", tableName, values: out, recordId: row.record_id});
+
+                  if (!isLandlordTenantDept) {
+                    const {tableName, out} = mapRowToFields(dept, row);
+                    openModal({mode: "edit", tableName, values: out, recordId: row.record_id});
+                    return;
+                  }
+
+                  const isEditing = actionsTd.dataset.editing === "true";
+                  const addressIndex = dataHeaders.indexOf("Address");
+                  const aptIndex = dataHeaders.indexOf("APT/Unit");
+                  if (addressIndex === -1 || aptIndex === -1) {
+                    return;
+                  }
+
+                  if (!isEditing) {
+                    const addressTd = tr.children[addressIndex];
+                    const aptTd = tr.children[aptIndex];
+                    const addressInput = document.createElement("input");
+                    addressInput.type = "text";
+                    addressInput.value = row.address || "";
+                    addressInput.dataset.inlineField = "address";
+                    const aptInput = document.createElement("input");
+                    aptInput.type = "text";
+                    aptInput.value = row.apt || "";
+                    aptInput.dataset.inlineField = "apt";
+                    addressTd.innerHTML = "";
+                    aptTd.innerHTML = "";
+                    addressTd.appendChild(addressInput);
+                    aptTd.appendChild(aptInput);
+                    actionsTd.dataset.editing = "true";
+                    editBtn.textContent = "Save";
+                    if (deleteBtn) {
+                      deleteBtn.textContent = "Cancel";
+                      deleteBtn.style.display = "inline-block";
+                    }
+                    return;
+                  }
+
+                  await saveLandlordTenantInlineEdit(row, tr, actionsTd, editBtn, deleteBtn);
                 });
                 actionsTd.appendChild(editBtn);
 
-                const deleteBtn = document.createElement("button");
-                deleteBtn.type = "button";
-                deleteBtn.textContent = "Delete";
-                deleteBtn.className = "table-action-btn danger-btn";
-                deleteBtn.addEventListener("click", async () => {
-                  if (!CAN_DELETE) {
-                    alert("You do not have permission to delete records.");
-                    return;
-                  }
+                let deleteBtn = null;
+                if (!isLandlordTenantDept) {
+                  deleteBtn = document.createElement("button");
+                  deleteBtn.type = "button";
+                  deleteBtn.textContent = "Delete";
+                  deleteBtn.className = "table-action-btn danger-btn";
+                  deleteBtn.addEventListener("click", async () => {
+                    if (!CAN_DELETE) {
+                      alert("You do not have permission to delete records.");
+                      return;
+                    }
 
-                  const confirmed = window.confirm("Are you sure you want to delete this record?");
-                  if (!confirmed) {
-                    return;
-                  }
+                    const confirmed = window.confirm("Are you sure you want to delete this record?");
+                    if (!confirmed) {
+                      return;
+                    }
 
-                  const response = await fetch(`${window.location.origin}/records/${row.record_id}`, {
-                    method: "DELETE"
+                    const response = await fetch(`${window.location.origin}/records/${row.record_id}`, {
+                      method: "DELETE"
+                    });
+
+                    if (!response.ok) {
+                      let errText = "Unable to delete record.";
+                      try {
+                        const err = await response.json();
+                        errText = err.error || errText;
+                      } catch (_) {}
+                      alert(errText);
+                      return;
+                    }
+
+                    tr.remove();
                   });
-
-                  if (!response.ok) {
-                    let errText = "Unable to delete record.";
-                    try {
-                      const err = await response.json();
-                      errText = err.error || errText;
-                    } catch (_) {}
-                    alert(errText);
-                    return;
-                  }
-
-                  tr.remove();
-                });
-                actionsTd.appendChild(deleteBtn);
+                  actionsTd.appendChild(deleteBtn);
+                } else {
+                  deleteBtn = document.createElement("button");
+                  deleteBtn.type = "button";
+                  deleteBtn.textContent = "Cancel";
+                  deleteBtn.className = "table-action-btn danger-btn";
+                  deleteBtn.style.display = "none";
+                  deleteBtn.addEventListener("click", () => {
+                    const addressIndex = dataHeaders.indexOf("Address");
+                    const aptIndex = dataHeaders.indexOf("APT/Unit");
+                    tr.children[addressIndex].textContent = [row.address, row.city, row.state].filter(Boolean).join(", ");
+                    tr.children[aptIndex].textContent = row.apt || "";
+                    actionsTd.dataset.editing = "";
+                    editBtn.textContent = "Edit";
+                    deleteBtn.style.display = "none";
+                  });
+                  actionsTd.appendChild(deleteBtn);
+                }
               } else {
                 actionsTd.textContent = "—";
               }

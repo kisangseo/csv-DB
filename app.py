@@ -411,6 +411,10 @@ REQUIRED_FIELDS_BY_TABLE = {
 EDITABLE_DEPARTMENTS = {
     "active warrants",
     "bcso_active_warrants",
+    "field services department",
+    "field services department - civil intake",
+    "field services department - civil survey",
+    "field services department - warrants",
 }
 
 CORS(app)
@@ -873,7 +877,7 @@ def update_record(record_id):
         if not existing:
             return jsonify({"error": "Record not found"}), 404
         if str(existing[0] or "").strip().lower() not in EDITABLE_DEPARTMENTS:
-            return jsonify({"error": "Editing is only allowed for Warrants to Audit and BCSO Active Warrants"}), 403
+            return jsonify({"error": "Editing is not allowed for this department"}), 403
 
         cur.execute(
             f"UPDATE search.records SET {', '.join(set_parts)} WHERE record_id = ?",
@@ -901,7 +905,7 @@ def delete_record(record_id):
         if not existing:
             return jsonify({"error": "Record not found"}), 404
         if str(existing[0] or "").strip().lower() not in EDITABLE_DEPARTMENTS:
-            return jsonify({"error": "Deleting is only allowed for Warrants to Audit and BCSO Active Warrants"}), 403
+            return jsonify({"error": "Deleting is not allowed for this department"}), 403
 
         cur.execute("DELETE FROM search.records WHERE record_id = ?", record_id)
         conn.commit()
