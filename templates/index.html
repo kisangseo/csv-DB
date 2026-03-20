@@ -770,6 +770,8 @@
               headers = ["Name","Case Number","Issue Date","Date of Birth","Sex","Race","Issuing County","1st Charge"];
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
               headers = ["SID","Name","Date of Birth","Facility"];
+            } else if (dept.toLowerCase() === "field services department") {
+              headers = ["Name","Case Number","Address","APT/Unit","Event Type","Event Date","Notes"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             headers.push("Actions");
