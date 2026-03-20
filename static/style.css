@@ -266,12 +266,30 @@ td:nth-child(4) {
 
 /* ---------- Advanced Search ---------- */
 
-.advanced-search {
+.advanced-tools {
   margin-top: 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
+}
+
+.advanced-search {
+  margin-top: 0;
   background: #f9fafc;
   padding: 14px 16px;
   border-radius: 8px;
-  
+}
+
+.latest-lt-download-link {
+  margin-top: 8px;
+  color: #2d6cff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.latest-lt-download-link:hover {
+  text-decoration: underline;
 }
 
 .advanced-search h3 {
@@ -306,6 +324,11 @@ td:nth-child(4) {
 }
 
 @media (max-width: 900px) {
+  .advanced-tools {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .advanced-fields {
     grid-template-columns: repeat(2, 1fr);
   }
