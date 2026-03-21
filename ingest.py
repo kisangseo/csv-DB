@@ -206,6 +206,7 @@ def insert_search_record_odyssey(cursor, record):
         apt,
         city,
         state,
+        court_document_type,
         disposition,
         notes
     )
@@ -226,6 +227,7 @@ def insert_search_record_odyssey(cursor, record):
         record.get("apt"),
         record.get("city"),
         record.get("state"),
+        record.get("court_document_type"),
         record.get("disposition"),
         record.get("notes"),
     ))
