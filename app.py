@@ -8,6 +8,7 @@ import json
 import tempfile
 import threading
 import uuid
+import io
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
@@ -1044,9 +1045,11 @@ def _iter_export_rows(cursor, filters):
         r.case_number,
         r.address,
         r.apt,
+        r.city,
+        r.state,
+        r.postal_code,
         r.notes,
-        r.warrant_type,
-        r.court_document_type,
+        r.court_document_type AS case_type,
         r.intake_date,
         COALESCE(r.issue_date, r.intake_date) AS record_date,
         r.warrant_status,
@@ -1113,25 +1116,13 @@ def run_export_csv_job(token, filters):
         cur.execute("UPDATE search.exports SET status = 'processing', updated_at = SYSUTCDATETIME() WHERE token = ?", token)
         conn.commit()
 
-        raw_keys = []
-        seen = set()
-        preview_cur = conn.cursor()
-        for _, flattened in _iter_export_rows(preview_cur, filters):
-            for key in flattened.keys():
-                if key not in seen:
-                    seen.add(key)
-                    raw_keys.append(key)
-
         base_headers = [
-            "record_id", "full_name", "sid", "date_of_birth", "facility", "case_number",
-            "address", "apt", "notes", "warrant_type", "court_document_type", "intake_date",
-            "record_date", "warrant_status", "disposition", "warrant_id_number", "sex",
-            "race", "issuing_county", "department", "source_file", "created_at"
+            "record_id", "full_name", "case_number",
+            "address", "apt", "city", "state", "postal_code", "notes", "case_type", "intake_date",
+            "record_date", "Event Type"
         ]
 
-        used = set(base_headers)
-        raw_header_map = {k: _sanitize_column_name(k, used) for k in raw_keys}
-        headers = base_headers + [raw_header_map[k] for k in raw_keys]
+        headers = base_headers
 
         with tempfile.NamedTemporaryFile(mode="w", newline="", encoding="utf-8", suffix=".csv", delete=False) as tmp:
             tmp_path = tmp.name
@@ -1139,10 +1130,9 @@ def run_export_csv_job(token, filters):
             writer.writeheader()
 
             write_cur = conn.cursor()
-            for base_row, flattened in _iter_export_rows(write_cur, filters):
+            for base_row, _ in _iter_export_rows(write_cur, filters):
                 out = dict(base_row)
-                for raw_key, raw_value in flattened.items():
-                    out[raw_header_map.get(raw_key, raw_key)] = raw_value
+                out["Event Type"] = out.pop("disposition", "")
                 writer.writerow(out)
 
         container = ContainerClient.from_connection_string(CONNECTION_STRING, EXPORT_CONTAINER_NAME)
@@ -1151,7 +1141,7 @@ def run_export_csv_job(token, filters):
         with open(tmp_path, "rb") as data:
             blob_client.upload_blob(data, overwrite=True)
 
-        blob_url = blob_client.url
+        blob_url = f"/export-download?token={token}"
         cur.execute(
             "UPDATE search.exports SET status = 'ready', url = ?, updated_at = SYSUTCDATETIME() WHERE token = ?",
             blob_url, token
@@ -1226,6 +1216,44 @@ def export_status():
     return jsonify({"status": "processing"})
 
 
+@app.route("/export-download")
+def export_download():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    token = request.args.get("token", "").strip()
+    if not token:
+        return jsonify({"error": "token is required"}), 400
+
+    conn = get_conn()
+    try:
+        ensure_exports_table(conn)
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM search.exports WHERE token = ?", token)
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return jsonify({"error": "token not found"}), 404
+    if row[0] != "ready":
+        return jsonify({"error": "export not ready"}), 409
+
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, EXPORT_CONTAINER_NAME)
+    blob_name = f"{EXPORTS_BLOB_PREFIX}/landlord_tenant_export_{token}.csv"
+    blob_client = container.get_blob_client(blob_name)
+    if not blob_client.exists():
+        return jsonify({"error": "export file not found"}), 404
+
+    data = blob_client.download_blob().readall()
+    return send_file(
+        io.BytesIO(data),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"landlord_tenant_export_{token}.csv",
+    )
+
+
 # ============================================================
 # SEARCH ENDPOINT
 # ============================================================
@@ -1259,7 +1287,7 @@ def search_all():
             race=filters["race"],
             issuing_county=filters["issuing_county"],
             last_x_days=filters["last_x_days"],
-            limit=200
+            limit=None
         )
     finally:
         conn.close()
@@ -1268,9 +1296,6 @@ def search_all():
     for r in records:
         dept = r["department"].title()
         grouped.setdefault(dept, []).append(r)
-    MAX_PER_DEPT = 200
-    for dept in grouped:
-        grouped[dept] = grouped[dept][:MAX_PER_DEPT]
 
     response = {}
     for dept, rows in grouped.items():
