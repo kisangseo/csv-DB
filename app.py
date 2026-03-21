@@ -1045,9 +1045,11 @@ def _iter_export_rows(cursor, filters):
         r.case_number,
         r.address,
         r.apt,
+        r.city,
+        r.state,
+        r.postal_code,
         r.notes,
-        r.warrant_type,
-        r.court_document_type,
+        r.court_document_type AS case_type,
         r.intake_date,
         COALESCE(r.issue_date, r.intake_date) AS record_date,
         r.warrant_status,
@@ -1116,7 +1118,7 @@ def run_export_csv_job(token, filters):
 
         base_headers = [
             "record_id", "full_name", "case_number",
-            "address", "apt", "city", "state", "postal_code", "notes", "warrant_type", "court_document_type", "intake_date",
+            "address", "apt", "city", "state", "postal_code", "notes", "case_type", "intake_date",
             "record_date", "disposition"
         ]
 
