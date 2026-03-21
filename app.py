@@ -1119,7 +1119,7 @@ def run_export_csv_job(token, filters):
         base_headers = [
             "record_id", "full_name", "case_number",
             "address", "apt", "city", "state", "postal_code", "notes", "case_type", "intake_date",
-            "record_date", "disposition"
+            "record_date", "Event Type"
         ]
 
         headers = base_headers
@@ -1131,7 +1131,9 @@ def run_export_csv_job(token, filters):
 
             write_cur = conn.cursor()
             for base_row, _ in _iter_export_rows(write_cur, filters):
-                writer.writerow(dict(base_row))
+                out = dict(base_row)
+                out["Event Type"] = out.pop("disposition", "")
+                writer.writerow(out)
 
         container = ContainerClient.from_connection_string(CONNECTION_STRING, EXPORT_CONTAINER_NAME)
         blob_name = f"{EXPORTS_BLOB_PREFIX}/landlord_tenant_export_{token}.csv"
