@@ -221,8 +221,10 @@
         "LKA": "address",
         "Warrant ID Number": "warrant_id_number",
         "Order Type": "court_document_type",
+        "Case Type": "court_document_type",
         "Hearing Date": "record_date",
         "Order Status": "warrant_status",
+        "City/State": "city_state",
         "Notes": "notes",
         "APT": "apt",
         "APT/Unit": "apt",
@@ -770,6 +772,8 @@
               headers = ["Name","Case Number","Issue Date","Date of Birth","Sex","Race","Issuing County","1st Charge"];
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
               headers = ["SID","Name","Date of Birth","Facility"];
+            } else if (dept.toLowerCase() === "field services department") {
+              headers = ["Name","Case Number","Address","City/State","APT/Unit","Event Type","Event Date","Case Type"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             headers.push("Actions");
@@ -792,7 +796,11 @@
               const tr = document.createElement("tr");
               const dataHeaders = headers.slice(0, -1);
               const cells = dataHeaders.map(h => {
-                if (h === "Address") return [row.address, row.city, row.state].filter(Boolean).join(", ");
+                if (h === "Address") {
+                  if (dataHeaders.includes("City/State")) return row.address || "";
+                  return [row.address, row.city, row.state].filter(Boolean).join(", ");
+                }
+                if (h === "City/State") return [row.city, row.state].filter(Boolean).join(", ");
                 const key = FIELD_MAP[h] || h;
                 return row[key] ?? "";
               });

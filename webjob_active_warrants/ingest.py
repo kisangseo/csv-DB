@@ -484,6 +484,7 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
                 "source_file": blob_name,
                 "full_name": row.get("DefendantName"),
                 "case_number": row.get("CaseNumber"),
+                "court_document_type": row.get("CaseType"),
                 "intake_date": safe_sql_date(row.get("EventDate")),
                 "address": address,
                 "apt": apt,
