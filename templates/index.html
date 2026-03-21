@@ -800,7 +800,7 @@
                   if (dataHeaders.includes("City/State")) return row.address || "";
                   return [row.address, row.city, row.state].filter(Boolean).join(", ");
                 }
-                if (h === "City/State") return [row.city, row.state].filter(Boolean).join(",");
+                if (h === "City/State") return [row.city, row.state].filter(Boolean).join(", ");
                 const key = FIELD_MAP[h] || h;
                 return row[key] ?? "";
               });
