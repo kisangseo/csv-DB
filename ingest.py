@@ -346,6 +346,25 @@ def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
 def safe_sql_date(v):
     ts = pd.to_datetime(v, errors="coerce")
     return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
+
+
+def _normalize_dedupe_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return " ".join(text.upper().split())
+
+
+def _odyssey_dedupe_key(event_date, case_number, defendant_name):
+    return (
+        _normalize_dedupe_text(event_date),
+        _normalize_dedupe_text(case_number),
+        _normalize_dedupe_text(defendant_name),
+    )
+
+
 def safe_sql_date_epoch(v):
     """
     Converts Survey123 epoch milliseconds OR normal date strings to SQL date.
@@ -585,7 +604,7 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
     )
     return LATEST_LT_WITH_APT_BLOB_NAME
 
-def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
+def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_keys=None):
     df = read_csv_from_blob(container_name, blob_name)
 
     conn = get_conn()
@@ -597,15 +616,34 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
             WHERE department = 'FIELD SERVICES DEPARTMENT'
             AND source_file = ?
         """, blob_name)
+
+        if existing_keys is None:
+            cursor.execute("""
+                SELECT intake_date, case_number, full_name
+                FROM search.records
+                WHERE department = 'FIELD SERVICES DEPARTMENT'
+            """)
+            existing_keys = {
+                _odyssey_dedupe_key(event_date, case_number, defendant_name)
+                for event_date, case_number, defendant_name in cursor.fetchall()
+            }
+
         for _, row in df.iterrows():
+            event_date = safe_sql_date(row.get("EventDate"))
+            case_number = row.get("CaseNumber")
+            defendant_name = row.get("DefendantName")
+            dedupe_key = _odyssey_dedupe_key(event_date, case_number, defendant_name)
+            if dedupe_key in existing_keys:
+                continue
+
             address, apt = split_address_and_apt(row.get("TenantAddress"))
             record = {
                 "department": "FIELD SERVICES DEPARTMENT",
                 "source_file": blob_name,
-                "full_name": row.get("DefendantName"),
-                "case_number": row.get("CaseNumber"),
+                "full_name": defendant_name,
+                "case_number": case_number,
                 "court_document_type": row.get("CaseType"),
-                "intake_date": safe_sql_date(row.get("EventDate")),
+                "intake_date": event_date,
                 "address": address,
                 "apt": apt,
                 "city": row.get("TenantCity"),
@@ -617,6 +655,7 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv"):
 
             record_id = insert_search_record_odyssey(cursor, record)
             insert_raw_record(cursor, record_id, blob_name, row.to_dict())
+            existing_keys.add(dedupe_key)
 
         conn.commit()
     finally:
@@ -642,6 +681,16 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
             WHERE department = 'FIELD SERVICES DEPARTMENT'
         """)
         already_ingested = {row[0] for row in cursor.fetchall() if row[0]}
+
+        cursor.execute("""
+            SELECT intake_date, case_number, full_name
+            FROM search.records
+            WHERE department = 'FIELD SERVICES DEPARTMENT'
+        """)
+        existing_keys = {
+            _odyssey_dedupe_key(event_date, case_number, defendant_name)
+            for event_date, case_number, defendant_name in cursor.fetchall()
+        }
     finally:
         conn.close()
 
@@ -656,7 +705,7 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
             continue
 
         print("Ingesting:", name)
-        ingest_odyssey_civil_from_blob(name, container_name)
+        ingest_odyssey_civil_from_blob(name, container_name, existing_keys=existing_keys)
 
     conn = get_conn()
     try:
