@@ -6,9 +6,51 @@ import io
 import os
 import pyodbc
 import re
+import requests
 from datetime import datetime
 print("USING INGEST.PY FROM:", __file__)
 
+
+
+def geocode_address(address):
+    if not address:
+        return None, None
+
+    url = "https://atlas.microsoft.com/search/address/json"
+    key = os.getenv("AZURE_MAPS_KEY")
+
+    if not key:
+        print("ERROR: AZURE_MAPS_KEY is missing")
+        return None, None
+
+    params = {
+        "api-version": "1.0",
+        "subscription-key": key,
+        "query": address
+    }
+
+    try:
+        r = requests.get(url, params=params, timeout=5)
+        print("GEOCODE STATUS:", r.status_code)
+
+        if r.status_code != 200:
+            print("GEOCODE ERROR:", r.text[:300])
+            return None, None
+
+        data = r.json()
+
+        if data.get("results"):
+            pos = data["results"][0]["position"]
+            return pos["lon"], pos["lat"]
+
+        print("NO RESULTS FOR:", address)
+
+    except Exception as e:
+        print("GEOCODE EXCEPTION:", str(e))
+
+    return None, None
+
+print(geocode_address("3900 Kimble Rd Baltimore MD"))
 
 
 def insert_search_record_warrants(cursor, record):
@@ -584,6 +626,12 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
             continue
         if not _is_landlord_tenant_df(df):
             continue
+
+        if "x" not in df.columns:
+            addresses = df["TenantAddress"].fillna("").astype(str)
+            coords = addresses.apply(lambda a: geocode_address(a) if a.strip() else (None, None))
+            df["x"] = coords.apply(lambda c: c[0])
+            df["y"] = coords.apply(lambda c: c[1])
 
         merged_frames.append(df)
 

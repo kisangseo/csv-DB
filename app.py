@@ -9,6 +9,7 @@ import tempfile
 import threading
 import uuid
 import io
+import requests
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
@@ -45,6 +46,44 @@ ENABLE_APT_BACKFILL_ON_SEARCH = os.environ.get("ENABLE_APT_BACKFILL_ON_SEARCH", 
     "yes",
     "on",
 }
+
+def geocode_address(address):
+    if not address:
+        return None, None
+
+    url = "https://atlas.microsoft.com/search/address/json"
+    key = os.getenv("AZURE_MAPS_KEY")
+
+    if not key:
+        print("ERROR: AZURE_MAPS_KEY is missing")
+        return None, None
+
+    params = {
+        "api-version": "1.0",
+        "subscription-key": key,
+        "query": address
+    }
+
+    try:
+        r = requests.get(url, params=params, timeout=5)
+        print("GEOCODE STATUS:", r.status_code)
+
+        if r.status_code != 200:
+            print("GEOCODE ERROR:", r.text[:300])
+            return None, None
+
+        data = r.json()
+
+        if data.get("results"):
+            pos = data["results"][0]["position"]
+            return pos["lon"], pos["lat"]
+
+        print("NO RESULTS FOR:", address)
+
+    except Exception as e:
+        print("GEOCODE EXCEPTION:", str(e))
+
+    return None, None
 
 
 def split_address_and_apt(address):
@@ -800,6 +839,13 @@ def download_latest_landlord_tenant_with_apt():
         return jsonify({"error": "Latest landlord/tenant file is not ready yet."}), 404
 
     data = blob.download_blob().readall()
+    df = pd.read_csv(io.BytesIO(data))
+    if "x" not in df.columns:
+        addresses = df["TenantAddress"].fillna("").astype(str)
+        coords = addresses.apply(lambda a: geocode_address(a) if a.strip() else (None, None))
+        df["x"] = coords.apply(lambda c: c[0])
+        df["y"] = coords.apply(lambda c: c[1])
+    data = df.to_csv(index=False).encode("utf-8")
     return send_file(
         pd.io.common.BytesIO(data),
         mimetype="text/csv",
@@ -1119,7 +1165,7 @@ def run_export_csv_job(token, filters):
         base_headers = [
             "record_id", "full_name", "case_number",
             "address", "apt", "city", "state", "postal_code", "notes", "case_type", "intake_date",
-            "record_date", "Event Type"
+            "record_date", "Event Type", "x", "y"
         ]
 
         headers = base_headers
@@ -1133,6 +1179,8 @@ def run_export_csv_job(token, filters):
             for base_row, _ in _iter_export_rows(write_cur, filters):
                 out = dict(base_row)
                 out["Event Type"] = out.pop("disposition", "")
+                tenant_address = out.get("TenantAddress")
+                out["x"], out["y"] = geocode_address(tenant_address) if tenant_address else (None, None)
                 writer.writerow(out)
 
         container = ContainerClient.from_connection_string(CONNECTION_STRING, EXPORT_CONTAINER_NAME)
@@ -1246,6 +1294,16 @@ def export_download():
         return jsonify({"error": "export file not found"}), 404
 
     data = blob_client.download_blob().readall()
+    df = pd.read_csv(io.BytesIO(data))
+    if "x" not in df.columns:
+        if "TenantAddress" in df.columns:
+            addresses = df["TenantAddress"].fillna("").astype(str)
+            coords = addresses.apply(lambda a: geocode_address(a) if a.strip() else (None, None))
+        else:
+            coords = pd.Series([(None, None)] * len(df))
+        df["x"] = coords.apply(lambda c: c[0])
+        df["y"] = coords.apply(lambda c: c[1])
+    data = df.to_csv(index=False).encode("utf-8")
     return send_file(
         io.BytesIO(data),
         mimetype="text/csv",
