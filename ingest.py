@@ -620,6 +620,7 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
         ) == newest_blob_date
     ]
 
+    xy_lookup = None
     merged_frames = []
     for blob in newest_day_blobs:
         blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob.name)
@@ -631,11 +632,43 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
         if not _is_landlord_tenant_df(df):
             continue
 
-        if "x" not in df.columns:
-            addresses = df["TenantAddress"].fillna("").astype(str)
-            coords = addresses.apply(lambda a: geocode_address(a) if a.strip() else (None, None))
-            df["x"] = coords.apply(lambda c: c[0])
-            df["y"] = coords.apply(lambda c: c[1])
+        needs_xy_hydration = (
+            "x" not in df.columns
+            or "y" not in df.columns
+            or df["x"].isna().any()
+            or df["y"].isna().any()
+        )
+        if not needs_xy_hydration:
+            merged_frames.append(df)
+            continue
+
+        if xy_lookup is None:
+            conn = get_conn()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT intake_date, case_number, full_name, x, y
+                    FROM search.records
+                    WHERE x IS NOT NULL AND y IS NOT NULL
+                """)
+                xy_lookup = {}
+                for intake_date, case_number, full_name, x, y in cursor.fetchall():
+                    key = _odyssey_dedupe_key(intake_date, case_number, full_name)
+                    if key not in xy_lookup:
+                        xy_lookup[key] = (x, y)
+            finally:
+                conn.close()
+
+        def _xy_from_records(row):
+            event_date = safe_sql_date(row.get("EventDate") or row.get("intake_date"))
+            case_number = row.get("CaseNumber") or row.get("case_number")
+            full_name = row.get("DefendantName") or row.get("full_name")
+            key = _odyssey_dedupe_key(event_date, case_number, full_name)
+            return xy_lookup.get(key, (None, None))
+
+        coords = df.apply(_xy_from_records, axis=1)
+        df["x"] = coords.apply(lambda c: c[0])
+        df["y"] = coords.apply(lambda c: c[1])
 
         merged_frames.append(df)
 
