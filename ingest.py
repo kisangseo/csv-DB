@@ -6,9 +6,34 @@ import io
 import os
 import pyodbc
 import re
+import requests
 from datetime import datetime
 print("USING INGEST.PY FROM:", __file__)
 
+
+
+def geocode_address(address):
+    if not address:
+        return None, None
+
+    url = "https://atlas.microsoft.com/search/address/json"
+    params = {
+        "api-version": "1.0",
+        "subscription-key": os.getenv("AZURE_MAPS_KEY"),
+        "query": address
+    }
+
+    try:
+        r = requests.get(url, params=params, timeout=5)
+        data = r.json()
+
+        if data.get("results"):
+            pos = data["results"][0]["position"]
+            return pos["lon"], pos["lat"]
+    except Exception:
+        pass
+
+    return None, None
 
 
 def insert_search_record_warrants(cursor, record):
@@ -584,6 +609,11 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
             continue
         if not _is_landlord_tenant_df(df):
             continue
+
+        if "x" not in df.columns:
+            coords = df["TenantAddress"].apply(lambda a: geocode_address(a) if a else (None, None))
+            df["x"] = coords.apply(lambda c: c[0])
+            df["y"] = coords.apply(lambda c: c[1])
 
         merged_frames.append(df)
 
