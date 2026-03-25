@@ -52,21 +52,36 @@ def geocode_address(address):
         return None, None
 
     url = "https://atlas.microsoft.com/search/address/json"
+    key = os.getenv("AZURE_MAPS_KEY")
+
+    if not key:
+        print("ERROR: AZURE_MAPS_KEY is missing")
+        return None, None
+
     params = {
         "api-version": "1.0",
-        "subscription-key": os.getenv("AZURE_MAPS_KEY"),
+        "subscription-key": key,
         "query": address
     }
 
     try:
         r = requests.get(url, params=params, timeout=5)
+        print("GEOCODE STATUS:", r.status_code)
+
+        if r.status_code != 200:
+            print("GEOCODE ERROR:", r.text[:300])
+            return None, None
+
         data = r.json()
 
         if data.get("results"):
             pos = data["results"][0]["position"]
             return pos["lon"], pos["lat"]
-    except Exception:
-        pass
+
+        print("NO RESULTS FOR:", address)
+
+    except Exception as e:
+        print("GEOCODE EXCEPTION:", str(e))
 
     return None, None
 
@@ -826,7 +841,8 @@ def download_latest_landlord_tenant_with_apt():
     data = blob.download_blob().readall()
     df = pd.read_csv(io.BytesIO(data))
     if "x" not in df.columns:
-        coords = df["TenantAddress"].apply(lambda a: geocode_address(a) if a else (None, None))
+        addresses = df["TenantAddress"].fillna("").astype(str)
+        coords = addresses.apply(lambda a: geocode_address(a) if a.strip() else (None, None))
         df["x"] = coords.apply(lambda c: c[0])
         df["y"] = coords.apply(lambda c: c[1])
     data = df.to_csv(index=False).encode("utf-8")
@@ -1163,7 +1179,7 @@ def run_export_csv_job(token, filters):
             for base_row, _ in _iter_export_rows(write_cur, filters):
                 out = dict(base_row)
                 out["Event Type"] = out.pop("disposition", "")
-                tenant_address = out.get("TenantAddress") or out.get("address")
+                tenant_address = out.get("TenantAddress")
                 out["x"], out["y"] = geocode_address(tenant_address) if tenant_address else (None, None)
                 writer.writerow(out)
 
@@ -1280,8 +1296,11 @@ def export_download():
     data = blob_client.download_blob().readall()
     df = pd.read_csv(io.BytesIO(data))
     if "x" not in df.columns:
-        tenant_addresses = df["TenantAddress"] if "TenantAddress" in df.columns else df["address"]
-        coords = tenant_addresses.apply(lambda a: geocode_address(a) if a else (None, None))
+        if "TenantAddress" in df.columns:
+            addresses = df["TenantAddress"].fillna("").astype(str)
+            coords = addresses.apply(lambda a: geocode_address(a) if a.strip() else (None, None))
+        else:
+            coords = pd.Series([(None, None)] * len(df))
         df["x"] = coords.apply(lambda c: c[0])
         df["y"] = coords.apply(lambda c: c[1])
     data = df.to_csv(index=False).encode("utf-8")
