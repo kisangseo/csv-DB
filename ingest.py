@@ -704,6 +704,9 @@ def backfill_landlord_tenant_xy():
                 record_id,
             )
             updated += 1
+            if updated % 100 == 0:
+                conn.commit()
+                print(f"Committed {updated} rows...")
 
         conn.commit()
         print(f"Backfilled landlord/tenant x,y for {updated} rows.")
