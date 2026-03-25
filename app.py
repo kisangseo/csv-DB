@@ -117,10 +117,7 @@ def backfill_landlord_tenant_apt(conn):
     cur.execute("""
         SELECT TOP 2000 record_id, address, apt
         FROM search.records
-        WHERE (
-            LOWER(LTRIM(RTRIM(department))) = 'field services department'
-            OR case_number LIKE '%-LT-%'
-        )
+        WHERE LOWER(LTRIM(RTRIM(department))) = 'field services department'
         AND address IS NOT NULL
         AND (
             apt IS NULL

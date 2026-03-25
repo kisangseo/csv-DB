@@ -697,10 +697,7 @@ def backfill_landlord_tenant_xy():
         cursor.execute("""
             SELECT record_id, address
             FROM search.records
-            WHERE (
-                LOWER(LTRIM(RTRIM(department))) = 'field services department'
-                OR case_number LIKE '%-LT-%'
-            )
+            WHERE LOWER(LTRIM(RTRIM(department))) = 'field services department'
             AND address IS NOT NULL
             AND (
                 x IS NULL
