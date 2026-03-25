@@ -246,6 +246,8 @@ def insert_search_record_odyssey(cursor, record):
         intake_date,
         address,
         apt,
+        x,
+        y,
         city,
         state,
         court_document_type,
@@ -253,7 +255,7 @@ def insert_search_record_odyssey(cursor, record):
         notes
     )
     OUTPUT INSERTED.record_id
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     def clean(v):
@@ -267,6 +269,8 @@ def insert_search_record_odyssey(cursor, record):
         record.get("intake_date"),
         record.get("address"),
         record.get("apt"),
+        record.get("x"),
+        record.get("y"),
         record.get("city"),
         record.get("state"),
         record.get("court_document_type"),
@@ -652,6 +656,52 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
     )
     return LATEST_LT_WITH_APT_BLOB_NAME
 
+
+def backfill_landlord_tenant_xy():
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT record_id, address
+            FROM search.records
+            WHERE (
+                LOWER(LTRIM(RTRIM(department))) = 'field services department'
+                OR case_number LIKE '%-LT-%'
+            )
+            AND address IS NOT NULL
+            AND (
+                x IS NULL
+                OR y IS NULL
+            )
+        """)
+        rows = cursor.fetchall()
+
+        updated = 0
+        for record_id, address in rows:
+            address_text = (str(address).strip() if address is not None else "")
+            if not address_text:
+                continue
+            x, y = geocode_address(address_text)
+            if x is None or y is None:
+                continue
+            cursor.execute(
+                """
+                UPDATE search.records
+                SET x = ?, y = ?
+                WHERE record_id = ?
+                """,
+                x,
+                y,
+                record_id,
+            )
+            updated += 1
+
+        conn.commit()
+        print(f"Backfilled landlord/tenant x,y for {updated} rows.")
+    finally:
+        conn.close()
+
+
 def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_keys=None):
     df = read_csv_from_blob(container_name, blob_name)
 
@@ -685,6 +735,7 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_k
                 continue
 
             address, apt = split_address_and_apt(row.get("TenantAddress"))
+            x, y = geocode_address(address) if address else (None, None)
             record = {
                 "department": "FIELD SERVICES DEPARTMENT",
                 "source_file": blob_name,
@@ -694,6 +745,8 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_k
                 "intake_date": event_date,
                 "address": address,
                 "apt": apt,
+                "x": x,
+                "y": y,
                 "city": row.get("TenantCity"),
                 "state": row.get("TenantState"),
                 "postal_code": None,
@@ -762,6 +815,8 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
         conn.commit()
     finally:
         conn.close()
+
+    backfill_landlord_tenant_xy()
 
 def ingest_population_from_table(table_name, display_department, source_file):
     """
