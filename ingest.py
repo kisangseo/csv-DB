@@ -676,12 +676,21 @@ def backfill_landlord_tenant_xy():
         """)
         rows = cursor.fetchall()
 
+        cache = {}
+        count = 0
         updated = 0
         for record_id, address in rows:
+            count += 1
+            if count % 100 == 0:
+                print(f"Processed {count} rows...")
             address_text = (str(address).strip() if address is not None else "")
             if not address_text:
                 continue
-            x, y = geocode_address(address_text)
+            if address_text in cache:
+                x, y = cache[address_text]
+            else:
+                x, y = geocode_address(address_text)
+                cache[address_text] = (x, y)
             if x is None or y is None:
                 continue
             cursor.execute(
