@@ -5,4 +5,5 @@ azure-storage-blob==12.20.0
 chardet==5.2.0
 gunicorn==22.0.0
 pyodbc==5.1.0
+requests==2.32.3
  
