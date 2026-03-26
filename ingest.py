@@ -807,7 +807,6 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_k
 def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
     create_apt_split_copies_for_all_csv_blobs(container_name)
     reorder_aptunit_in_existing_copies(container_name)
-    build_latest_landlord_tenant_with_apt_blob(container_name)
 
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -859,6 +858,7 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
         conn.close()
 
     backfill_landlord_tenant_xy()
+    build_latest_landlord_tenant_with_apt_blob(container_name)
 
 def ingest_population_from_table(table_name, display_department, source_file):
     """
