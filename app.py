@@ -10,7 +10,7 @@ import threading
 import uuid
 import io
 import requests
-import importlib.util
+import time
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
@@ -294,56 +294,82 @@ def append_dv_pdf_record(record):
         writer.writerow(record)
 
 
-def get_pdf_reader_class():
-    if importlib.util.find_spec("pypdf") is not None:
-        return __import__("pypdf").PdfReader, "pypdf"
-    if importlib.util.find_spec("PyPDF2") is not None:
-        return __import__("PyPDF2").PdfReader, "PyPDF2"
-    raise RuntimeError(
-        "Missing dependency: install `pypdf` or `PyPDF2` before parsing DV PDFs."
-    )
-
-
-def extract_text_with_ocr(pdf_path):
-    if importlib.util.find_spec("pdf2image") is None or importlib.util.find_spec("pytesseract") is None:
+def extract_text_with_doc_intelligence(pdf_path):
+    endpoint = (os.getenv("DOC_INTELLIGENCE_ENDPOINT") or "").strip().rstrip("/")
+    key = (os.getenv("DOC_INTELLIGENCE_KEY") or "").strip()
+    if not endpoint or not key:
         raise RuntimeError(
-            "OCR dependencies missing: install `pdf2image` and `pytesseract`."
+            "Missing DOC_INTELLIGENCE_ENDPOINT or DOC_INTELLIGENCE_KEY env vars."
         )
 
-    convert_from_path = __import__("pdf2image", fromlist=["convert_from_path"]).convert_from_path
-    pytesseract = __import__("pytesseract")
+    analyze_url = (
+        f"{endpoint}/formrecognizer/documentModels/prebuilt-read:analyze"
+        f"?api-version=2023-07-31"
+    )
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
 
-    try:
-        images = convert_from_path(pdf_path)
-    except Exception as exc:
+    start = requests.post(
+        analyze_url,
+        headers={
+            "Ocp-Apim-Subscription-Key": key,
+            "Content-Type": "application/pdf",
+        },
+        data=pdf_bytes,
+        timeout=30,
+    )
+    if start.status_code != 202:
         raise RuntimeError(
-            "Unable to render PDF pages for OCR. Ensure Poppler is installed and in PATH."
-        ) from exc
+            f"Document Intelligence analyze start failed ({start.status_code}): {start.text[:300]}"
+        )
 
+    operation_url = start.headers.get("operation-location")
+    if not operation_url:
+        raise RuntimeError("Document Intelligence response missing operation-location header.")
+
+    status = "notStarted"
+    payload = {}
+    for _ in range(30):
+        poll = requests.get(
+            operation_url,
+            headers={"Ocp-Apim-Subscription-Key": key},
+            timeout=30,
+        )
+        if poll.status_code != 200:
+            raise RuntimeError(
+                f"Document Intelligence polling failed ({poll.status_code}): {poll.text[:300]}"
+            )
+        payload = poll.json()
+        status = (payload.get("status") or "").lower()
+        if status in {"succeeded", "failed"}:
+            break
+        time.sleep(1)
+
+    if status != "succeeded":
+        raise RuntimeError(f"Document Intelligence analysis did not succeed (status={status}).")
+
+    analyze_result = payload.get("analyzeResult") or {}
+    pages = analyze_result.get("pages") or []
     page_texts = []
-    for img in images:
-        page_texts.append(pytesseract.image_to_string(img) or "")
+    for page in pages:
+        lines = page.get("lines") or []
+        page_text = "\n".join([(line.get("content") or "") for line in lines]).strip()
+        page_texts.append(page_text)
+
+    # Fallback to full content if pages payload is empty
+    if not page_texts:
+        content = (analyze_result.get("content") or "").strip()
+        if content:
+            page_texts = [content]
+
     return page_texts
 
 
 def extract_dv_pdf_data(pdf_path):
-    PdfReader, _reader_name = get_pdf_reader_class()
-    reader = PdfReader(pdf_path)
-    page_text = []
-    for page in reader.pages:
-        extracted = page.extract_text() or ""
-        if extracted.strip():
-            page_text.append(extracted)
-            continue
-
-        page_text.append("")
-
+    page_text = extract_text_with_doc_intelligence(pdf_path)
     full_text = "\n".join(page_text)
     if not full_text.strip():
-        page_text = extract_text_with_ocr(pdf_path)
-        full_text = "\n".join(page_text)
-    if not full_text.strip():
-        raise RuntimeError("No extractable text found after OCR.")
+        raise RuntimeError("No extractable text found from Document Intelligence.")
     page1_text = page_text[0] if page_text else ""
     page5_text = page_text[4] if len(page_text) >= 5 else full_text
 
