@@ -8,6 +8,7 @@ quickly validate extraction without wiring the web app.
 from __future__ import annotations
 
 import csv
+import io
 import re
 import importlib.util
 from pathlib import Path
@@ -20,19 +21,53 @@ from pathlib import Path
 INPUT_PDF = Path("sample_dv.pdf")
 
 
-def extract_dv_fields(pdf_path: Path) -> dict[str, str]:
+def get_pdf_reader_class():
     if importlib.util.find_spec("pypdf") is not None:
-        PdfReader = __import__("pypdf").PdfReader
-    elif importlib.util.find_spec("PyPDF2") is not None:
-        PdfReader = __import__("PyPDF2").PdfReader
-    else:
-        raise RuntimeError(
-            "Missing dependency: install `pypdf` or `PyPDF2` first."
-        )
+        return __import__("pypdf").PdfReader, "pypdf"
+    if importlib.util.find_spec("PyPDF2") is not None:
+        return __import__("PyPDF2").PdfReader, "PyPDF2"
+    raise RuntimeError("Missing dependency: install `pypdf` or `PyPDF2` first.")
+
+
+def ocr_text_from_page_images(page) -> str:
+    if importlib.util.find_spec("pytesseract") is None or importlib.util.find_spec("PIL") is None:
+        return ""
+
+    pytesseract = __import__("pytesseract")
+    pil_image_module = __import__("PIL.Image", fromlist=["open"])
+    chunks = []
+
+    page_images = getattr(page, "images", None) or []
+    for embedded_image in page_images:
+        img_bytes = getattr(embedded_image, "data", None)
+        if not img_bytes:
+            continue
+        try:
+            img = pil_image_module.open(io.BytesIO(img_bytes))
+            chunks.append(pytesseract.image_to_string(img))
+        except Exception:
+            continue
+
+    return "\n".join([c for c in chunks if str(c).strip()])
+
+
+def extract_dv_fields(pdf_path: Path) -> dict[str, str]:
+    PdfReader, reader_name = get_pdf_reader_class()
     reader = PdfReader(str(pdf_path))
-    pages = [(p.extract_text() or "") for p in reader.pages]
+    pages = []
+    for page in reader.pages:
+        extracted = page.extract_text() or ""
+        if extracted.strip():
+            pages.append(extracted)
+            continue
+        ocr_text = ocr_text_from_page_images(page) if reader_name == "pypdf" else ""
+        pages.append(ocr_text)
 
     full_text = "\n".join(pages)
+    if not full_text.strip():
+        raise RuntimeError(
+            "No extractable text found. For scanned PDFs install Pillow + pytesseract and Tesseract OCR."
+        )
     page_1 = pages[0] if pages else ""
     page_5 = pages[4] if len(pages) >= 5 else full_text
 
