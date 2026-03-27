@@ -659,14 +659,29 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
             finally:
                 conn.close()
 
-        def _xy_from_records(row):
+        geocode_cache = {}
+
+        def _xy_from_records_or_geocode(row):
             event_date = safe_sql_date(row.get("EventDate") or row.get("intake_date"))
             case_number = row.get("CaseNumber") or row.get("case_number")
             full_name = row.get("DefendantName") or row.get("full_name")
             key = _odyssey_dedupe_key(event_date, case_number, full_name)
-            return xy_lookup.get(key, (None, None))
+            x, y = xy_lookup.get(key, (None, None))
+            if x is not None and y is not None:
+                return x, y
 
-        coords = df.apply(_xy_from_records, axis=1)
+            # Fallback path:
+            # if lookup in search.records misses, geocode the row address directly.
+            address = row.get("TenantAddress") or row.get("Address") or row.get("address")
+            address_text = str(address).strip() if address is not None else ""
+            if not address_text:
+                return None, None
+
+            if address_text not in geocode_cache:
+                geocode_cache[address_text] = geocode_address(address_text)
+            return geocode_cache[address_text]
+
+        coords = df.apply(_xy_from_records_or_geocode, axis=1)
         df["x"] = coords.apply(lambda c: c[0])
         df["y"] = coords.apply(lambda c: c[1])
 
@@ -807,7 +822,6 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_k
 def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
     create_apt_split_copies_for_all_csv_blobs(container_name)
     reorder_aptunit_in_existing_copies(container_name)
-    build_latest_landlord_tenant_with_apt_blob(container_name)
 
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -859,6 +873,7 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
         conn.close()
 
     backfill_landlord_tenant_xy()
+    build_latest_landlord_tenant_with_apt_blob(container_name)
 
 def ingest_population_from_table(table_name, display_department, source_file):
     """
