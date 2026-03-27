@@ -17,7 +17,7 @@ from pathlib import Path
 # Hard-coded input file. Replace this with your PDF filename/path.
 # Example: Path("sample_dv.pdf")
 # ---------------------------------------------------------------------------
-INPUT_PDF = Path("sample_dv.pdf")
+INPUT_PDF = Path("makred order.pdf")
 
 
 def get_pdf_reader_class():
