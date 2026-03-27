@@ -10,6 +10,7 @@ import threading
 import uuid
 import io
 import requests
+import importlib.util
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
@@ -294,6 +295,11 @@ def append_dv_pdf_record(record):
 
 
 def extract_dv_pdf_data(pdf_path):
+    if importlib.util.find_spec("pypdf") is None:
+        raise RuntimeError(
+            "Missing dependency: pypdf. Install requirements before parsing DV PDFs."
+        )
+    PdfReader = __import__("pypdf").PdfReader
     reader = PdfReader(pdf_path)
     page_text = []
     for page in reader.pages:
@@ -958,7 +964,11 @@ def upload_dv_pdf():
     target_path = os.path.join(DV_PDF_UPLOAD_DIR, stamped_name)
     uploaded.save(target_path)
 
-    extracted = extract_dv_pdf_data(target_path)
+    try:
+        extracted = extract_dv_pdf_data(target_path)
+    except RuntimeError as exc:
+        os.remove(target_path)
+        return jsonify({"error": str(exc)}), 500
     if not extracted.get("case_number"):
         os.remove(target_path)
         return jsonify({"error": "Unable to parse this PDF format. Case number not found."}), 422

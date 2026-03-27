@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import csv
 import re
+import importlib.util
 from pathlib import Path
-
-from pypdf import PdfReader
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +21,11 @@ INPUT_PDF = Path("sample_dv.pdf")
 
 
 def extract_dv_fields(pdf_path: Path) -> dict[str, str]:
+    if importlib.util.find_spec("pypdf") is None:
+        raise RuntimeError(
+            "Missing dependency: pypdf. Run `pip install -r requirements.txt` first."
+        )
+    PdfReader = __import__("pypdf").PdfReader
     reader = PdfReader(str(pdf_path))
     pages = [(p.extract_text() or "") for p in reader.pages]
 
@@ -86,4 +90,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
