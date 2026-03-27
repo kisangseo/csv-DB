@@ -14,6 +14,7 @@ import importlib.util
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
+from pypdf import PdfReader
 from azure.storage.blob import ContainerClient
 from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
