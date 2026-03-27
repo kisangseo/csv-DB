@@ -21,11 +21,14 @@ INPUT_PDF = Path("sample_dv.pdf")
 
 
 def extract_dv_fields(pdf_path: Path) -> dict[str, str]:
-    if importlib.util.find_spec("pypdf") is None:
+    if importlib.util.find_spec("pypdf") is not None:
+        PdfReader = __import__("pypdf").PdfReader
+    elif importlib.util.find_spec("PyPDF2") is not None:
+        PdfReader = __import__("PyPDF2").PdfReader
+    else:
         raise RuntimeError(
-            "Missing dependency: pypdf. Run `pip install -r requirements.txt` first."
+            "Missing dependency: install `pypdf` or `PyPDF2` first."
         )
-    PdfReader = __import__("pypdf").PdfReader
     reader = PdfReader(str(pdf_path))
     pages = [(p.extract_text() or "") for p in reader.pages]
 

@@ -295,11 +295,14 @@ def append_dv_pdf_record(record):
 
 
 def extract_dv_pdf_data(pdf_path):
-    if importlib.util.find_spec("pypdf") is None:
+    if importlib.util.find_spec("pypdf") is not None:
+        PdfReader = __import__("pypdf").PdfReader
+    elif importlib.util.find_spec("PyPDF2") is not None:
+        PdfReader = __import__("PyPDF2").PdfReader
+    else:
         raise RuntimeError(
-            "Missing dependency: pypdf. Install requirements before parsing DV PDFs."
+            "Missing dependency: install `pypdf` or `PyPDF2` before parsing DV PDFs."
         )
-    PdfReader = __import__("pypdf").PdfReader
     reader = PdfReader(pdf_path)
     page_text = []
     for page in reader.pages:
