@@ -8,7 +8,6 @@ quickly validate extraction without wiring the web app.
 from __future__ import annotations
 
 import csv
-import io
 import re
 import importlib.util
 from pathlib import Path
@@ -29,30 +28,28 @@ def get_pdf_reader_class():
     raise RuntimeError("Missing dependency: install `pypdf` or `PyPDF2` first.")
 
 
-def ocr_text_from_page_images(page) -> str:
-    if importlib.util.find_spec("pytesseract") is None or importlib.util.find_spec("PIL") is None:
-        return ""
+def extract_text_with_ocr(pdf_path: Path) -> list[str]:
+    if importlib.util.find_spec("pdf2image") is None or importlib.util.find_spec("pytesseract") is None:
+        raise RuntimeError("OCR dependencies missing: install `pdf2image` and `pytesseract`.")
 
+    convert_from_path = __import__("pdf2image", fromlist=["convert_from_path"]).convert_from_path
     pytesseract = __import__("pytesseract")
-    pil_image_module = __import__("PIL.Image", fromlist=["open"])
-    chunks = []
 
-    page_images = getattr(page, "images", None) or []
-    for embedded_image in page_images:
-        img_bytes = getattr(embedded_image, "data", None)
-        if not img_bytes:
-            continue
-        try:
-            img = pil_image_module.open(io.BytesIO(img_bytes))
-            chunks.append(pytesseract.image_to_string(img))
-        except Exception:
-            continue
+    try:
+        images = convert_from_path(str(pdf_path))
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to render PDF pages for OCR. Ensure Poppler is installed and in PATH."
+        ) from exc
 
-    return "\n".join([c for c in chunks if str(c).strip()])
+    pages = []
+    for img in images:
+        pages.append(pytesseract.image_to_string(img) or "")
+    return pages
 
 
 def extract_dv_fields(pdf_path: Path) -> dict[str, str]:
-    PdfReader, reader_name = get_pdf_reader_class()
+    PdfReader, _reader_name = get_pdf_reader_class()
     reader = PdfReader(str(pdf_path))
     pages = []
     for page in reader.pages:
@@ -60,14 +57,14 @@ def extract_dv_fields(pdf_path: Path) -> dict[str, str]:
         if extracted.strip():
             pages.append(extracted)
             continue
-        ocr_text = ocr_text_from_page_images(page) if reader_name == "pypdf" else ""
-        pages.append(ocr_text)
+        pages.append("")
 
     full_text = "\n".join(pages)
     if not full_text.strip():
-        raise RuntimeError(
-            "No extractable text found. For scanned PDFs install Pillow + pytesseract and Tesseract OCR."
-        )
+        pages = extract_text_with_ocr(pdf_path)
+        full_text = "\n".join(pages)
+    if not full_text.strip():
+        raise RuntimeError("No extractable text found after OCR.")
     page_1 = pages[0] if pages else ""
     page_5 = pages[4] if len(pages) >= 5 else full_text
 

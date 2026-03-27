@@ -18,7 +18,7 @@ from pypdf import PdfReader
 from azure.storage.blob import ContainerClient
 from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, UTC
 from werkzeug.utils import secure_filename
 
 
@@ -304,30 +304,30 @@ def get_pdf_reader_class():
     )
 
 
-def ocr_text_from_page_images(page):
-    if importlib.util.find_spec("pytesseract") is None or importlib.util.find_spec("PIL") is None:
-        return ""
+def extract_text_with_ocr(pdf_path):
+    if importlib.util.find_spec("pdf2image") is None or importlib.util.find_spec("pytesseract") is None:
+        raise RuntimeError(
+            "OCR dependencies missing: install `pdf2image` and `pytesseract`."
+        )
 
+    convert_from_path = __import__("pdf2image", fromlist=["convert_from_path"]).convert_from_path
     pytesseract = __import__("pytesseract")
-    pil_image_module = __import__("PIL.Image", fromlist=["open"])
 
-    chunks = []
-    page_images = getattr(page, "images", None) or []
-    for embedded_image in page_images:
-        img_bytes = getattr(embedded_image, "data", None)
-        if not img_bytes:
-            continue
-        try:
-            img = pil_image_module.open(io.BytesIO(img_bytes))
-            chunks.append(pytesseract.image_to_string(img))
-        except Exception:
-            continue
+    try:
+        images = convert_from_path(pdf_path)
+    except Exception as exc:
+        raise RuntimeError(
+            "Unable to render PDF pages for OCR. Ensure Poppler is installed and in PATH."
+        ) from exc
 
-    return "\n".join([c for c in chunks if str(c).strip()])
+    page_texts = []
+    for img in images:
+        page_texts.append(pytesseract.image_to_string(img) or "")
+    return page_texts
 
 
 def extract_dv_pdf_data(pdf_path):
-    PdfReader, reader_name = get_pdf_reader_class()
+    PdfReader, _reader_name = get_pdf_reader_class()
     reader = PdfReader(pdf_path)
     page_text = []
     for page in reader.pages:
@@ -336,15 +336,14 @@ def extract_dv_pdf_data(pdf_path):
             page_text.append(extracted)
             continue
 
-        # OCR fallback for scanned PDFs (best with pypdf + pytesseract + Pillow).
-        ocr_text = ocr_text_from_page_images(page) if reader_name == "pypdf" else ""
-        page_text.append(ocr_text)
+        page_text.append("")
 
     full_text = "\n".join(page_text)
     if not full_text.strip():
-        raise RuntimeError(
-            "No extractable text found. For scanned PDFs install Pillow + pytesseract and Tesseract OCR."
-        )
+        page_text = extract_text_with_ocr(pdf_path)
+        full_text = "\n".join(page_text)
+    if not full_text.strip():
+        raise RuntimeError("No extractable text found after OCR.")
     page1_text = page_text[0] if page_text else ""
     page5_text = page_text[4] if len(page_text) >= 5 else full_text
 
@@ -999,7 +998,7 @@ def upload_dv_pdf():
 
     ensure_dv_pdf_storage()
     safe_name = secure_filename(uploaded.filename)
-    stamped_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}_{safe_name}"
+    stamped_name = f"{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}_{safe_name}"
     target_path = os.path.join(DV_PDF_UPLOAD_DIR, stamped_name)
     uploaded.save(target_path)
 
@@ -1018,7 +1017,7 @@ def upload_dv_pdf():
         "issue_date": extracted.get("issue_date", ""),
         "type": extracted.get("type", ""),
         "pdf_download": f"/static/uploads/dv_pdf/{stamped_name}",
-        "uploaded_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "uploaded_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
     }
     append_dv_pdf_record(record)
     return jsonify({"status": "success", "record": record})
