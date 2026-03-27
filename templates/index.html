@@ -20,6 +20,8 @@
         <input type="text" id="case_number" name="case_number" placeholder="Case Number">
         <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
         <input type="hidden" id="intake_date_hidden" name="intake_date">
+        <input type="file" id="dvPdfFile" accept="application/pdf" style="display:none;">
+        <button type="button" id="uploadDvPdfBtn" class="secondary-btn">Upload DV PDF</button>
         <button type="button" id="addRecordBtn" class="secondary-btn">Add</button>
         <button type="submit">Search</button>
       </div>
@@ -103,6 +105,9 @@
         </details>
         <a class="latest-lt-download-link" href="/downloads/latest-landlord-tenant-with-apt.csv">
           Download latest landlord/tenant CSV ({% if latest_lt_file_date %} — {{ latest_lt_file_date }}{% endif %})
+        </a>
+        <a class="latest-lt-download-link" href="/downloads/dv-pdf.csv">
+          Download DV PDF CSV
         </a>
       </div>
       
@@ -706,6 +711,10 @@
           status.textContent = "Search complete.";
 
           const orderedEntries = Object.entries(data).sort(([deptA], [deptB]) => {
+            const aIsDvPdf = deptA.toLowerCase() === "dv pdf";
+            const bIsDvPdf = deptB.toLowerCase() === "dv pdf";
+            if (aIsDvPdf && !bIsDvPdf) return -1;
+            if (!aIsDvPdf && bIsDvPdf) return 1;
             const aIsBcso = deptA.toLowerCase() === "bcso active warrants";
             const bIsBcso = deptB.toLowerCase() === "bcso active warrants";
             if (aIsBcso && !bIsBcso) return -1;
@@ -774,6 +783,8 @@
               headers = ["SID","Name","Date of Birth","Facility"];
             } else if (dept.toLowerCase() === "field services department") {
               headers = ["Name","Case Number","Address","City/State","APT/Unit","Event Type","Event Date","Case Type"];
+            } else if (dept.toLowerCase() === "dv pdf") {
+              headers = ["Case Number","Respondent Name","Issue Date","Type","PDF Download"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             headers.push("Actions");
@@ -796,6 +807,7 @@
               const tr = document.createElement("tr");
               const dataHeaders = headers.slice(0, -1);
               const cells = dataHeaders.map(h => {
+                if (h === "PDF Download") return row.pdf_download || "";
                 if (h === "Address") {
                   if (dataHeaders.includes("City/State")) return row.address || "";
                   return [row.address, row.city, row.state].filter(Boolean).join(", ");
@@ -805,9 +817,19 @@
                 return row[key] ?? "";
               });
 
-              cells.forEach(val => {
+              cells.forEach((val, index) => {
                 const td = document.createElement("td");
-                td.textContent = val;
+                const headerLabel = dataHeaders[index];
+                if (headerLabel === "PDF Download" && val) {
+                  const link = document.createElement("a");
+                  link.href = val;
+                  link.target = "_blank";
+                  link.rel = "noopener noreferrer";
+                  link.textContent = "Download PDF";
+                  td.appendChild(link);
+                } else {
+                  td.textContent = val;
+                }
                 tr.appendChild(td);
               });
 
@@ -816,8 +838,11 @@
               const deptKey = (dept || "").toLowerCase();
               const isActionableDept = ACTIONABLE_DEPARTMENTS.has(deptKey);
               const isLandlordTenantDept = LANDLORD_TENANT_DEPARTMENTS.has(deptKey);
+              const isDvPdf = deptKey === "dv pdf";
 
-              if (isActionableDept) {
+              if (isDvPdf) {
+                actionsTd.textContent = "—";
+              } else if (isActionableDept) {
                 const editBtn = document.createElement("button");
                 editBtn.type = "button";
                 editBtn.textContent = "Edit";
@@ -944,8 +969,46 @@
         }
       }
 
+      async function uploadDvPdf(file) {
+        const status = document.getElementById("statusMessage");
+        const formData = new FormData();
+        formData.append("pdf_file", file);
+        status.textContent = "Uploading DV PDF...";
+        status.classList.add("loading");
+        try {
+          const response = await fetch(`${window.location.origin}/dv-pdf/upload`, {
+            method: "POST",
+            body: formData
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            status.textContent = data.error || "DV PDF upload failed.";
+            status.classList.remove("loading");
+            return;
+          }
+          status.textContent = "DV PDF uploaded and parsed successfully.";
+          status.classList.remove("loading");
+          search();
+        } catch (err) {
+          console.error(err);
+          status.classList.remove("loading");
+          status.textContent = "Error uploading DV PDF.";
+        }
+      }
+
       document.getElementById("addRecordBtn").addEventListener("click", () => {
         window.open("https://arcg.is/1O1zjf1", "_blank", "noopener,noreferrer");
+      });
+      document.getElementById("uploadDvPdfBtn").addEventListener("click", () => {
+        document.getElementById("dvPdfFile").click();
+      });
+      document.getElementById("dvPdfFile").addEventListener("change", (event) => {
+        const [file] = event.target.files || [];
+        if (!file) {
+          return;
+        }
+        uploadDvPdf(file);
+        event.target.value = "";
       });
       document.getElementById("tableSelect").addEventListener("change", (e) => renderDynamicFields(e.target.value));
       document.getElementById("cancelRecordBtn").addEventListener("click", closeModal);
