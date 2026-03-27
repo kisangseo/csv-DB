@@ -15,11 +15,18 @@ from difflib import SequenceMatcher
 import pandas as pd
 import chardet
 from pypdf import PdfReader
-from azure.storage.blob import ContainerClient
+from azure.storage.blob import (
+    BlobSasPermissions,
+    BlobServiceClient,
+    ContentSettings,
+    ContainerClient,
+    generate_blob_sas,
+)
 from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
 from datetime import timedelta, datetime, UTC
 from werkzeug.utils import secure_filename
+from urllib.parse import urlsplit
 
 
 # ============================================================
@@ -306,16 +313,15 @@ def extract_text_with_doc_intelligence(pdf_path):
         f"{endpoint}/formrecognizer/documentModels/prebuilt-read:analyze"
         f"?api-version=2023-07-31"
     )
-    with open(pdf_path, "rb") as f:
-        pdf_bytes = f.read()
+    pdf_sas_url = upload_pdf_to_blob_and_get_sas_url(pdf_path)
 
     start = requests.post(
         analyze_url,
         headers={
             "Ocp-Apim-Subscription-Key": key,
-            "Content-Type": "application/pdf",
+            "Content-Type": "application/json",
         },
-        data=pdf_bytes,
+        json={"urlSource": pdf_sas_url},
         timeout=30,
     )
     if start.status_code != 202:
@@ -363,6 +369,75 @@ def extract_text_with_doc_intelligence(pdf_path):
             page_texts = [content]
 
     return page_texts
+
+
+def _connection_string_value(connection_string, key_name):
+    for part in connection_string.split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        if key.strip().lower() == key_name.lower():
+            return value.strip()
+    return ""
+
+
+def upload_pdf_to_blob_and_get_sas_url(pdf_path):
+    container_sas_url = (os.getenv("DV_PDF_BLOB_CONTAINER_SAS_URL") or "").strip()
+    blob_name = f"{DV_PDF_BLOB_PREFIX}/{os.path.basename(pdf_path)}"
+
+    if container_sas_url:
+        container = ContainerClient.from_container_url(container_sas_url)
+        blob = container.get_blob_client(blob_name)
+        with open(pdf_path, "rb") as f:
+            blob.upload_blob(
+                f,
+                overwrite=True,
+                content_settings=ContentSettings(content_type="application/pdf"),
+            )
+        sas_token = urlsplit(container_sas_url).query
+        return f"{blob.url}?{sas_token}"
+
+    if not CONNECTION_STRING:
+        raise RuntimeError(
+            "Missing AZURE_STORAGE_CONNECTION_STRING or DV_PDF_BLOB_CONTAINER_SAS_URL env vars."
+        )
+
+    service = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+    container = service.get_container_client(DV_PDF_BLOB_CONTAINER)
+    try:
+        container.create_container()
+    except Exception:
+        pass
+
+    blob = container.get_blob_client(blob_name)
+    with open(pdf_path, "rb") as f:
+        blob.upload_blob(
+            f,
+            overwrite=True,
+            content_settings=ContentSettings(content_type="application/pdf"),
+        )
+
+    account_name = _connection_string_value(CONNECTION_STRING, "AccountName")
+    account_key = _connection_string_value(CONNECTION_STRING, "AccountKey")
+    if not account_name or not account_key:
+        raise RuntimeError(
+            "AZURE_STORAGE_CONNECTION_STRING must include AccountName and AccountKey "
+            "to generate a temporary SAS URL."
+        )
+
+    sas_start = datetime.now(UTC) - timedelta(minutes=5)
+    sas_expiry = datetime.now(UTC) + timedelta(minutes=DV_PDF_BLOB_SAS_MINUTES)
+    sas_token = generate_blob_sas(
+        account_name=account_name,
+        container_name=DV_PDF_BLOB_CONTAINER,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        start=sas_start,
+        expiry=sas_expiry,
+        protocol="https",
+    )
+    return f"{blob.url}?{sas_token}"
 
 
 def extract_dv_pdf_data(pdf_path):
@@ -657,6 +732,9 @@ EXPORT_CONTAINER_NAME = os.environ.get("EXPORT_CONTAINER_NAME", "fscsv")
 EXPORTS_BLOB_PREFIX = os.environ.get("EXPORTS_BLOB_PREFIX", "exports")
 DV_PDF_UPLOAD_DIR = os.path.join("static", "uploads", "dv_pdf")
 DV_PDF_CSV_PATH = os.path.join("static", "uploads", "dv_pdf_records.csv")
+DV_PDF_BLOB_CONTAINER = os.environ.get("DV_PDF_BLOB_CONTAINER", "dvcsv").strip() or "dvcsv"
+DV_PDF_BLOB_PREFIX = os.environ.get("DV_PDF_BLOB_PREFIX", "dv_pdf").strip().strip("/") or "dv_pdf"
+DV_PDF_BLOB_SAS_MINUTES = int(os.environ.get("DV_PDF_BLOB_SAS_MINUTES", "30"))
 ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
 
 
