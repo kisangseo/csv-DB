@@ -10,6 +10,7 @@ import threading
 import uuid
 import io
 import requests
+import importlib.util
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
@@ -17,6 +18,7 @@ from azure.storage.blob import ContainerClient
 from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
 from datetime import timedelta, datetime
+from werkzeug.utils import secure_filename
 
 
 # ============================================================
@@ -261,6 +263,104 @@ def get_latest_landlord_tenant_file_date_label() -> str:
     return newest_blob[1] if newest_blob else ""
 
 
+def ensure_dv_pdf_storage():
+    os.makedirs(DV_PDF_UPLOAD_DIR, exist_ok=True)
+    if not os.path.exists(DV_PDF_CSV_PATH):
+        with open(DV_PDF_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["case_number", "respondent_name", "issue_date", "type", "pdf_download", "uploaded_at"],
+            )
+            writer.writeheader()
+
+
+def read_dv_pdf_records():
+    ensure_dv_pdf_storage()
+    rows = []
+    with open(DV_PDF_CSV_PATH, "r", newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            rows.append(row)
+    return rows
+
+
+def append_dv_pdf_record(record):
+    ensure_dv_pdf_storage()
+    with open(DV_PDF_CSV_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["case_number", "respondent_name", "issue_date", "type", "pdf_download", "uploaded_at"],
+        )
+        writer.writerow(record)
+
+
+def extract_dv_pdf_data(pdf_path):
+    if importlib.util.find_spec("pypdf") is not None:
+        PdfReader = __import__("pypdf").PdfReader
+    elif importlib.util.find_spec("PyPDF2") is not None:
+        PdfReader = __import__("PyPDF2").PdfReader
+    else:
+        raise RuntimeError(
+            "Missing dependency: install `pypdf` or `PyPDF2` before parsing DV PDFs."
+        )
+    reader = PdfReader(pdf_path)
+    page_text = []
+    for page in reader.pages:
+        page_text.append(page.extract_text() or "")
+
+    full_text = "\n".join(page_text)
+    page1_text = page_text[0] if page_text else ""
+    page5_text = page_text[4] if len(page_text) >= 5 else full_text
+
+    case_match = re.search(r"Case No\.\s*([A-Z0-9-]+)", full_text, flags=re.IGNORECASE)
+    case_number = case_match.group(1).strip().upper() if case_match else ""
+
+    respondent_match = re.search(r"RESPONDENT\s+([A-Z][A-Z\s.'-]+)", page1_text)
+    respondent_name = ""
+    if respondent_match:
+        respondent_name = respondent_match.group(1).split("\n")[0].strip()
+
+    type_patterns = [
+        r"(TEMPORARY PROTECTIVE ORDER)",
+        r"(INTERIM PROTECTIVE ORDER)",
+        r"(FINAL PROTECTIVE ORDER)",
+    ]
+    order_type = ""
+    for pattern in type_patterns:
+        match = re.search(pattern, page1_text, flags=re.IGNORECASE)
+        if match:
+            order_type = match.group(1).upper().strip()
+            break
+    if not order_type:
+        match = re.search(r"CERTIFICATION OF\s+([A-Z ]+ORDER)", page5_text, flags=re.IGNORECASE)
+        if match:
+            order_type = re.sub(r"\s+", " ", match.group(1)).upper().strip()
+
+    issue_match = re.search(r"Date:\s*(\d{2}/\d{2}/\d{4})", page5_text, flags=re.IGNORECASE)
+    issue_date = issue_match.group(1) if issue_match else ""
+
+    return {
+        "case_number": case_number,
+        "respondent_name": respondent_name,
+        "issue_date": issue_date,
+        "type": order_type,
+    }
+
+
+def filter_dv_pdf_records(records, filters):
+    query = (filters.get("query") or "").strip().lower()
+    case_number = (filters.get("case_number") or "").strip().lower()
+    filtered = []
+    for row in records:
+        row_case = (row.get("case_number") or "").lower()
+        row_name = (row.get("respondent_name") or "").lower()
+        if case_number and case_number not in row_case:
+            continue
+        if query and query not in row_name:
+            continue
+        filtered.append(row)
+    return filtered
+
+
 @app.route("/")
 def home():
     if "user_id" not in session:
@@ -493,6 +593,9 @@ CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 LATEST_LT_WITH_APT_BLOB_NAME = "latest_landlord_tenant_with_apt.csv"
 EXPORT_CONTAINER_NAME = os.environ.get("EXPORT_CONTAINER_NAME", "fscsv")
 EXPORTS_BLOB_PREFIX = os.environ.get("EXPORTS_BLOB_PREFIX", "exports")
+DV_PDF_UPLOAD_DIR = os.path.join("static", "uploads", "dv_pdf")
+DV_PDF_CSV_PATH = os.path.join("static", "uploads", "dv_pdf_records.csv")
+ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
 
 
 # Your actual containers:
@@ -841,6 +944,59 @@ def download_latest_landlord_tenant_with_apt():
         mimetype="text/csv",
         as_attachment=True,
         download_name=LATEST_LT_WITH_APT_BLOB_NAME,
+    )
+
+
+@app.route("/dv-pdf/upload", methods=["POST"])
+def upload_dv_pdf():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    uploaded = request.files.get("pdf_file")
+    if not uploaded or not uploaded.filename:
+        return jsonify({"error": "Missing PDF file"}), 400
+
+    ext = os.path.splitext(uploaded.filename)[1].lower()
+    if ext not in ALLOWED_DV_PDF_EXTENSIONS:
+        return jsonify({"error": "Only PDF files are supported"}), 400
+
+    ensure_dv_pdf_storage()
+    safe_name = secure_filename(uploaded.filename)
+    stamped_name = f"{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}_{safe_name}"
+    target_path = os.path.join(DV_PDF_UPLOAD_DIR, stamped_name)
+    uploaded.save(target_path)
+
+    try:
+        extracted = extract_dv_pdf_data(target_path)
+    except RuntimeError as exc:
+        os.remove(target_path)
+        return jsonify({"error": str(exc)}), 500
+    if not extracted.get("case_number"):
+        os.remove(target_path)
+        return jsonify({"error": "Unable to parse this PDF format. Case number not found."}), 422
+
+    record = {
+        "case_number": extracted.get("case_number", ""),
+        "respondent_name": extracted.get("respondent_name", ""),
+        "issue_date": extracted.get("issue_date", ""),
+        "type": extracted.get("type", ""),
+        "pdf_download": f"/static/uploads/dv_pdf/{stamped_name}",
+        "uploaded_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    append_dv_pdf_record(record)
+    return jsonify({"status": "success", "record": record})
+
+
+@app.route("/downloads/dv-pdf.csv")
+def download_dv_pdf_csv():
+    if "user_id" not in session:
+        return redirect("/login")
+    ensure_dv_pdf_storage()
+    return send_file(
+        DV_PDF_CSV_PATH,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="dv_pdf_records.csv",
     )
 
 
@@ -1341,8 +1497,14 @@ def search_all():
             "count": len(rows),
             "records": rows,
         }
-    
-   
+
+    dv_records = filter_dv_pdf_records(read_dv_pdf_records(), filters)
+    if dv_records:
+        response["DV PDF"] = {
+            "count": len(dv_records),
+            "records": dv_records,
+        }
+
     return jsonify(response)
 
 if __name__ == "__main__":
