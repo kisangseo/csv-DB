@@ -254,6 +254,11 @@
         warrant_type: "Warrant Type",
         warrant_status: "Warrant Status",
         address: "Address",
+        lka_address: "LKA",
+        zip_code: "Zip",
+        court_type: "Court Type",
+        issuing_judge: "Issuing Judge",
+        entered_into_meters: "Entered into Meters",
         notes: "Notes",
         court_document_type: "Type",
         intake_date: "Intake Date"
@@ -297,7 +302,9 @@
         warrant_status: ["Active", "Served", "Detainer", "Quashed"],
         warrant_type: ["Arrest Warrant VOP", "Arrest Warrant FTA", "Civil", "Juvenile", "Body Attachment", "Other"],
         sex: ["Male", "Female", "Other"],
-        race: ["Black", "White", "Asian/Pacific Islander", "Multi-Race", "Indian or Alaskan Native", "Unknown"]
+        race: ["Black", "White", "Asian/Pacific Islander", "Multi-Race", "Indian or Alaskan Native", "Unknown"],
+        court_type: ["Circuit", "District"],
+        entered_into_meters: ["Yes", "No"]
       };
 
       const REQUIRED_FIELDS_BY_TABLE = {
@@ -305,7 +312,8 @@
       };
 
       const BCSO_VIRTUAL_FIELDS = {
-        apt_unit: "Apt/Unit #"
+        apt_unit: "Apt/Unit #",
+        name_format_hint: "Last, First"
       };
 
       const DEPT_TO_TABLE = {
@@ -458,7 +466,7 @@
         });
       }
 
-      function openModal({mode, tableName, values = {}, recordId = null}) {
+      function openModal({mode, tableName, values = {}, recordId = null, lockTable = false}) {
         const modal = document.getElementById("recordModal");
         const title = document.getElementById("modalTitle");
         const tableSelect = document.getElementById("tableSelect");
@@ -468,7 +476,7 @@
         activeEditContext = {mode, recordId};
         title.textContent = mode === "edit" ? "Edit Record" : "Add Record";
         tableSelect.value = tableName || tableSelect.options[0]?.value;
-        tableSelect.disabled = mode === "edit";
+        tableSelect.disabled = mode === "edit" || lockTable;
         renderDynamicFields(tableSelect.value, values);
 
         modal.classList.remove("hidden");
@@ -482,12 +490,23 @@
       function renderDynamicFields(tableName, values = {}) {
         const fieldsDiv = document.getElementById("dynamicFields");
         fieldsDiv.innerHTML = "";
-        const fields = (tableDefinitions[tableName] && tableDefinitions[tableName].fields) || TABLE_FIELD_MAP[tableName] || [];
+        const isBcsoAdd = tableName === "BCSO Active Warrants" && activeEditContext?.mode === "add";
+        const fields = [ ...((tableDefinitions[tableName] && tableDefinitions[tableName].fields) || TABLE_FIELD_MAP[tableName] || []) ];
+
+        if (isBcsoAdd) {
+          const insertAfter = fields.indexOf("warrant_status");
+          const extraFields = ["court_type", "issuing_judge", "entered_into_meters"];
+          if (insertAfter >= 0) {
+            fields.splice(insertAfter + 1, 0, ...extraFields);
+          } else {
+            fields.push(...extraFields);
+          }
+        }
 
         fields.forEach(field => {
           const wrapper = document.createElement("div");
           wrapper.className = "modal-field";
-          if (field === "address" && tableName === "BCSO Active Warrants") {
+          if (field === "address" && tableName === "BCSO Active Warrants" && !isBcsoAdd) {
             wrapper.classList.add("full-width", "address-inline-row");
           } else if (["address", "notes"].includes(field)) {
             wrapper.classList.add("full-width");
@@ -495,9 +514,65 @@
 
           const label = document.createElement("label");
           const isRequired = (REQUIRED_FIELDS_BY_TABLE[tableName] || []).includes(field);
-          label.textContent = `${FIELD_LABELS[field] || field}${isRequired ? " *" : ""}`;
+          if (field === "full_name" && isBcsoAdd) {
+            label.textContent = "Defendant Name";
+            if (isRequired) {
+              label.textContent += " *";
+            }
+            const hint = document.createElement("span");
+            hint.textContent = ` (${BCSO_VIRTUAL_FIELDS.name_format_hint})`;
+            hint.style.color = "#6b7280";
+            hint.style.fontWeight = "400";
+            label.appendChild(hint);
+          } else {
+            label.textContent = `${FIELD_LABELS[field] || field}${isRequired ? " *" : ""}`;
+          }
 
-          if (field === "address" && tableName === "BCSO Active Warrants") {
+          if (field === "address" && tableName === "BCSO Active Warrants" && isBcsoAdd) {
+            const row = document.createElement("div");
+            row.className = "address-fields-inline";
+
+            const lkaCol = document.createElement("div");
+            lkaCol.className = "address-main-col";
+            const lkaLabel = document.createElement("label");
+            lkaLabel.textContent = FIELD_LABELS.lka_address;
+            const lkaInput = document.createElement("input");
+            lkaInput.classList.add("modal-control");
+            lkaInput.dataset.field = "lka_address";
+            lkaInput.type = "text";
+            lkaInput.value = values.lka_address ?? values.address ?? "";
+            lkaCol.appendChild(lkaLabel);
+            lkaCol.appendChild(lkaInput);
+
+            const aptCol = document.createElement("div");
+            aptCol.className = "address-apt-col";
+            const aptLabel = document.createElement("label");
+            aptLabel.textContent = BCSO_VIRTUAL_FIELDS.apt_unit;
+            const aptInput = document.createElement("input");
+            aptInput.classList.add("modal-control");
+            aptInput.dataset.field = "apt_unit";
+            aptInput.type = "text";
+            aptInput.value = values.apt_unit ?? "";
+            aptCol.appendChild(aptLabel);
+            aptCol.appendChild(aptInput);
+
+            const zipCol = document.createElement("div");
+            zipCol.className = "address-apt-col";
+            const zipLabel = document.createElement("label");
+            zipLabel.textContent = FIELD_LABELS.zip_code;
+            const zipInput = document.createElement("input");
+            zipInput.classList.add("modal-control");
+            zipInput.dataset.field = "zip_code";
+            zipInput.type = "text";
+            zipInput.value = values.zip_code ?? "";
+            zipCol.appendChild(zipLabel);
+            zipCol.appendChild(zipInput);
+
+            row.appendChild(lkaCol);
+            row.appendChild(aptCol);
+            row.appendChild(zipCol);
+            wrapper.appendChild(row);
+          } else if (field === "address" && tableName === "BCSO Active Warrants") {
             const row = document.createElement("div");
             row.className = "address-fields-inline";
 
@@ -641,9 +716,32 @@
 
         if (tableName === "BCSO Active Warrants" && "apt_unit" in fields) {
           const apt = String(fields.apt_unit || "").trim();
-          const address = String(fields.address || "").trim();
-          fields.address = apt ? `${address}${address ? ", " : ""}Unit: ${apt}` : address;
+          const zip = String(fields.zip_code || "").trim();
+          const address = String(fields.lka_address || fields.address || "").trim();
+          const addressSegments = [address];
+          if (apt) addressSegments.push(`Apt: ${apt}`);
+          if (zip) addressSegments.push(`Zip: ${zip}`);
+          fields.address = addressSegments.filter(Boolean).join(", ");
           delete fields.apt_unit;
+          delete fields.lka_address;
+          delete fields.zip_code;
+        }
+
+        if (tableName === "BCSO Active Warrants") {
+          const existingNotes = String(fields.notes || "").trim();
+          const addOns = [];
+          const courtType = String(fields.court_type || "").trim();
+          const issuingJudge = String(fields.issuing_judge || "").trim();
+          const enteredIntoMeters = String(fields.entered_into_meters || "").trim();
+          if (courtType) addOns.push(`Court Type: ${courtType}`);
+          if (issuingJudge) addOns.push(`Issuing Judge: ${issuingJudge}`);
+          if (enteredIntoMeters) addOns.push(`Entered into Meters: ${enteredIntoMeters}`);
+          if (addOns.length > 0) {
+            fields.notes = [existingNotes, ...addOns].filter(Boolean).join("\n");
+          }
+          delete fields.court_type;
+          delete fields.issuing_judge;
+          delete fields.entered_into_meters;
         }
 
         const requiredFields = REQUIRED_FIELDS_BY_TABLE[tableName] || [];
@@ -1086,7 +1184,11 @@
       }
 
       document.getElementById("addRecordBtn").addEventListener("click", () => {
-        window.open("https://arcg.is/1O1zjf1", "_blank", "noopener,noreferrer");
+        if (!CAN_EDIT) {
+          alert("You do not have permission to add records.");
+          return;
+        }
+        openModal({mode: "add", tableName: "BCSO Active Warrants", lockTable: true});
       });
       document.getElementById("uploadDvPdfBtn").addEventListener("click", () => {
         document.getElementById("dvPdfFile").click();
