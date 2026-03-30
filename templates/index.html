@@ -458,7 +458,7 @@
         });
       }
 
-      function openModal({mode, tableName, values = {}, recordId = null}) {
+      function openModal({mode, tableName, values = {}, recordId = null, lockTable = false}) {
         const modal = document.getElementById("recordModal");
         const title = document.getElementById("modalTitle");
         const tableSelect = document.getElementById("tableSelect");
@@ -468,7 +468,7 @@
         activeEditContext = {mode, recordId};
         title.textContent = mode === "edit" ? "Edit Record" : "Add Record";
         tableSelect.value = tableName || tableSelect.options[0]?.value;
-        tableSelect.disabled = mode === "edit";
+        tableSelect.disabled = mode === "edit" || lockTable;
         renderDynamicFields(tableSelect.value, values);
 
         modal.classList.remove("hidden");
@@ -1086,7 +1086,11 @@
       }
 
       document.getElementById("addRecordBtn").addEventListener("click", () => {
-        window.open("https://arcg.is/1O1zjf1", "_blank", "noopener,noreferrer");
+        if (!CAN_EDIT) {
+          alert("You do not have permission to add records.");
+          return;
+        }
+        openModal({mode: "add", tableName: "BCSO Active Warrants", lockTable: true});
       });
       document.getElementById("uploadDvPdfBtn").addEventListener("click", () => {
         document.getElementById("dvPdfFile").click();
