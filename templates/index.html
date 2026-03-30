@@ -392,6 +392,32 @@
       let activeEditContext = null;
       let lastSearchFilters = null;
       let exportPollTimer = null;
+      const INITIAL_DEPARTMENT_HEADERS = [
+        "Bcso Active Warrants",
+        "Warrants to Audit",
+        "Baltimore Jail Population",
+        "DoC Jail Population",
+        "Landlord Tenant",
+        "Warrant Of Restitution",
+        "Warrant of Restitution - Status",
+        "DV PDF"
+      ];
+
+      function renderInitialDepartmentHeaders() {
+        const status = document.getElementById("statusMessage");
+        const resultsDiv = document.getElementById("results");
+        status.textContent = "";
+        resultsDiv.innerHTML = "";
+
+        INITIAL_DEPARTMENT_HEADERS.forEach((label) => {
+          const div = document.createElement("div");
+          div.className = "department";
+          const title = document.createElement("h2");
+          title.textContent = `▶ ${label}`;
+          div.appendChild(title);
+          resultsDiv.appendChild(div);
+        });
+      }
 
       function openModal({mode, tableName, values = {}, recordId = null}) {
         const modal = document.getElementById("recordModal");
@@ -1027,7 +1053,7 @@
 
       window.addEventListener("DOMContentLoaded", async () => {
         await loadTableDefinitions();
-        await search();
+        renderInitialDepartmentHeaders();
       });
     </script>
 
