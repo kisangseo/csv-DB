@@ -405,18 +405,55 @@
         "DV PDF"
       ];
 
+      function addSectionHeaderActions(headerActions, departmentName) {
+        const normalizedName = (departmentName || "").toLowerCase();
+        const uploadDvPdfBtn = document.getElementById("uploadDvPdfBtn");
+        const addRecordBtn = document.getElementById("addRecordBtn");
+        const latestLtDownloadLink = document.getElementById("latestLtDownloadLink");
+        const dvPdfCsvDownloadLink = document.getElementById("dvPdfCsvDownloadLink");
+
+        if (normalizedName === "bcso active warrants") {
+          headerActions.appendChild(addRecordBtn);
+        }
+        if (normalizedName === "landlord tenant" || normalizedName === "field services department") {
+          headerActions.appendChild(latestLtDownloadLink);
+        }
+        if (normalizedName === "dv pdf") {
+          headerActions.appendChild(uploadDvPdfBtn);
+          headerActions.appendChild(dvPdfCsvDownloadLink);
+        }
+      }
+
       function renderInitialDepartmentHeaders() {
         const status = document.getElementById("statusMessage");
         const resultsDiv = document.getElementById("results");
+        const controlDock = document.getElementById("headerControlDock");
+        const uploadDvPdfBtn = document.getElementById("uploadDvPdfBtn");
+        const addRecordBtn = document.getElementById("addRecordBtn");
+        const latestLtDownloadLink = document.getElementById("latestLtDownloadLink");
+        const dvPdfCsvDownloadLink = document.getElementById("dvPdfCsvDownloadLink");
+        [uploadDvPdfBtn, addRecordBtn, latestLtDownloadLink, dvPdfCsvDownloadLink].forEach(el => {
+          if (el) controlDock.appendChild(el);
+        });
         status.textContent = "";
         resultsDiv.innerHTML = "";
 
         INITIAL_DEPARTMENT_HEADERS.forEach((label) => {
           const div = document.createElement("div");
           div.className = "department";
+
+          const header = document.createElement("div");
+          header.className = "department-header";
           const title = document.createElement("h2");
           title.textContent = `▶ ${label}`;
-          div.appendChild(title);
+          const headerActions = document.createElement("div");
+          headerActions.className = "department-header-actions";
+          addSectionHeaderActions(headerActions, label);
+          header.appendChild(title);
+          if (headerActions.childElementCount > 0) {
+            header.appendChild(headerActions);
+          }
+          div.appendChild(header);
           resultsDiv.appendChild(div);
         });
       }
@@ -779,16 +816,7 @@
             header.className = "department-header";
             const headerActions = document.createElement("div");
             headerActions.className = "department-header-actions";
-            if (dept.toLowerCase() === "bcso active warrants") {
-              headerActions.appendChild(addRecordBtn);
-            }
-            if (dept.toLowerCase() === "field services department") {
-              headerActions.appendChild(latestLtDownloadLink);
-            }
-            if (dept.toLowerCase() === "dv pdf") {
-              headerActions.appendChild(uploadDvPdfBtn);
-              headerActions.appendChild(dvPdfCsvDownloadLink);
-            }
+            addSectionHeaderActions(headerActions, dept);
             header.appendChild(title);
             if (headerActions.childElementCount > 0) {
               header.appendChild(headerActions);
