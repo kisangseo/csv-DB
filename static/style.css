@@ -117,9 +117,29 @@ input[type="date"]:focus {
 .department h2 {
   font-size: 22px;
   font-weight: 600;
-  margin-top: 40px;
+  margin-top: 0;
+  margin-bottom: 0;
   color: #222;
   
+}
+
+.department-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 40px;
+}
+
+.department-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.header-control-dock {
+  display: none;
 }
 
 h2 {
@@ -282,10 +302,11 @@ td:nth-child(4) {
 }
 
 .latest-lt-download-link {
-  margin-top: 8px;
+  margin-top: 0;
   color: #2d6cff;
   font-weight: 600;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .latest-lt-download-link:hover {
