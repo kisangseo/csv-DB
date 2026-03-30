@@ -220,7 +220,7 @@
         "Intake Date": "intake_date",
         "Court Document Type": "court_document_type",
         "Current Disposition": "disposition",
-        "Respondent Name": "name",
+        "Respondent Name": "respondent_name",
         "Event Date": "record_date",
         "Event Type": "disposition",
         "LKA": "address",
@@ -808,6 +808,11 @@
               const dataHeaders = headers.slice(0, -1);
               const cells = dataHeaders.map(h => {
                 if (h === "PDF Download") return row.pdf_download || "";
+                if (dept.toLowerCase() === "dv pdf") {
+                  if (h === "Respondent Name") return row.respondent_name || "";
+                  if (h === "Issue Date") return row.issue_date || "";
+                  if (h === "Type") return row.type || "";
+                }
                 if (h === "Address") {
                   if (dataHeaders.includes("City/State")) return row.address || "";
                   return [row.address, row.city, row.state].filter(Boolean).join(", ");
