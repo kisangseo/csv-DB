@@ -21,8 +21,6 @@
         <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
         <input type="hidden" id="intake_date_hidden" name="intake_date">
         <input type="file" id="dvPdfFile" accept="application/pdf" style="display:none;">
-        <button type="button" id="uploadDvPdfBtn" class="secondary-btn">Upload DV PDF</button>
-        <button type="button" id="addRecordBtn" class="secondary-btn">Add</button>
         <button type="submit">Search</button>
       </div>
       <div class="advanced-tools">
@@ -103,15 +101,19 @@
           
           </div>
         </details>
-        <a class="latest-lt-download-link" href="/downloads/latest-landlord-tenant-with-apt.csv">
-          Download latest landlord/tenant CSV ({% if latest_lt_file_date %} — {{ latest_lt_file_date }}{% endif %})
-        </a>
-        <a class="latest-lt-download-link" href="/downloads/dv-pdf.csv">
-          Download DV PDF CSV
-        </a>
       </div>
       
     </form>
+    <div id="headerControlDock" class="header-control-dock" aria-hidden="true">
+      <button type="button" id="uploadDvPdfBtn" class="secondary-btn">Upload DV PDF</button>
+      <button type="button" id="addRecordBtn" class="secondary-btn">Add</button>
+      <a id="latestLtDownloadLink" class="latest-lt-download-link" href="/downloads/latest-landlord-tenant-with-apt.csv">
+        Download latest landlord/tenant CSV ({% if latest_lt_file_date %} — {{ latest_lt_file_date }}{% endif %})
+      </a>
+      <a id="dvPdfCsvDownloadLink" class="latest-lt-download-link" href="/downloads/dv-pdf.csv">
+        Download DV PDF CSV
+      </a>
+    </div>
 
     <!-- 👇 Added status message placeholder -->
     <p id="statusMessage"></p>
@@ -715,6 +717,14 @@
 
         const status = document.getElementById("statusMessage");
         const resultsDiv = document.getElementById("results");
+        const controlDock = document.getElementById("headerControlDock");
+        const uploadDvPdfBtn = document.getElementById("uploadDvPdfBtn");
+        const addRecordBtn = document.getElementById("addRecordBtn");
+        const latestLtDownloadLink = document.getElementById("latestLtDownloadLink");
+        const dvPdfCsvDownloadLink = document.getElementById("dvPdfCsvDownloadLink");
+        [uploadDvPdfBtn, addRecordBtn, latestLtDownloadLink, dvPdfCsvDownloadLink].forEach(el => {
+          if (el) controlDock.appendChild(el);
+        });
         resultsDiv.innerHTML = "";
         status.textContent = "Searching...";
         status.classList.add("loading");
@@ -762,8 +772,28 @@
               "field services department": "Landlord Tenant",
               "active warrants": "Warrants to Audit",
             };
-            title.textContent = DISPLAY_NAMES[dept.toLowerCase()] || dept;
-            div.appendChild(title);
+            const baseTitle = DISPLAY_NAMES[dept.toLowerCase()] || dept;
+            title.textContent = baseTitle;
+
+            const header = document.createElement("div");
+            header.className = "department-header";
+            const headerActions = document.createElement("div");
+            headerActions.className = "department-header-actions";
+            if (dept.toLowerCase() === "bcso active warrants") {
+              headerActions.appendChild(addRecordBtn);
+            }
+            if (dept.toLowerCase() === "field services department") {
+              headerActions.appendChild(latestLtDownloadLink);
+            }
+            if (dept.toLowerCase() === "dv pdf") {
+              headerActions.appendChild(uploadDvPdfBtn);
+              headerActions.appendChild(dvPdfCsvDownloadLink);
+            }
+            header.appendChild(title);
+            if (headerActions.childElementCount > 0) {
+              header.appendChild(headerActions);
+            }
+            div.appendChild(header);
 
             if (dept.toLowerCase() === "field services department") {
               const exportWrap = document.createElement("div");
@@ -793,10 +823,10 @@
             content.appendChild(countText);
 
             title.style.cursor = "pointer";
-            title.textContent = `▼ ${title.textContent}`;
+            title.textContent = `▼ ${baseTitle}`;
             title.addEventListener("click", () => {
               const collapsed = content.classList.toggle("collapsed");
-              title.textContent = `${collapsed ? "▶" : "▼"} ${title.textContent.slice(2)}`;
+              title.textContent = `${collapsed ? "▶" : "▼"} ${baseTitle}`;
             });
 
             const table = document.createElement("table");
