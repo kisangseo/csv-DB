@@ -1631,6 +1631,15 @@ def search_all():
         dept = r["department"].title()
         grouped.setdefault(dept, []).append(r)
 
+    default_departments = [
+        "Bcso Active Warrants",
+        "Active Warrants",
+        "Baltimore Jail Population",
+        "Doc Jail Population",
+        "Field Services Department",
+        "Warrant Of Restitution - Mdec",
+    ]
+
     response = {}
     for dept, rows in grouped.items():
         response[dept] = {
@@ -1638,12 +1647,14 @@ def search_all():
             "records": rows,
         }
 
+    for dept in default_departments:
+        response.setdefault(dept, {"count": 0, "records": []})
+
     dv_records = filter_dv_pdf_records(read_dv_pdf_records(), filters)
-    if dv_records:
-        response["DV PDF"] = {
-            "count": len(dv_records),
-            "records": dv_records,
-        }
+    response["DV PDF"] = {
+        "count": len(dv_records),
+        "records": dv_records,
+    }
 
     return jsonify(response)
 
