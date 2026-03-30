@@ -15,7 +15,6 @@ from difflib import SequenceMatcher
 import pandas as pd
 import chardet
 from pypdf import PdfReader
-from pdf2image import convert_from_path
 from azure.storage.blob import (
     BlobSasPermissions,
     BlobServiceClient,
@@ -385,94 +384,60 @@ def _connection_string_value(connection_string, key_name):
 def upload_pdf_to_blob_and_get_sas_url(pdf_path):
     container_sas_url = (os.getenv("DV_PDF_BLOB_CONTAINER_SAS_URL") or "").strip()
     blob_name = f"{DV_PDF_BLOB_PREFIX}/{os.path.basename(pdf_path)}"
-    compressed_pdf_path = build_ocr_optimized_pdf(pdf_path)
 
-    try:
-        if container_sas_url:
-            container = ContainerClient.from_container_url(container_sas_url)
-            blob = container.get_blob_client(blob_name)
-            with open(compressed_pdf_path, "rb") as f:
-                blob.upload_blob(
-                    f,
-                    overwrite=True,
-                    content_settings=ContentSettings(content_type="application/pdf"),
-                )
-            sas_token = urlsplit(container_sas_url).query
-            return f"{blob.url}?{sas_token}"
-
-        if not CONNECTION_STRING:
-            raise RuntimeError(
-                "Missing AZURE_STORAGE_CONNECTION_STRING or DV_PDF_BLOB_CONTAINER_SAS_URL env vars."
-            )
-
-        service = BlobServiceClient.from_connection_string(CONNECTION_STRING)
-        container = service.get_container_client(DV_PDF_BLOB_CONTAINER)
-        try:
-            container.create_container()
-        except Exception:
-            pass
-
+    if container_sas_url:
+        container = ContainerClient.from_container_url(container_sas_url)
         blob = container.get_blob_client(blob_name)
-        with open(compressed_pdf_path, "rb") as f:
+        with open(pdf_path, "rb") as f:
             blob.upload_blob(
                 f,
                 overwrite=True,
                 content_settings=ContentSettings(content_type="application/pdf"),
             )
-
-        account_name = _connection_string_value(CONNECTION_STRING, "AccountName")
-        account_key = _connection_string_value(CONNECTION_STRING, "AccountKey")
-        if not account_name or not account_key:
-            raise RuntimeError(
-                "AZURE_STORAGE_CONNECTION_STRING must include AccountName and AccountKey "
-                "to generate a temporary SAS URL."
-            )
-
-        sas_start = datetime.now(UTC) - timedelta(minutes=5)
-        sas_expiry = datetime.now(UTC) + timedelta(minutes=DV_PDF_BLOB_SAS_MINUTES)
-        sas_token = generate_blob_sas(
-            account_name=account_name,
-            container_name=DV_PDF_BLOB_CONTAINER,
-            blob_name=blob_name,
-            account_key=account_key,
-            permission=BlobSasPermissions(read=True),
-            start=sas_start,
-            expiry=sas_expiry,
-            protocol="https",
-        )
+        sas_token = urlsplit(container_sas_url).query
         return f"{blob.url}?{sas_token}"
-    finally:
-        if os.path.exists(compressed_pdf_path):
-            os.remove(compressed_pdf_path)
 
+    if not CONNECTION_STRING:
+        raise RuntimeError(
+            "Missing AZURE_STORAGE_CONNECTION_STRING or DV_PDF_BLOB_CONTAINER_SAS_URL env vars."
+        )
 
-def build_ocr_optimized_pdf(pdf_path):
-    pages = convert_from_path(
-        pdf_path,
-        dpi=DV_PDF_OCR_DPI,
-        fmt="jpeg",
-        jpegopt={"quality": DV_PDF_OCR_JPEG_QUALITY, "optimize": True},
+    service = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+    container = service.get_container_client(DV_PDF_BLOB_CONTAINER)
+    try:
+        container.create_container()
+    except Exception:
+        pass
+
+    blob = container.get_blob_client(blob_name)
+    with open(pdf_path, "rb") as f:
+        blob.upload_blob(
+            f,
+            overwrite=True,
+            content_settings=ContentSettings(content_type="application/pdf"),
+        )
+
+    account_name = _connection_string_value(CONNECTION_STRING, "AccountName")
+    account_key = _connection_string_value(CONNECTION_STRING, "AccountKey")
+    if not account_name or not account_key:
+        raise RuntimeError(
+            "AZURE_STORAGE_CONNECTION_STRING must include AccountName and AccountKey "
+            "to generate a temporary SAS URL."
+        )
+
+    sas_start = datetime.now(UTC) - timedelta(minutes=5)
+    sas_expiry = datetime.now(UTC) + timedelta(minutes=DV_PDF_BLOB_SAS_MINUTES)
+    sas_token = generate_blob_sas(
+        account_name=account_name,
+        container_name=DV_PDF_BLOB_CONTAINER,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        start=sas_start,
+        expiry=sas_expiry,
+        protocol="https",
     )
-    if not pages:
-        raise RuntimeError("Unable to convert PDF pages for OCR preprocessing.")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
-        temp_pdf_path = tmp_pdf.name
-
-    rgb_pages = [page.convert("RGB") for page in pages]
-    first_page, remaining_pages = rgb_pages[0], rgb_pages[1:]
-    first_page.save(
-        temp_pdf_path,
-        "PDF",
-        save_all=True,
-        append_images=remaining_pages,
-        optimize=True,
-        quality=DV_PDF_OCR_JPEG_QUALITY,
-        resolution=DV_PDF_OCR_DPI,
-    )
-    for page in rgb_pages:
-        page.close()
-    return temp_pdf_path
+    return f"{blob.url}?{sas_token}"
 
 
 def extract_dv_pdf_data(pdf_path):
@@ -770,8 +735,6 @@ DV_PDF_CSV_PATH = os.path.join("static", "uploads", "dv_pdf_records.csv")
 DV_PDF_BLOB_CONTAINER = os.environ.get("DV_PDF_BLOB_CONTAINER", "dvcsv").strip() or "dvcsv"
 DV_PDF_BLOB_PREFIX = os.environ.get("DV_PDF_BLOB_PREFIX", "dv_pdf").strip().strip("/") or "dv_pdf"
 DV_PDF_BLOB_SAS_MINUTES = int(os.environ.get("DV_PDF_BLOB_SAS_MINUTES", "30"))
-DV_PDF_OCR_DPI = int(os.environ.get("DV_PDF_OCR_DPI", "150"))
-DV_PDF_OCR_JPEG_QUALITY = int(os.environ.get("DV_PDF_OCR_JPEG_QUALITY", "65"))
 ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
 
 
