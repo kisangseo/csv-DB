@@ -1025,7 +1025,10 @@
         }
       });
 
-      loadTableDefinitions();
+      window.addEventListener("DOMContentLoaded", async () => {
+        await loadTableDefinitions();
+        await search();
+      });
     </script>
 
   
