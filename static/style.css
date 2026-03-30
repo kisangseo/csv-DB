@@ -4,25 +4,25 @@ body {
   background-color: #f7f7fb;
   color: #333;
   margin: 0;
-  padding: 40px 0;
+  padding: 16px 0;
 }
 
 .department-content.collapsed { display: none; }
 
 /* ===== Page Container ===== */
 .container {
-  width: calc(100% - 80px);
+  width: calc(100% - 12px);
   margin: 0 auto;
   background: white;
-  padding: 40px 50px;
+  padding: 28px 8px;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.08);
 }
 
 @media (max-width: 768px) {
   .container {
-    width: calc(100% - 32px);
-    padding: 24px 16px;
+    width: calc(100% - 8px);
+    padding: 20px 6px;
   }
 }
 
