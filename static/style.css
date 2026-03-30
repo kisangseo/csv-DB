@@ -126,15 +126,19 @@ input[type="date"]:focus {
 .department-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 8px;
   margin-top: 40px;
 }
 
+.department-header h2 {
+  flex: 0 0 auto;
+}
+
 .department-header-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
