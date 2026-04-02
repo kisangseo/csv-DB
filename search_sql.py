@@ -145,6 +145,8 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         address AS address,
         apt AS apt,
         city AS city,
+        global_id,
+        served_by,
         state AS state,
         notes AS notes,
         warrant_type AS warrant_type,
