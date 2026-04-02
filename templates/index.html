@@ -856,6 +856,63 @@
         }, 2000);
       }
 
+      function escapeCsvValue(value) {
+        const normalized = value === null || value === undefined ? "" : String(value);
+        if (/[",\n]/.test(normalized)) {
+          return `"${normalized.replace(/"/g, '""')}"`;
+        }
+        return normalized;
+      }
+
+      function downloadBcsoActiveWarrantsCsv(rows) {
+        const headers = [
+          "Issuing County",
+          "Case Number",
+          "Warrant ID Number",
+          "Warrant Type",
+          "Issue Date",
+          "Warrant Status",
+          "Name",
+          "SID",
+          "Date of Birth",
+          "Race",
+          "Sex",
+          "LKA",
+          "Notes"
+        ];
+
+        const lines = [headers.map(escapeCsvValue).join(",")];
+        rows.forEach((row) => {
+          const values = [
+            row.issuing_county || "",
+            row.case_number || "",
+            row.warrant_id_number || "",
+            row.warrant_type || "",
+            row.issue_date || "",
+            row.warrant_status || "",
+            row.name || "",
+            row.sid || "",
+            row.date_of_birth || "",
+            row.race || "",
+            row.sex || "",
+            [row.address, row.city, row.state].filter(Boolean).join(", "),
+            row.notes || ""
+          ];
+          lines.push(values.map(escapeCsvValue).join(","));
+        });
+
+        const blob = new Blob([lines.join("\n")], {type: "text/csv;charset=utf-8;"});
+        const downloadUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const stamp = new Date().toISOString().slice(0, 10);
+        link.href = downloadUrl;
+        link.download = `bcso_active_warrants_${stamp}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(downloadUrl);
+      }
+
       async function search(event) {
         if (event && typeof event.preventDefault === "function") {
           event.preventDefault();
@@ -958,6 +1015,15 @@
               exportWrap.appendChild(exportBtn);
               exportWrap.appendChild(exportStatus);
               exportWrap.appendChild(exportLink);
+              div.appendChild(exportWrap);
+            } else if (dept.toLowerCase() === "bcso active warrants") {
+              const exportWrap = document.createElement("div");
+              exportWrap.className = "lt-export-controls";
+              const exportBtn = document.createElement("button");
+              exportBtn.type = "button";
+              exportBtn.textContent = "Download CSV";
+              exportBtn.addEventListener("click", () => downloadBcsoActiveWarrantsCsv(rows));
+              exportWrap.appendChild(exportBtn);
               div.appendChild(exportWrap);
             }
 
