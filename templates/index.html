@@ -238,7 +238,7 @@
         "Apt/Unit": "apt",
         "Apt/Unit #": "apt",
         "Court Issued Date": "record_date",
-        "Petitioner or Plaintiff Name": "city",
+        "Petitioner or Plaintiff Name": "petitioner_name",
         "Administrative Status": "disposition",
         "Served By": "served_by"
         ,"Tenant, Defendant, or Respondent Name": "name"
@@ -269,6 +269,7 @@
         notes: "Notes",
         court_document_type: "Type",
         intake_date: "Intake Date",
+        petitioner_name: "Petitioner or Plaintiff Name",
         served_by: "Served By"
       };
 
@@ -278,7 +279,7 @@
         "BCSO Active Warrants": ["issuing_county","case_number","warrant_id_number","warrant_type","issue_date","warrant_status","full_name","sid","date_of_birth","race","sex","address","notes"],
         "Warrant of Restitution - MDEC": ["full_name","case_number","address","court_document_type","intake_date","disposition"],
         "Field Services Department": ["full_name","case_number","address","apt","intake_date","disposition","notes"],
-        "Civil Papers": ["global_id","intake_date","case_number","court_document_type","issue_date","full_name","address","city","disposition","served_by","notes"]      };
+        "Civil Papers": ["global_id","intake_date","case_number","court_document_type","issue_date","full_name","address","petitioner_name","disposition","served_by","notes"]      };
 
       const BCSO_DROPDOWN_OPTIONS = {
         issuing_county: [

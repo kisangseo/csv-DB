@@ -293,7 +293,7 @@ def insert_search_record_civil_papers(cursor, record):
         issue_date,
         intake_date,
         address,
-        city,
+        petitioner_name,
         disposition,
         served_by,
         notes
@@ -315,7 +315,7 @@ def insert_search_record_civil_papers(cursor, record):
         record.get("issue_date"),
         record.get("intake_date"),
         record.get("address"),
-        record.get("city"),
+        record.get("petitioner_name"),
         record.get("disposition"),
         record.get("served_by"),
         record.get("notes"),
@@ -328,8 +328,10 @@ def ensure_civil_papers_columns(cursor):
     cursor.execute("""
         IF COL_LENGTH('search.records', 'global_id') IS NULL
             ALTER TABLE search.records ADD global_id NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'petitioner_name') IS NULL
+            ALTER TABLE search.records ADD petitioner_name NVARCHAR(500) NULL;
         IF COL_LENGTH('search.records', 'served_by') IS NULL
-            ALTER TABLE search.records ADD served_by NVARCHAR(255) NULL;
+            ALTER TABLE search.records ADD served_by NVARCHAR(500) NULL;
     """)
 
 
@@ -382,7 +384,7 @@ def ingest_civil_papers_one_time(file_name="survey_0.csv"):
                 "issue_date": safe_sql_date(_pick_row_value(row, "Court Issued Date")),
                 "full_name": _pick_row_value(row, "Tenant, Defendant, or Respondent Name"),
                 "address": _pick_row_value(row, "Tenant, Defendant or Respondent Address"),
-                "city": _pick_row_value(row, "Petitioner or Plaintiff Name"),
+                "petitioner_name": _pick_row_value(row, "Petitioner or Plaintiff Name"),
                 "disposition": _pick_row_value(row, "Administrative Status"),
                 "served_by": _pick_row_value(row, "Served By"),
                 "notes": _pick_row_value(row, "Comments"),
