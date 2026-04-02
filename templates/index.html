@@ -204,7 +204,6 @@
 
       const FIELD_MAP = {
         "Name": "name",
-        "Tenant Name": "name",
         "SID": "sid",
         "Case Number": "case_number",
         "Address": "address",
@@ -1091,6 +1090,7 @@
                   return [row.address, row.city, row.state].filter(Boolean).join(", ");
                 }
                 if (h === "City/State") return [row.city, row.state].filter(Boolean).join(", ");
+                if (h === "Tenant Name") return row.name || "";
                 const key = FIELD_MAP[h] || h;
                 return row[key] ?? "";
               });
