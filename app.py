@@ -699,6 +699,22 @@ TABLE_DEFINITIONS = {
     "Field Services Department": {
         "department": "Field Services Department",
         "fields": ["full_name", "case_number", "address", "apt", "intake_date", "disposition", "notes"]
+    },
+    "Civil Papers": {
+        "department": "CIVIL PAPERS",
+        "fields": [
+            "global_id",
+            "intake_date",
+            "case_number",
+            "court_document_type",
+            "issue_date",
+            "full_name",
+            "address",
+            "petitioner_name",
+            "disposition",
+            "served_by",
+            "notes",
+        ],
     }
 }
 
@@ -706,7 +722,7 @@ ALL_EDITABLE_COLUMNS = {
     "department", "source_file", "first_name", "last_name", "full_name", "date_of_birth", "sid",
     "case_number", "warrant_id_number", "warrant_type", "warrant_status", "issue_date", "intake_date",
     "address", "apt", "city", "state", "postal_code", "court_document_type", "disposition", "notes",
-    "sex", "race", "issuing_county", "facility"
+    "sex", "race", "issuing_county", "facility", "global_id", "petitioner_name", "served_by"
 }
 
 DATE_FIELDS = {"date_of_birth", "issue_date", "intake_date"}
@@ -722,6 +738,7 @@ EDITABLE_DEPARTMENTS = {
     "field services department - civil intake",
     "field services department - civil survey",
     "field services department - warrants",
+    "civil papers",
 }
 
 CORS(app)
@@ -1632,6 +1649,7 @@ def search_all():
         grouped.setdefault(dept, []).append(r)
 
     default_departments = [
+        "Civil Papers",
         "Bcso Active Warrants",
         "Active Warrants",
         "Baltimore Jail Population",

@@ -281,6 +281,124 @@ def insert_search_record_odyssey(cursor, record):
     return cursor.fetchone()[0]
 
 
+def insert_search_record_civil_papers(cursor, record):
+    sql = """
+    INSERT INTO search.records (
+        department,
+        source_file,
+        global_id,
+        full_name,
+        case_number,
+        court_document_type,
+        issue_date,
+        intake_date,
+        address,
+        petitioner_name,
+        disposition,
+        served_by,
+        notes
+    )
+    OUTPUT INSERTED.record_id
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    def clean(v):
+        return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
+
+    values = tuple(clean(v) for v in (
+        record.get("department"),
+        record.get("source_file"),
+        record.get("global_id"),
+        record.get("full_name"),
+        record.get("case_number"),
+        record.get("court_document_type"),
+        record.get("issue_date"),
+        record.get("intake_date"),
+        record.get("address"),
+        record.get("petitioner_name"),
+        record.get("disposition"),
+        record.get("served_by"),
+        record.get("notes"),
+    ))
+
+    cursor.execute(sql, *values)
+    return cursor.fetchone()[0]
+
+def ensure_civil_papers_columns(cursor):
+    cursor.execute("""
+        IF COL_LENGTH('search.records', 'global_id') IS NULL
+            ALTER TABLE search.records ADD global_id NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'petitioner_name') IS NULL
+            ALTER TABLE search.records ADD petitioner_name NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'served_by') IS NULL
+            ALTER TABLE search.records ADD served_by NVARCHAR(500) NULL;
+    """)
+
+
+def _pick_row_value(row, *candidates):
+    for key in candidates:
+        if key in row and pd.notna(row.get(key)):
+            value = row.get(key)
+            text = str(value).strip()
+            if text:
+                return text
+    return None
+
+
+def ingest_civil_papers_one_time(file_name="survey_0.csv"):
+    """
+    One-time ingest for CIVIL PAPERS from a local CSV file located next to ingest.py.
+    """
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate_paths = [
+        os.path.join(base_dir, file_name),
+        os.path.join(base_dir, "survey_0"),
+    ]
+    csv_path = next((p for p in candidate_paths if os.path.exists(p)), None)
+    if not csv_path:
+        raise FileNotFoundError(
+            f"Could not find '{file_name}' (or 'survey_0') in {base_dir}"
+        )
+
+    df = pd.read_csv(csv_path, low_memory=False)
+    source_file = os.path.basename(csv_path)
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        ensure_civil_papers_columns(cursor)
+        cursor.execute("""
+            DELETE FROM search.records
+            WHERE department = 'CIVIL PAPERS' AND source_file = ?
+        """, source_file)
+
+        inserted = 0
+        for _, row in df.iterrows():
+            record = {
+                "department": "CIVIL PAPERS",
+                "source_file": source_file,
+                "global_id": _pick_row_value(row, "GlobalID"),
+                "intake_date": safe_sql_date(_pick_row_value(row, "Intake Date")),
+                "case_number": _pick_row_value(row, "Case Number"),
+                "court_document_type": _pick_row_value(row, "Court Document Type"),
+                "issue_date": safe_sql_date(_pick_row_value(row, "Court Issued Date")),
+                "full_name": _pick_row_value(row, "Tenant, Defendant, or Respondent Name"),
+                "address": _pick_row_value(row, "Tenant, Defendant or Respondent Address"),
+                "petitioner_name": _pick_row_value(row, "Petitioner or Plaintiff Name"),
+                "disposition": _pick_row_value(row, "Administrative Status"),
+                "served_by": _pick_row_value(row, "Served By"),
+                "notes": _pick_row_value(row, "Comments"),
+            }
+            record_id = insert_search_record_civil_papers(cursor, record)
+            insert_raw_record(cursor, record_id, source_file, row.to_dict())
+            inserted += 1
+
+        conn.commit()
+        print(f"CIVIL PAPERS one-time ingest complete. Inserted {inserted} rows from {source_file}.")
+    finally:
+        conn.close()
+
+
 APT_RE = re.compile(r"(?i)\bapt\.?\s*#?\s*([A-Za-z0-9-]+)\b")
 STREET_SUFFIXES = (
     "aly", "allee", "ave", "avenue", "blvd", "boulevard", "cir", "circle",
