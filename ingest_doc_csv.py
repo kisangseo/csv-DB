@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import pandas as pd
 import pyodbc
 from azure.storage.blob import BlobServiceClient
@@ -45,6 +46,26 @@ blob_service = BlobServiceClient.from_connection_string(
 )
 
 container_client = blob_service.get_container_client(CONTAINER_NAME)
+
+
+def extract_snapshot_date(blob_name):
+    """Return YYYYMMDD as int from filenames like docpopulation_20260128.csv."""
+    match = re.search(r"_(\d{8})\.csv$", blob_name.lower())
+    return int(match.group(1)) if match else -1
+
+
+def get_newest_doc_csv_blob_name():
+    doc_blobs = [
+        blob.name
+        for blob in container_client.list_blobs()
+        if blob.name.lower().startswith("docpopulation_") and blob.name.lower().endswith(".csv")
+    ]
+
+    if not doc_blobs:
+        return None
+
+    return max(doc_blobs, key=extract_snapshot_date)
+
 
 def already_ingested(cursor, department_name, source_file):
     cursor.execute("""
@@ -173,14 +194,14 @@ def dedupe_doc():
 
 def ingest_all_doc_csvs():
 
-    for blob in container_client.list_blobs():
+    newest_blob_name = get_newest_doc_csv_blob_name()
 
-        name = blob.name
+    if not newest_blob_name:
+        print("No DOC CSV files found to ingest.")
+        return
 
-        # Only DOC CSVs
-        if name.startswith("docpopulation_") and name.endswith(".csv"):
-            ingest_one_doc_csv(name)
-
+    print("Newest DOC CSV selected:", newest_blob_name)
+    ingest_one_doc_csv(newest_blob_name)
     dedupe_doc()
 
 # ============================

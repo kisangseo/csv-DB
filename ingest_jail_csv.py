@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 import pyodbc
 from azure.storage.blob import BlobServiceClient
@@ -50,6 +51,27 @@ def read_csv_from_blob(container_name, blob_name):
     return pd.read_csv(pd.io.common.BytesIO(csv_bytes))
 
 
+
+
+def extract_snapshot_date(blob_name):
+    """Return YYYYMMDD as int from filenames like baltimorejailpopulation_20260128.csv."""
+    match = re.search(r"_(\d{8})\.csv$", blob_name.lower())
+    return int(match.group(1)) if match else -1
+
+
+def get_newest_jail_csv_blob_name(container_client):
+    jail_blobs = [
+        blob.name
+        for blob in container_client.list_blobs()
+        if blob.name.lower().endswith(".csv")
+        and "baltimorejailpopulation" in blob.name.lower()
+    ]
+
+    if not jail_blobs:
+        return None
+
+    return max(jail_blobs, key=extract_snapshot_date)
+
 # =========================
 # INGEST ONE CSV
 # =========================
@@ -61,12 +83,11 @@ def ingest_one_jail_csv(blob_name):
     conn = get_conn()
     cursor = conn.cursor()
 
-    # delete old rows for this exact CSV file
+    # Snapshot reset: keep ONLY newest Baltimore jail population snapshot
     cursor.execute("""
         DELETE FROM search.records
         WHERE department = ?
-          AND source_file = ?
-    """, DEPARTMENT_NAME, blob_name)
+    """, DEPARTMENT_NAME)
 
     inserted = 0
 
@@ -140,17 +161,14 @@ def ingest_all_jail_csvs():
     )
 
     container_client = blob_service.get_container_client(CONTAINER_NAME)
+    newest_blob_name = get_newest_jail_csv_blob_name(container_client)
 
-    for blob in container_client.list_blobs():
-        name = blob.name.lower()
+    if not newest_blob_name:
+        print("No Baltimore jail population CSV files found to ingest.")
+        return
 
-        # only Baltimore jail CSVs
-        if not name.endswith(".csv"):
-            continue
-        if "baltimorejailpopulation" not in name:
-            continue
-
-        ingest_one_jail_csv(blob.name)
+    print("Newest Baltimore jail CSV selected:", newest_blob_name)
+    ingest_one_jail_csv(newest_blob_name)
 
 def dedupe_jail_population():
     print("=== DEDUPING: Keep newest row per SID ===")
