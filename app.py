@@ -689,7 +689,7 @@ TABLE_DEFINITIONS = {
         "fields": [
             "issuing_county", "case_number", "warrant_id_number", "warrant_type",
             "issue_date", "warrant_status", "full_name", "sid", "date_of_birth",
-            "race", "sex", "address", "notes"
+            "race", "sex", "address", "x", "y", "notes"
         ]
     },
     "Warrant of Restitution - MDEC": {
@@ -722,7 +722,7 @@ ALL_EDITABLE_COLUMNS = {
     "department", "source_file", "first_name", "last_name", "full_name", "date_of_birth", "sid",
     "case_number", "warrant_id_number", "warrant_type", "warrant_status", "issue_date", "intake_date",
     "address", "apt", "city", "state", "postal_code", "court_document_type", "disposition", "notes",
-    "sex", "race", "issuing_county", "facility", "global_id", "petitioner_name", "served_by"
+    "sex", "race", "issuing_county", "facility", "global_id", "petitioner_name", "served_by", "x", "y"
 }
 
 DATE_FIELDS = {"date_of_birth", "issue_date", "intake_date"}

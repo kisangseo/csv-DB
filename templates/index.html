@@ -240,7 +240,9 @@
         "Court Issued Date": "issue_date",
         "Petitioner or Plaintiff Name": "petitioner_name",
         "Administrative Status": "disposition",
-        "Served By": "served_by"
+        "Served By": "served_by",
+        "X": "x",
+        "Y": "y"
         ,"Tenant, Defendant, or Respondent Name": "name"
         ,"Tenant, Defendant or Respondent Address": "address"
         ,"Comments": "notes"
@@ -270,13 +272,15 @@
         court_document_type: "Type",
         intake_date: "Intake Date",
         petitioner_name: "Petitioner or Plaintiff Name",
-        served_by: "Served By"
+        served_by: "Served By",
+        x: "X",
+        y: "Y"
       };
 
       const TABLE_FIELD_MAP = {
         "Warrants to Audit": ["full_name","case_number","issue_date","date_of_birth","sex","race","issuing_county","disposition"],
         "Baltimore Jail Population": ["sid","full_name","date_of_birth","facility"],
-        "BCSO Active Warrants": ["issuing_county","case_number","warrant_id_number","warrant_type","issue_date","warrant_status","full_name","sid","date_of_birth","race","sex","address","notes"],
+        "BCSO Active Warrants": ["issuing_county","case_number","warrant_id_number","warrant_type","issue_date","warrant_status","full_name","sid","date_of_birth","race","sex","address","x","y","notes"],
         "Warrant of Restitution - MDEC": ["full_name","case_number","address","court_document_type","intake_date","disposition"],
         "Field Services Department": ["full_name","case_number","address","apt","intake_date","disposition","notes"],
         "Civil Papers": ["global_id","intake_date","case_number","court_document_type","issue_date","full_name","address","petitioner_name","disposition","served_by","notes"]      };
@@ -878,6 +882,8 @@
           "Race",
           "Sex",
           "LKA",
+          "X",
+          "Y",
           "Notes"
         ];
 
@@ -896,6 +902,8 @@
             row.race || "",
             row.sex || "",
             [row.address, row.city, row.state].filter(Boolean).join(", "),
+            row.x || "",
+            row.y || "",
             row.notes || ""
           ];
           lines.push(values.map(escapeCsvValue).join(","));
@@ -1044,7 +1052,7 @@
             const table = document.createElement("table");
             let headers = [];
             if (dept.toLowerCase() === "bcso active warrants") {
-              headers = ["Issuing County","Case Number","Warrant ID Number","Warrant Type","Issue Date","Warrant Status","Name","SID","Date of Birth","Race","Sex","LKA","Notes"];
+              headers = ["Issuing County","Case Number","Warrant ID Number","Warrant Type","Issue Date","Warrant Status","Name","SID","Date of Birth","Race","Sex","LKA","X","Y","Notes"];
             } else if (dept.toLowerCase() === "active warrants") {
               headers = ["Name","Case Number","Issue Date","Date of Birth","Sex","Race","Issuing County","1st Charge"];
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
