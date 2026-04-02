@@ -236,7 +236,14 @@
         "APT": "apt",
         "APT/Unit": "apt",
         "Apt/Unit": "apt",
-        "Apt/Unit #": "apt"
+        "Apt/Unit #": "apt",
+        "Court Issued Date": "issue_date",
+        "Petitioner or Plaintiff Name": "petitioner_name",
+        "Administrative Status": "disposition",
+        "Served By": "served_by"
+        ,"Tenant, Defendant, or Respondent Name": "name"
+        ,"Tenant, Defendant or Respondent Address": "address"
+        ,"Comments": "notes"
       };
 
       const FIELD_LABELS = {
@@ -261,7 +268,9 @@
         entered_into_meters: "Entered into Meters",
         notes: "Notes",
         court_document_type: "Type",
-        intake_date: "Intake Date"
+        intake_date: "Intake Date",
+        petitioner_name: "Petitioner or Plaintiff Name",
+        served_by: "Served By"
       };
 
       const TABLE_FIELD_MAP = {
@@ -269,7 +278,8 @@
         "Baltimore Jail Population": ["sid","full_name","date_of_birth","facility"],
         "BCSO Active Warrants": ["issuing_county","case_number","warrant_id_number","warrant_type","issue_date","warrant_status","full_name","sid","date_of_birth","race","sex","address","notes"],
         "Warrant of Restitution - MDEC": ["full_name","case_number","address","court_document_type","intake_date","disposition"],
-        "Field Services Department": ["full_name","case_number","address","apt","intake_date","disposition","notes"]      };
+        "Field Services Department": ["full_name","case_number","address","apt","intake_date","disposition","notes"],
+        "Civil Papers": ["global_id","intake_date","case_number","court_document_type","issue_date","full_name","address","petitioner_name","disposition","served_by","notes"]      };
 
       const BCSO_DROPDOWN_OPTIONS = {
         issuing_county: [
@@ -325,6 +335,7 @@
         "field services department - civil intake": "Field Services Department",
         "field services department - civil survey": "Field Services Department",
         "field services department - warrants": "Field Services Department"
+        ,"civil papers": "Civil Papers"
       };
 
       const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants", "field services department"]);
@@ -914,6 +925,7 @@
               "baltimore jail population": "Baltimore Jail Population",
               "field services department": "Landlord Tenant",
               "active warrants": "Warrants to Audit",
+              "civil papers": "Civil Papers",
             };
             const baseTitle = DISPLAY_NAMES[dept.toLowerCase()] || dept;
             title.textContent = baseTitle;
@@ -975,6 +987,8 @@
               headers = ["Name","Case Number","Address","City/State","APT/Unit","Event Type","Event Date","Case Type"];
             } else if (dept.toLowerCase() === "dv pdf") {
               headers = ["Case Number","Respondent Name","Issue Date","Type","PDF Download"];
+            } else if (dept.toLowerCase() === "civil papers") {
+              headers = ["Intake Date","Case Number","Court Document Type","Court Issued Date","Tenant, Defendant, or Respondent Name","Tenant, Defendant or Respondent Address","Petitioner or Plaintiff Name","Administrative Status","Served By","Comments"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             headers.push("Actions");
