@@ -1049,6 +1049,8 @@
               headers = ["Name","Case Number","Issue Date","Date of Birth","Sex","Race","Issuing County","1st Charge"];
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
               headers = ["SID","Name","Date of Birth","Facility"];
+            } else if (dept.toLowerCase() === "landlord tenant") {
+              headers = ["Tenant Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];
             } else if (dept.toLowerCase() === "field services department") {
               headers = ["Name","Case Number","Address","City/State","APT/Unit","Event Type","Event Date","Case Type"];
             } else if (dept.toLowerCase() === "dv pdf") {
@@ -1088,6 +1090,7 @@
                   return [row.address, row.city, row.state].filter(Boolean).join(", ");
                 }
                 if (h === "City/State") return [row.city, row.state].filter(Boolean).join(", ");
+                if (h === "Tenant Name") return row.name || "";
                 const key = FIELD_MAP[h] || h;
                 return row[key] ?? "";
               });
