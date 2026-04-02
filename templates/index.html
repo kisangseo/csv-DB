@@ -867,6 +867,10 @@
         const filterPayload = getCurrentSearchFilters();
         lastSearchFilters = {...filterPayload};
         const params = new URLSearchParams(filterPayload);
+        const hasActiveSearchFilters = Object.values(filterPayload).some(value => {
+          if (value === null || value === undefined) return false;
+          return String(value).trim() !== "";
+        });
 
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
@@ -880,6 +884,7 @@
           }
 
           status.textContent = "Search complete.";
+          let renderedDepartments = 0;
 
           const orderedEntries = Object.entries(data).sort(([deptA], [deptB]) => {
             const aIsDvPdf = deptA.toLowerCase() === "dv pdf";
@@ -896,6 +901,9 @@
           for (const [dept, info] of orderedEntries) {
             const rows = info.records;
             const count = info.count;
+            if (hasActiveSearchFilters && count === 0) {
+              continue;
+            }
             const div = document.createElement("div");
             div.className = "department";
 
@@ -1148,6 +1156,12 @@
             content.appendChild(wrapper);
             div.appendChild(content);
             resultsDiv.appendChild(div);
+            renderedDepartments += 1;
+          }
+
+          if (renderedDepartments === 0) {
+            resultsDiv.innerHTML = "<p>No results found.</p>";
+            status.textContent = "No results found.";
           }
         } catch (err) {
           console.error(err);
