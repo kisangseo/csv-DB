@@ -16,6 +16,10 @@ def geocode_address(address):
     if not address:
         return None, None
 
+    address_text = str(address).strip()
+    zip_match = re.search(r"\b(\d{5})(?:-\d{4})?\b", address_text)
+    input_zip = zip_match.group(1) if zip_match else None
+
     url = "https://atlas.microsoft.com/search/address/json"
     key = os.getenv("AZURE_MAPS_KEY")
 
@@ -26,7 +30,9 @@ def geocode_address(address):
     params = {
         "api-version": "1.0",
         "subscription-key": key,
-        "query": address
+        "query": address_text,
+        "countrySet": "US",
+        "limit": 5,
     }
 
     try:
@@ -39,8 +45,28 @@ def geocode_address(address):
 
         data = r.json()
 
-        if data.get("results"):
-            pos = data["results"][0]["position"]
+        results = data.get("results") or []
+        if results:
+            def _postal5(value):
+                m = re.search(r"(\d{5})", str(value or ""))
+                return m.group(1) if m else None
+
+            def _is_md(addr):
+                state_code = str(addr.get("countrySubdivisionCode") or "").upper()
+                state_name = str(addr.get("countrySubdivision") or "").upper()
+                return state_code in {"MD", "US-MD"} or "MARYLAND" in state_name
+
+            def _score(result):
+                addr = result.get("address") or {}
+                score = 0
+                if input_zip and _postal5(addr.get("postalCode")) == input_zip:
+                    score += 100
+                if _is_md(addr):
+                    score += 10
+                return score + float(result.get("score") or 0.0)
+
+            best = max(results, key=_score)
+            pos = best["position"]
             return pos["lon"], pos["lat"]
 
         print("NO RESULTS FOR:", address)
