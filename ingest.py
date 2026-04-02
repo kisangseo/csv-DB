@@ -336,9 +336,26 @@ def ensure_civil_papers_columns(cursor):
 
 
 def _pick_row_value(row, *candidates):
+    def normalize_key(value):
+        return " ".join(str(value or "").replace("\n", " ").replace("\r", " ").strip().lower().split())
+
+    normalized_columns = {
+        normalize_key(col): col
+        for col in getattr(row, "index", [])
+    }
+
     for key in candidates:
-        if key in row and pd.notna(row.get(key)):
-            value = row.get(key)
+        direct = row.get(key) if key in row else None
+        if pd.notna(direct):
+            text = str(direct).strip()
+            if text:
+                return text
+
+        match_col = normalized_columns.get(normalize_key(key))
+        if match_col is None:
+            continue
+        value = row.get(match_col)
+        if pd.notna(value):
             text = str(value).strip()
             if text:
                 return text
