@@ -132,10 +132,12 @@ def insert_search_record_active_warrants(cursor, record):
             race,
             sex,
             issuing_county,
-            address
+            address,
+            x,
+            y
         )
         OUTPUT INSERTED.record_id
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     values = (
@@ -153,6 +155,8 @@ def insert_search_record_active_warrants(cursor, record):
         record.get("sex"),
         record.get("issuing_county"),
         record.get("address"),
+        record.get("x"),
+        record.get("y"),
     )
 
     cursor.execute(sql, values)
@@ -894,6 +898,64 @@ def backfill_landlord_tenant_xy():
         conn.close()
 
 
+def backfill_bcso_active_warrants_xy():
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT record_id, address
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+            AND address IS NOT NULL
+            AND LTRIM(RTRIM(address)) <> ''
+            AND (
+                x IS NULL
+                OR y IS NULL
+            )
+        """)
+        rows = cursor.fetchall()
+
+        cache = {}
+        scanned = 0
+        updated = 0
+
+        for record_id, address in rows:
+            scanned += 1
+            if scanned % 100 == 0:
+                print(f"Scanned {scanned} BCSO rows...")
+
+            address_text = str(address).strip()
+            cache_key = address_text.lower()
+            if cache_key in cache:
+                x, y = cache[cache_key]
+            else:
+                x, y = geocode_address(address_text)
+                cache[cache_key] = (x, y)
+
+            if x is None or y is None:
+                continue
+
+            cursor.execute(
+                """
+                UPDATE search.records
+                SET x = ?, y = ?
+                WHERE record_id = ?
+                """,
+                x,
+                y,
+                record_id,
+            )
+            updated += 1
+            if updated % 100 == 0:
+                conn.commit()
+                print(f"Committed {updated} BCSO rows...")
+
+        conn.commit()
+        print(f"Backfilled BCSO Active Warrants x,y for {updated} rows.")
+    finally:
+        conn.close()
+
+
 def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_keys=None):
     df = read_csv_from_blob(container_name, blob_name)
 
@@ -1301,6 +1363,7 @@ def ingest_bcso_active_warrants_csv(_=None):
             ]
           
             # 4) Insert each row into SQL
+            geocode_cache = {}
             for _, row in df.iterrows():
                 row = row.where(pd.notna(row), None)
                 record_type = row.get("Record Type") or row.get("record_type")
@@ -1314,6 +1377,16 @@ def ingest_bcso_active_warrants_csv(_=None):
 
                 full_name = f"{row.get('last_name')}, {row.get('first_name')}".strip(", ")
                 
+                address_value = row.get("lka")
+                address_text = str(address_value).strip() if address_value is not None else ""
+                cache_key = address_text.lower()
+                if address_text:
+                    if cache_key not in geocode_cache:
+                        geocode_cache[cache_key] = geocode_address(address_text)
+                    x, y = geocode_cache[cache_key]
+                else:
+                    x, y = (None, None)
+
                 record = {
                     "department": "BCSO_ACTIVE_WARRANTS",
                     "source_file": blob.name,
@@ -1333,6 +1406,8 @@ def ingest_bcso_active_warrants_csv(_=None):
                     "issuing_county": row.get("issuing_county"),
                     "notes": row.get("notes"),
                     "address": row.get("lka"),
+                    "x": x,
+                    "y": y,
                 }
 
                 # 1) Try to find existing Active Warrant by case_number (update scenario)
@@ -1374,9 +1449,9 @@ def ingest_bcso_active_warrants_csv(_=None):
                             sex               = COALESCE(NULLIF(?, ''), sex),
                             issuing_county    = COALESCE(NULLIF(?, ''), issuing_county),
                             notes             = COALESCE(NULLIF(?, ''), notes),
-                            address           = COALESCE(NULLIF(?, ''), address)
-                            
-                            
+                            address           = COALESCE(NULLIF(?, ''), address),
+                            x                 = COALESCE(?, x),
+                            y                 = COALESCE(?, y)
                         WHERE record_id = ?
                     """,
                         record.get("source_file") or "",
@@ -1392,8 +1467,8 @@ def ingest_bcso_active_warrants_csv(_=None):
                         record.get("issuing_county") or "",
                         record.get("notes") or "",
                         record.get("address") or "",
-                        
-                       
+                        record.get("x"),
+                        record.get("y"),
                         record_id
                     )
 
