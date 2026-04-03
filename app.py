@@ -425,26 +425,12 @@ def _connection_string_value(connection_string, key_name):
     return ""
 
 
-def get_dv_pdf_container_sas_url():
-    candidate_keys = [
-        "DV_PDF_BLOB_CONTAINER_SAS_URL",
-        "DV_PDF_CONTAINER_SAS_URL",
-        "DV_PDF_BLOB_SAS_URL",
-    ]
-    for key in candidate_keys:
-        value = (os.getenv(key) or "").strip()
-        if value:
-            parsed = urlsplit(value)
-            if parsed.scheme in {"http", "https"} and parsed.netloc and parsed.path.strip("/"):
-                return value
-    return ""
-
-
 def upload_pdf_to_blob_and_get_sas_url(pdf_path):
+    # DV PDF storage intentionally uses connection-string + container only.
     blob_name = f"{DV_PDF_BLOB_PREFIX}/{os.path.basename(pdf_path)}"
     if not CONNECTION_STRING:
         raise RuntimeError(
-            "Missing AZURE_STORAGE_CONNECTION_STRING env var."
+            "Missing AZURE_STORAGE_CONNECTION_STRING env var (required for DV PDF blob uploads)."
         )
 
     container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
@@ -1195,7 +1181,7 @@ def upload_dv_pdf():
 def get_dv_pdf_blob_client(blob_name):
     if not CONNECTION_STRING:
         raise RuntimeError(
-            "Missing AZURE_STORAGE_CONNECTION_STRING env var."
+            "Missing AZURE_STORAGE_CONNECTION_STRING env var (required for DV PDF blob downloads)."
         )
 
     container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
