@@ -351,6 +351,7 @@
       ]);
       const ADD_ALLOWED_TABLES = new Set(["Warrants to Audit", "BCSO Active Warrants"]);
       const DATE_SORT_DIRECTIONS = { asc: "asc", desc: "desc" };
+      let suppressSearchUntilMs = 0;
 
       function parseDateForSort(value) {
         if (!value) return Number.NaN;
@@ -724,6 +725,7 @@
 
         row.address = addressValue;
         row.apt = aptValue;
+        suppressSearchUntilMs = Date.now() + 1500;
         resetLandlordTenantInlineEditState(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn);
       }
 
@@ -959,6 +961,9 @@
 
         if (eventOrOptions && typeof eventOrOptions.preventDefault === "function") {
           eventOrOptions.preventDefault();
+        }
+        if (Date.now() < suppressSearchUntilMs) {
+          return;
         }
 
         const status = document.getElementById("statusMessage");
