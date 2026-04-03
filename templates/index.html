@@ -351,6 +351,7 @@
       ]);
       const ADD_ALLOWED_TABLES = new Set(["Warrants to Audit", "BCSO Active Warrants"]);
       const DATE_SORT_DIRECTIONS = { asc: "asc", desc: "desc" };
+      let suppressSearchUntilMs = 0;
 
       function parseDateForSort(value) {
         if (!value) return Number.NaN;
@@ -957,6 +958,9 @@
 
         if (eventOrOptions && typeof eventOrOptions.preventDefault === "function") {
           eventOrOptions.preventDefault();
+        }
+        if (Date.now() < suppressSearchUntilMs) {
+          return;
         }
 
         const status = document.getElementById("statusMessage");
