@@ -982,6 +982,64 @@ def backfill_bcso_active_warrants_xy():
         conn.close()
 
 
+def backfill_bcso_active_warrants_xy_force():
+    """
+    Re-geocode ALL BCSO active warrant rows that have an address,
+    even when x/y are already populated.
+    """
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT record_id, address
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+            AND address IS NOT NULL
+            AND LTRIM(RTRIM(address)) <> ''
+        """)
+        rows = cursor.fetchall()
+
+        cache = {}
+        scanned = 0
+        updated = 0
+
+        for record_id, address in rows:
+            scanned += 1
+            if scanned % 100 == 0:
+                print(f"Scanned {scanned} BCSO rows...")
+
+            address_text = str(address).strip()
+            cache_key = address_text.lower()
+            if cache_key in cache:
+                x, y = cache[cache_key]
+            else:
+                x, y = geocode_address(address_text)
+                cache[cache_key] = (x, y)
+
+            if x is None or y is None:
+                continue
+
+            cursor.execute(
+                """
+                UPDATE search.records
+                SET x = ?, y = ?
+                WHERE record_id = ?
+                """,
+                x,
+                y,
+                record_id,
+            )
+            updated += 1
+            if updated % 100 == 0:
+                conn.commit()
+                print(f"Committed {updated} BCSO rows...")
+
+        conn.commit()
+        print(f"Force backfilled BCSO Active Warrants x,y for {updated} rows.")
+    finally:
+        conn.close()
+
+
 def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_keys=None):
     df = read_csv_from_blob(container_name, blob_name)
 
