@@ -820,6 +820,7 @@
 
         status.textContent = "Saved successfully.";
         closeModal();
+        await search({ preventDefault: () => {} });
       }
 
 
