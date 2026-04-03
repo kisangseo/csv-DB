@@ -17,7 +17,6 @@ import chardet
 from pypdf import PdfReader
 from azure.storage.blob import (
     BlobSasPermissions,
-    BlobServiceClient,
     ContentSettings,
     ContainerClient,
     generate_blob_sas,
@@ -26,7 +25,6 @@ from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
 from datetime import timedelta, datetime, UTC
 from werkzeug.utils import secure_filename
-from urllib.parse import urlsplit
 
 
 # ============================================================
@@ -319,7 +317,7 @@ def get_latest_landlord_tenant_file_date_label() -> str:
 
 
 def ensure_dv_pdf_storage():
-    os.makedirs(DV_PDF_UPLOAD_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(DV_PDF_CSV_PATH), exist_ok=True)
     if not os.path.exists(DV_PDF_CSV_PATH):
         with open(DV_PDF_CSV_PATH, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
@@ -360,7 +358,7 @@ def extract_text_with_doc_intelligence(pdf_path):
         f"{endpoint}/formrecognizer/documentModels/prebuilt-read:analyze"
         f"?api-version=2023-07-31"
     )
-    pdf_sas_url = upload_pdf_to_blob_and_get_sas_url(pdf_path)
+    pdf_sas_url, blob_name = upload_pdf_to_blob_and_get_sas_url(pdf_path)
 
     start = requests.post(
         analyze_url,
@@ -415,7 +413,7 @@ def extract_text_with_doc_intelligence(pdf_path):
         if content:
             page_texts = [content]
 
-    return page_texts
+    return page_texts, blob_name
 
 
 def _connection_string_value(connection_string, key_name):
@@ -429,28 +427,13 @@ def _connection_string_value(connection_string, key_name):
 
 
 def upload_pdf_to_blob_and_get_sas_url(pdf_path):
-    container_sas_url = (os.getenv("DV_PDF_BLOB_CONTAINER_SAS_URL") or "").strip()
     blob_name = f"{DV_PDF_BLOB_PREFIX}/{os.path.basename(pdf_path)}"
-
-    if container_sas_url:
-        container = ContainerClient.from_container_url(container_sas_url)
-        blob = container.get_blob_client(blob_name)
-        with open(pdf_path, "rb") as f:
-            blob.upload_blob(
-                f,
-                overwrite=True,
-                content_settings=ContentSettings(content_type="application/pdf"),
-            )
-        sas_token = urlsplit(container_sas_url).query
-        return f"{blob.url}?{sas_token}"
-
     if not CONNECTION_STRING:
         raise RuntimeError(
-            "Missing AZURE_STORAGE_CONNECTION_STRING or DV_PDF_BLOB_CONTAINER_SAS_URL env vars."
+            "Missing AZURE_STORAGE_CONNECTION_STRING env var."
         )
 
-    service = BlobServiceClient.from_connection_string(CONNECTION_STRING)
-    container = service.get_container_client(DV_PDF_BLOB_CONTAINER)
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
     try:
         container.create_container()
     except Exception:
@@ -484,11 +467,11 @@ def upload_pdf_to_blob_and_get_sas_url(pdf_path):
         expiry=sas_expiry,
         protocol="https",
     )
-    return f"{blob.url}?{sas_token}"
+    return f"{blob.url}?{sas_token}", blob_name
 
 
 def extract_dv_pdf_data(pdf_path):
-    page_text = extract_text_with_doc_intelligence(pdf_path)
+    page_text, blob_name = extract_text_with_doc_intelligence(pdf_path)
     full_text = "\n".join(page_text)
     if not full_text.strip():
         raise RuntimeError("No extractable text found from Document Intelligence.")
@@ -527,6 +510,7 @@ def extract_dv_pdf_data(pdf_path):
         "respondent_name": respondent_name,
         "issue_date": issue_date,
         "type": order_type,
+        "blob_name": blob_name,
     }
 
 
@@ -794,7 +778,6 @@ CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 LATEST_LT_WITH_APT_BLOB_NAME = "latest_landlord_tenant_with_apt.csv"
 EXPORT_CONTAINER_NAME = os.environ.get("EXPORT_CONTAINER_NAME", "fscsv")
 EXPORTS_BLOB_PREFIX = os.environ.get("EXPORTS_BLOB_PREFIX", "exports")
-DV_PDF_UPLOAD_DIR = os.path.join("static", "uploads", "dv_pdf")
 DV_PDF_CSV_PATH = os.path.join("static", "uploads", "dv_pdf_records.csv")
 DV_PDF_BLOB_CONTAINER = os.environ.get("DV_PDF_BLOB_CONTAINER", "dvcsv").strip() or "dvcsv"
 DV_PDF_BLOB_PREFIX = os.environ.get("DV_PDF_BLOB_PREFIX", "dv_pdf").strip().strip("/") or "dv_pdf"
@@ -1166,17 +1149,20 @@ def upload_dv_pdf():
 
     ensure_dv_pdf_storage()
     safe_name = secure_filename(uploaded.filename)
-    stamped_name = f"{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}_{safe_name}"
-    target_path = os.path.join(DV_PDF_UPLOAD_DIR, stamped_name)
-    uploaded.save(target_path)
-
+    suffix = os.path.splitext(safe_name)[1] or ".pdf"
+    temp_path = None
     try:
-        extracted = extract_dv_pdf_data(target_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_path = temp_file.name
+            uploaded.save(temp_file)
+        extracted = extract_dv_pdf_data(temp_path)
     except RuntimeError as exc:
-        os.remove(target_path)
         return jsonify({"error": str(exc)}), 500
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
     if not extracted.get("case_number"):
-        os.remove(target_path)
         return jsonify({"error": "Unable to parse this PDF format. Case number not found."}), 422
 
     record = {
@@ -1184,11 +1170,47 @@ def upload_dv_pdf():
         "respondent_name": extracted.get("respondent_name", ""),
         "issue_date": extracted.get("issue_date", ""),
         "type": extracted.get("type", ""),
-        "pdf_download": f"/static/uploads/dv_pdf/{stamped_name}",
+        "pdf_download": f"/dv-pdf/file/{extracted.get('blob_name', '')}",
         "uploaded_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
     }
     append_dv_pdf_record(record)
     return jsonify({"status": "success", "record": record})
+
+
+def get_dv_pdf_blob_client(blob_name):
+    if not CONNECTION_STRING:
+        raise RuntimeError(
+            "Missing AZURE_STORAGE_CONNECTION_STRING env var."
+        )
+
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
+    return container.get_blob_client(blob_name)
+
+
+@app.route("/dv-pdf/file/<path:blob_name>")
+def download_dv_pdf_file(blob_name):
+    if "user_id" not in session:
+        return redirect("/login")
+
+    normalized = (blob_name or "").strip().strip("/")
+    if not normalized or ".." in normalized:
+        return jsonify({"error": "Invalid file path"}), 400
+
+    try:
+        blob_client = get_dv_pdf_blob_client(normalized)
+        if not blob_client.exists():
+            return jsonify({"error": "DV PDF file not found in blob storage"}), 404
+        data = blob_client.download_blob().readall()
+    except Exception as exc:
+        return jsonify({"error": f"Unable to download DV PDF from blob storage: {exc}"}), 500
+
+    filename = os.path.basename(normalized) or "dv_pdf.pdf"
+    return send_file(
+        io.BytesIO(data),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=filename,
+    )
 
 
 @app.route("/downloads/dv-pdf.csv")
