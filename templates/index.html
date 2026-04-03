@@ -482,14 +482,14 @@
         });
       }
 
-      function openModal({mode, tableName, values = {}, recordId = null, lockTable = false}) {
+      function openModal({mode, tableName, values = {}, recordId = null, lockTable = false, onSave = null}) {
         const modal = document.getElementById("recordModal");
         const title = document.getElementById("modalTitle");
         const tableSelect = document.getElementById("tableSelect");
         const status = document.getElementById("modalStatus");
         status.textContent = "";
 
-        activeEditContext = {mode, recordId};
+        activeEditContext = {mode, recordId, onSave};
         title.textContent = mode === "edit" ? "Edit Record" : "Add Record";
         tableSelect.value = tableName || tableSelect.options[0]?.value;
         tableSelect.disabled = mode === "edit" || lockTable;
@@ -684,6 +684,57 @@
         return {tableName, out};
       }
 
+      function getCellDisplayValue(headerLabel, row, dataHeaders, dept) {
+        if (headerLabel === "PDF Download") return row.pdf_download || "";
+        if (dept.toLowerCase() === "dv pdf") {
+          if (headerLabel === "Respondent Name") return row.respondent_name || "";
+          if (headerLabel === "Issue Date") return row.issue_date || "";
+          if (headerLabel === "Type") return row.type || "";
+        }
+        if (headerLabel === "Address") {
+          if (dataHeaders.includes("City/State")) return row.address || "";
+          return [row.address, row.city, row.state].filter(Boolean).join(", ");
+        }
+        if (headerLabel === "City/State") return [row.city, row.state].filter(Boolean).join(", ");
+        if (headerLabel === "Tenant Name") return row.name || "";
+        const key = FIELD_MAP[headerLabel] || headerLabel;
+        return row[key] ?? "";
+      }
+
+      function updateRenderedRowCells(tr, row, dataHeaders, dept) {
+        dataHeaders.forEach((headerLabel, index) => {
+          const td = tr.children[index];
+          if (!td) return;
+          const val = getCellDisplayValue(headerLabel, row, dataHeaders, dept);
+          if (headerLabel === "PDF Download" && val) {
+            const link = document.createElement("a");
+            link.href = val;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = "Download PDF";
+            td.innerHTML = "";
+            td.appendChild(link);
+          } else {
+            td.textContent = val;
+          }
+        });
+      }
+
+      function mergeEditedFieldsIntoRow(tableName, row, fields) {
+        Object.keys(fields || {}).forEach((field) => {
+          row[field] = fields[field];
+        });
+
+        if (tableName === "BCSO Active Warrants") {
+          if (Object.prototype.hasOwnProperty.call(fields, "full_name")) {
+            row.name = fields.full_name || "";
+          }
+          if (Object.prototype.hasOwnProperty.call(fields, "issue_date")) {
+            row.record_date = fields.issue_date || "";
+          }
+        }
+      }
+
       function resetLandlordTenantInlineEditState(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn) {
         const addressIndex = dataHeaders.indexOf("Address");
         const aptIndex = dataHeaders.indexOf("APT/Unit");
@@ -819,7 +870,14 @@
         }
 
         status.textContent = "Saved successfully.";
+        const saveCallback = activeEditContext?.onSave;
+        const savedTableName = tableName;
+        const savedFields = {...fields};
         closeModal();
+        if (isEdit && tableName === "BCSO Active Warrants" && typeof saveCallback === "function") {
+          saveCallback({savedTableName, savedFields});
+          return;
+        }
         await search({ preventDefault: () => {} });
       }
 
@@ -1127,22 +1185,7 @@
             rows.forEach(row => {
               const tr = document.createElement("tr");
               const dataHeaders = headers.slice(0, -1);
-              const cells = dataHeaders.map(h => {
-                if (h === "PDF Download") return row.pdf_download || "";
-                if (dept.toLowerCase() === "dv pdf") {
-                  if (h === "Respondent Name") return row.respondent_name || "";
-                  if (h === "Issue Date") return row.issue_date || "";
-                  if (h === "Type") return row.type || "";
-                }
-                if (h === "Address") {
-                  if (dataHeaders.includes("City/State")) return row.address || "";
-                  return [row.address, row.city, row.state].filter(Boolean).join(", ");
-                }
-                if (h === "City/State") return [row.city, row.state].filter(Boolean).join(", ");
-                if (h === "Tenant Name") return row.name || "";
-                const key = FIELD_MAP[h] || h;
-                return row[key] ?? "";
-              });
+              const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
 
               cells.forEach((val, index) => {
                 const td = document.createElement("td");
@@ -1182,7 +1225,19 @@
 
                   if (!isLandlordTenantDept) {
                     const {tableName, out} = mapRowToFields(dept, row);
-                    openModal({mode: "edit", tableName, values: out, recordId: row.record_id});
+                    const isBcsoActiveWarrants = deptKey === "bcso active warrants";
+                    openModal({
+                      mode: "edit",
+                      tableName,
+                      values: out,
+                      recordId: row.record_id,
+                      onSave: isBcsoActiveWarrants
+                        ? ({savedFields, savedTableName}) => {
+                            mergeEditedFieldsIntoRow(savedTableName, row, savedFields);
+                            updateRenderedRowCells(tr, row, dataHeaders, dept);
+                          }
+                        : null
+                    });
                     return;
                   }
 
