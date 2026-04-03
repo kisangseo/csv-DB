@@ -19,7 +19,6 @@ from azure.storage.blob import (
     BlobSasPermissions,
     ContentSettings,
     ContainerClient,
-    generate_blob_sas,
 )
 from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
@@ -426,6 +425,21 @@ def _connection_string_value(connection_string, key_name):
     return ""
 
 
+def get_dv_pdf_container_sas_url():
+    candidate_keys = [
+        "DV_PDF_BLOB_CONTAINER_SAS_URL",
+        "DV_PDF_CONTAINER_SAS_URL",
+        "DV_PDF_BLOB_SAS_URL",
+    ]
+    for key in candidate_keys:
+        value = (os.getenv(key) or "").strip()
+        if value:
+            parsed = urlsplit(value)
+            if parsed.scheme in {"http", "https"} and parsed.netloc and parsed.path.strip("/"):
+                return value
+    return ""
+
+
 def upload_pdf_to_blob_and_get_sas_url(pdf_path):
     blob_name = f"{DV_PDF_BLOB_PREFIX}/{os.path.basename(pdf_path)}"
     if not CONNECTION_STRING:
@@ -439,6 +453,7 @@ def upload_pdf_to_blob_and_get_sas_url(pdf_path):
     except Exception:
         pass
 
+    container = ContainerClient.from_container_url(container_sas_url)
     blob = container.get_blob_client(blob_name)
     with open(pdf_path, "rb") as f:
         blob.upload_blob(
