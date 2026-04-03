@@ -24,7 +24,6 @@ from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
 from datetime import timedelta, datetime, UTC
 from werkzeug.utils import secure_filename
-from urllib.parse import urlsplit
 
 
 # ============================================================
@@ -442,24 +441,10 @@ def get_dv_pdf_container_sas_url():
 
 
 def upload_pdf_to_blob_and_get_sas_url(pdf_path):
-    container_sas_url = get_dv_pdf_container_sas_url()
     blob_name = f"{DV_PDF_BLOB_PREFIX}/{os.path.basename(pdf_path)}"
-
-    if container_sas_url:
-        container = ContainerClient.from_container_url(container_sas_url)
-        blob = container.get_blob_client(blob_name)
-        with open(pdf_path, "rb") as f:
-            blob.upload_blob(
-                f,
-                overwrite=True,
-                content_settings=ContentSettings(content_type="application/pdf"),
-            )
-        sas_token = urlsplit(container_sas_url).query
-        return f"{blob.url}?{sas_token}", blob_name
-
     if not CONNECTION_STRING:
         raise RuntimeError(
-            "Missing DV_PDF_BLOB_CONTAINER_SAS_URL (or alias), and AZURE_STORAGE_CONNECTION_STRING."
+            "Missing AZURE_STORAGE_CONNECTION_STRING env var."
         )
 
     container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
@@ -1208,14 +1193,9 @@ def upload_dv_pdf():
 
 
 def get_dv_pdf_blob_client(blob_name):
-    container_sas_url = get_dv_pdf_container_sas_url()
-    if container_sas_url:
-        container = ContainerClient.from_container_url(container_sas_url)
-        return container.get_blob_client(blob_name)
-
     if not CONNECTION_STRING:
         raise RuntimeError(
-            "Missing DV_PDF_BLOB_CONTAINER_SAS_URL (or alias), and AZURE_STORAGE_CONNECTION_STRING."
+            "Missing AZURE_STORAGE_CONNECTION_STRING env var."
         )
 
     container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
