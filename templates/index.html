@@ -774,15 +774,30 @@
         const method = isEdit ? "PATCH" : "POST";
         const payload = isEdit ? {fields} : {table: tableName, fields};
 
-        const response = await fetch(url, {
-          method,
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(payload)
-        });
+        let response;
+        try {
+          response = await fetch(url, {
+            method,
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+          });
+        } catch (err) {
+          status.textContent = `Request failed: ${err?.message || "Network/server unavailable."}`;
+          return;
+        }
 
         if (!response.ok) {
-          const err = await response.json();
-          status.textContent = err.error || "Unable to save.";
+          let errorText = "Unable to save.";
+          try {
+            const err = await response.json();
+            errorText = err.error || errorText;
+          } catch (_) {
+            try {
+              const raw = await response.text();
+              if (raw && raw.trim()) errorText = raw.slice(0, 200);
+            } catch (_) {}
+          }
+          status.textContent = errorText;
           return;
         }
 
