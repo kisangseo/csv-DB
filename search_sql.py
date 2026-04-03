@@ -148,6 +148,8 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         petitioner_name,
         global_id,
         served_by,
+        x AS x,
+        y AS y,
         state AS state,
         notes AS notes,
         warrant_type AS warrant_type,
