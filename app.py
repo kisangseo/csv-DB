@@ -435,7 +435,9 @@ def get_dv_pdf_container_sas_url():
     for key in candidate_keys:
         value = (os.getenv(key) or "").strip()
         if value:
-            return value
+            parsed = urlsplit(value)
+            if parsed.scheme in {"http", "https"} and parsed.netloc and parsed.path.strip("/"):
+                return value
     return ""
 
 
