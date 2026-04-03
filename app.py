@@ -793,6 +793,16 @@ def records_has_xy_columns(cur) -> bool:
     found = {str(row[0]).strip().lower() for row in cur.fetchall()}
     return "x" in found and "y" in found
 
+
+def upsert_set_value(set_parts, values, column_name, db_value):
+    token = f"{column_name} = ?"
+    try:
+        idx = set_parts.index(token)
+        values[idx] = db_value
+    except ValueError:
+        set_parts.append(token)
+        values.append(db_value)
+
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
@@ -1370,8 +1380,8 @@ def update_record(record_id):
                 x, y = geocode_address(updated_address)
             else:
                 x, y = (None, None)
-            set_parts.extend(["x = ?", "y = ?"])
-            values.extend([x, y])
+            upsert_set_value(set_parts, values, "x", x)
+            upsert_set_value(set_parts, values, "y", y)
 
         values.append(record_id)
 
