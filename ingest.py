@@ -16,8 +16,22 @@ def geocode_address(address):
     if not address:
         return None, None
 
-    address_text = str(address).strip()
-    zip_match = re.search(r"\b(\d{5})(?:-\d{4})?\b", address_text)
+    address_text = str(address).strip().strip('"').strip("'")
+
+    parts = [p.strip() for p in address_text.split(",") if p and p.strip()]
+    if len(parts) >= 2:
+        first_part = parts[0]
+        second_part = parts[1]
+        looks_like_leading_code = (
+            bool(re.fullmatch(r"[A-Z0-9 ]{6,}", first_part, flags=re.IGNORECASE))
+            and any(ch.isdigit() for ch in first_part)
+            and bool(re.match(r"^\d+\s+\S+", second_part))
+        )
+        if looks_like_leading_code:
+            parts = parts[1:]
+
+    cleaned_text = ", ".join(parts) if parts else address_text
+    zip_match = re.search(r"\b(\d{5})(?:-\d{4})?\b", cleaned_text)
     input_zip = zip_match.group(1) if zip_match else None
 
     url = "https://atlas.microsoft.com/search/address/json"
@@ -27,47 +41,58 @@ def geocode_address(address):
         print("ERROR: AZURE_MAPS_KEY is missing")
         return None, None
 
-    params = {
-        "api-version": "1.0",
-        "subscription-key": key,
-        "query": address_text,
-        "countrySet": "US",
-        "limit": 5,
-    }
+    query_candidates = [cleaned_text]
+    if len(parts) >= 4:
+        state_part = parts[-2].upper()
+        city_part = parts[-3].upper()
+        if ("MARYLAND" in state_part or state_part == "MD") and city_part != "BALTIMORE":
+            baltimore_parts = parts[:]
+            baltimore_parts[-3] = "Baltimore"
+            forced_baltimore = ", ".join(baltimore_parts)
+            if forced_baltimore not in query_candidates:
+                query_candidates.append(forced_baltimore)
 
     try:
-        r = requests.get(url, params=params, timeout=5)
-        print("GEOCODE STATUS:", r.status_code)
+        for query in query_candidates:
+            params = {
+                "api-version": "1.0",
+                "subscription-key": key,
+                "query": query,
+                "countrySet": "US",
+                "limit": 5,
+            }
+            r = requests.get(url, params=params, timeout=5)
+            print("GEOCODE STATUS:", r.status_code)
 
-        if r.status_code != 200:
-            print("GEOCODE ERROR:", r.text[:300])
-            return None, None
+            if r.status_code != 200:
+                print("GEOCODE ERROR:", r.text[:300])
+                continue
 
-        data = r.json()
+            data = r.json()
 
-        results = data.get("results") or []
-        if results:
-            def _postal5(value):
-                m = re.search(r"(\d{5})", str(value or ""))
-                return m.group(1) if m else None
+            results = data.get("results") or []
+            if results:
+                def _postal5(value):
+                    m = re.search(r"(\d{5})", str(value or ""))
+                    return m.group(1) if m else None
 
-            def _is_md(addr):
-                state_code = str(addr.get("countrySubdivisionCode") or "").upper()
-                state_name = str(addr.get("countrySubdivision") or "").upper()
-                return state_code in {"MD", "US-MD"} or "MARYLAND" in state_name
+                def _is_md(addr):
+                    state_code = str(addr.get("countrySubdivisionCode") or "").upper()
+                    state_name = str(addr.get("countrySubdivision") or "").upper()
+                    return state_code in {"MD", "US-MD"} or "MARYLAND" in state_name
 
-            def _score(result):
-                addr = result.get("address") or {}
-                score = 0
-                if input_zip and _postal5(addr.get("postalCode")) == input_zip:
-                    score += 100
-                if _is_md(addr):
-                    score += 10
-                return score + float(result.get("score") or 0.0)
+                def _score(result):
+                    addr = result.get("address") or {}
+                    score = 0
+                    if input_zip and _postal5(addr.get("postalCode")) == input_zip:
+                        score += 100
+                    if _is_md(addr):
+                        score += 10
+                    return score + float(result.get("score") or 0.0)
 
-            best = max(results, key=_score)
-            pos = best["position"]
-            return pos["lon"], pos["lat"]
+                best = max(results, key=_score)
+                pos = best["position"]
+                return pos["lon"], pos["lat"]
 
         print("NO RESULTS FOR:", address)
 
