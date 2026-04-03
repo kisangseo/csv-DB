@@ -725,7 +725,6 @@
 
         row.address = addressValue;
         row.apt = aptValue;
-        suppressSearchUntilMs = Date.now() + 1500;
         resetLandlordTenantInlineEditState(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn);
       }
 
@@ -821,8 +820,6 @@
 
         status.textContent = "Saved successfully.";
         closeModal();
-
-        await search({ preventDefault: () => {} });
       }
 
 
