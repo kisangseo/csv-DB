@@ -351,6 +351,7 @@
       ]);
       const ADD_ALLOWED_TABLES = new Set(["Warrants to Audit", "BCSO Active Warrants"]);
       const DATE_SORT_DIRECTIONS = { asc: "asc", desc: "desc" };
+      let suppressSearchUntilMs = 0;
 
       function parseDateForSort(value) {
         if (!value) return Number.NaN;
@@ -683,7 +684,24 @@
         return {tableName, out};
       }
 
-      async function saveLandlordTenantInlineEdit(row, tr, actionsTd, editBtn, deleteBtn) {
+      function resetLandlordTenantInlineEditState(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn) {
+        const addressIndex = dataHeaders.indexOf("Address");
+        const aptIndex = dataHeaders.indexOf("APT/Unit");
+        if (addressIndex !== -1) {
+          tr.children[addressIndex].textContent = [row.address, row.city, row.state].filter(Boolean).join(", ");
+        }
+        if (aptIndex !== -1) {
+          tr.children[aptIndex].textContent = row.apt || "";
+        }
+        actionsTd.dataset.editing = "";
+        editBtn.textContent = "Edit";
+        if (deleteBtn) {
+          deleteBtn.textContent = "Delete";
+          deleteBtn.style.display = "none";
+        }
+      }
+
+      async function saveLandlordTenantInlineEdit(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn) {
         const addressInput = tr.querySelector('input[data-inline-field="address"]');
         const aptInput = tr.querySelector('input[data-inline-field="apt"]');
         const addressValue = addressInput ? addressInput.value.trim() : "";
@@ -707,8 +725,8 @@
 
         row.address = addressValue;
         row.apt = aptValue;
-        actionsTd.dataset.editing = "";
-        await search({preventDefault: () => {}});
+        suppressSearchUntilMs = Date.now() + 1500;
+        resetLandlordTenantInlineEditState(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn);
       }
 
       async function saveRecord() {
@@ -943,6 +961,9 @@
 
         if (eventOrOptions && typeof eventOrOptions.preventDefault === "function") {
           eventOrOptions.preventDefault();
+        }
+        if (Date.now() < suppressSearchUntilMs) {
+          return;
         }
 
         const status = document.getElementById("statusMessage");
@@ -1198,7 +1219,7 @@
                     return;
                   }
 
-                  await saveLandlordTenantInlineEdit(row, tr, actionsTd, editBtn, deleteBtn);
+                  await saveLandlordTenantInlineEdit(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn);
                 });
                 actionsTd.appendChild(editBtn);
 
@@ -1243,13 +1264,7 @@
                   deleteBtn.className = "table-action-btn danger-btn";
                   deleteBtn.style.display = "none";
                   deleteBtn.addEventListener("click", () => {
-                    const addressIndex = dataHeaders.indexOf("Address");
-                    const aptIndex = dataHeaders.indexOf("APT/Unit");
-                    tr.children[addressIndex].textContent = [row.address, row.city, row.state].filter(Boolean).join(", ");
-                    tr.children[aptIndex].textContent = row.apt || "";
-                    actionsTd.dataset.editing = "";
-                    editBtn.textContent = "Edit";
-                    deleteBtn.style.display = "none";
+                    resetLandlordTenantInlineEditState(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn);
                   });
                   actionsTd.appendChild(deleteBtn);
                 }
