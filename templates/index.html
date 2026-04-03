@@ -774,11 +774,17 @@
         const method = isEdit ? "PATCH" : "POST";
         const payload = isEdit ? {fields} : {table: tableName, fields};
 
-        const response = await fetch(url, {
-          method,
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(payload)
-        });
+        let response;
+        try {
+          response = await fetch(url, {
+            method,
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload)
+          });
+        } catch (err) {
+          status.textContent = `Request failed: ${err?.message || "Network/server unavailable."}`;
+          return;
+        }
 
         if (!response.ok) {
           let errorText = "Unable to save.";
