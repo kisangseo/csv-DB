@@ -19,6 +19,7 @@ from azure.storage.blob import (
     BlobSasPermissions,
     ContentSettings,
     ContainerClient,
+    generate_blob_sas,
 )
 from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
@@ -345,6 +346,20 @@ def append_dv_pdf_record(record):
         writer.writerow(record)
 
 
+def find_duplicate_dv_pdf_record(case_number, respondent_name):
+    normalized_case = (case_number or "").strip().lower()
+    normalized_name = (respondent_name or "").strip().lower()
+    if not normalized_case or not normalized_name:
+        return None
+
+    for row in read_dv_pdf_records():
+        row_case = (row.get("case_number") or "").strip().lower()
+        row_name = (row.get("respondent_name") or "").strip().lower()
+        if row_case == normalized_case and row_name == normalized_name:
+            return row
+    return None
+
+
 def extract_text_with_doc_intelligence(pdf_path):
     endpoint = (os.getenv("DOC_INTELLIGENCE_ENDPOINT") or "").strip().rstrip("/")
     key = (os.getenv("DOC_INTELLIGENCE_KEY") or "").strip()
@@ -439,7 +454,6 @@ def upload_pdf_to_blob_and_get_sas_url(pdf_path):
     except Exception:
         pass
 
-    container = ContainerClient.from_container_url(container_sas_url)
     blob = container.get_blob_client(blob_name)
     with open(pdf_path, "rb") as f:
         blob.upload_blob(
@@ -1204,8 +1218,20 @@ def upload_dv_pdf():
         "pdf_download": f"/dv-pdf/file/{extracted.get('blob_name', '')}",
         "uploaded_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+    wants_reissue = (request.form.get("add_as_reissue") or "").strip().lower() in {"1", "true", "yes"}
+    duplicate = find_duplicate_dv_pdf_record(record["case_number"], record["respondent_name"])
+    if duplicate and not wants_reissue:
+        return jsonify({
+            "status": "duplicate",
+            "error": "Duplicate DV PDF detected (same case number and respondent name). Add as reissue?",
+            "requires_confirmation": True,
+            "existing_record": duplicate,
+            "candidate_record": record,
+        }), 409
+
     append_dv_pdf_record(record)
-    return jsonify({"status": "success", "record": record})
+    return jsonify({"status": "success", "record": record, "is_reissue": bool(duplicate)})
 
 
 def get_dv_pdf_blob_client(blob_name):
