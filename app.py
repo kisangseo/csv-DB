@@ -19,6 +19,7 @@ from azure.storage.blob import (
     BlobSasPermissions,
     ContentSettings,
     ContainerClient,
+    generate_blob_sas,
 )
 from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
@@ -439,7 +440,6 @@ def upload_pdf_to_blob_and_get_sas_url(pdf_path):
     except Exception:
         pass
 
-    container = ContainerClient.from_container_url(container_sas_url)
     blob = container.get_blob_client(blob_name)
     with open(pdf_path, "rb") as f:
         blob.upload_blob(

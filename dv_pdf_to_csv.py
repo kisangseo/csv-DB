@@ -13,13 +13,11 @@ import re
 import time
 from pathlib import Path
 from datetime import datetime, timedelta, UTC
-from urllib.parse import urlsplit
 import requests
 from azure.storage.blob import (
     BlobSasPermissions,
     BlobServiceClient,
     ContentSettings,
-    ContainerClient,
     generate_blob_sas,
 )
 
@@ -42,29 +40,14 @@ def _connection_string_value(connection_string: str, key_name: str) -> str:
 
 
 def upload_pdf_to_blob_and_get_sas_url(pdf_path: Path) -> str:
-    container_sas_url = (os.getenv("DV_PDF_BLOB_CONTAINER_SAS_URL") or "").strip()
     blob_container = (os.getenv("DV_PDF_BLOB_CONTAINER") or "dvcsv").strip() or "dvcsv"
     blob_prefix = (os.getenv("DV_PDF_BLOB_PREFIX") or "dv_pdf").strip().strip("/") or "dv_pdf"
     sas_minutes = int(os.getenv("DV_PDF_BLOB_SAS_MINUTES") or "30")
     blob_name = f"{blob_prefix}/{pdf_path.name}"
 
-    if container_sas_url:
-        container = ContainerClient.from_container_url(container_sas_url)
-        blob = container.get_blob_client(blob_name)
-        with open(pdf_path, "rb") as f:
-            blob.upload_blob(
-                f,
-                overwrite=True,
-                content_settings=ContentSettings(content_type="application/pdf"),
-            )
-        sas_token = urlsplit(container_sas_url).query
-        return f"{blob.url}?{sas_token}"
-
     connection_string = (os.getenv("AZURE_STORAGE_CONNECTION_STRING") or "").strip()
     if not connection_string:
-        raise RuntimeError(
-            "Missing AZURE_STORAGE_CONNECTION_STRING or DV_PDF_BLOB_CONTAINER_SAS_URL env vars."
-        )
+        raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING env var.")
 
     service = BlobServiceClient.from_connection_string(connection_string)
     container = service.get_container_client(blob_container)
