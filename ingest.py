@@ -16,6 +16,24 @@ def geocode_address(address):
     if not address:
         return None, None
 
+    address_text = str(address).strip().strip('"').strip("'")
+
+    parts = [p.strip() for p in address_text.split(",") if p and p.strip()]
+    if len(parts) >= 2:
+        first_part = parts[0]
+        second_part = parts[1]
+        looks_like_leading_code = (
+            bool(re.fullmatch(r"[A-Z0-9 ]{6,}", first_part, flags=re.IGNORECASE))
+            and any(ch.isdigit() for ch in first_part)
+            and bool(re.match(r"^\d+\s+\S+", second_part))
+        )
+        if looks_like_leading_code:
+            parts = parts[1:]
+
+    cleaned_text = ", ".join(parts) if parts else address_text
+    zip_match = re.search(r"\b(\d{5})(?:-\d{4})?\b", cleaned_text)
+    input_zip = zip_match.group(1) if zip_match else None
+
     url = "https://atlas.microsoft.com/search/address/json"
     key = os.getenv("AZURE_MAPS_KEY")
 
@@ -23,25 +41,58 @@ def geocode_address(address):
         print("ERROR: AZURE_MAPS_KEY is missing")
         return None, None
 
-    params = {
-        "api-version": "1.0",
-        "subscription-key": key,
-        "query": address
-    }
+    query_candidates = [cleaned_text]
+    if len(parts) >= 4:
+        state_part = parts[-2].upper()
+        city_part = parts[-3].upper()
+        if ("MARYLAND" in state_part or state_part == "MD") and city_part != "BALTIMORE":
+            baltimore_parts = parts[:]
+            baltimore_parts[-3] = "Baltimore"
+            forced_baltimore = ", ".join(baltimore_parts)
+            if forced_baltimore not in query_candidates:
+                query_candidates.append(forced_baltimore)
 
     try:
-        r = requests.get(url, params=params, timeout=5)
-        print("GEOCODE STATUS:", r.status_code)
+        for query in query_candidates:
+            params = {
+                "api-version": "1.0",
+                "subscription-key": key,
+                "query": query,
+                "countrySet": "US",
+                "limit": 5,
+            }
+            r = requests.get(url, params=params, timeout=5)
+            print("GEOCODE STATUS:", r.status_code)
 
-        if r.status_code != 200:
-            print("GEOCODE ERROR:", r.text[:300])
-            return None, None
+            if r.status_code != 200:
+                print("GEOCODE ERROR:", r.text[:300])
+                continue
 
-        data = r.json()
+            data = r.json()
 
-        if data.get("results"):
-            pos = data["results"][0]["position"]
-            return pos["lon"], pos["lat"]
+            results = data.get("results") or []
+            if results:
+                def _postal5(value):
+                    m = re.search(r"(\d{5})", str(value or ""))
+                    return m.group(1) if m else None
+
+                def _is_md(addr):
+                    state_code = str(addr.get("countrySubdivisionCode") or "").upper()
+                    state_name = str(addr.get("countrySubdivision") or "").upper()
+                    return state_code in {"MD", "US-MD"} or "MARYLAND" in state_name
+
+                def _score(result):
+                    addr = result.get("address") or {}
+                    score = 0
+                    if input_zip and _postal5(addr.get("postalCode")) == input_zip:
+                        score += 100
+                    if _is_md(addr):
+                        score += 10
+                    return score + float(result.get("score") or 0.0)
+
+                best = max(results, key=_score)
+                pos = best["position"]
+                return pos["lon"], pos["lat"]
 
         print("NO RESULTS FOR:", address)
 
@@ -132,10 +183,12 @@ def insert_search_record_active_warrants(cursor, record):
             race,
             sex,
             issuing_county,
-            address
+            address,
+            x,
+            y
         )
         OUTPUT INSERTED.record_id
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     values = (
@@ -153,6 +206,8 @@ def insert_search_record_active_warrants(cursor, record):
         record.get("sex"),
         record.get("issuing_county"),
         record.get("address"),
+        record.get("x"),
+        record.get("y"),
     )
 
     cursor.execute(sql, values)
@@ -894,6 +949,122 @@ def backfill_landlord_tenant_xy():
         conn.close()
 
 
+def backfill_bcso_active_warrants_xy():
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT record_id, address
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+            AND address IS NOT NULL
+            AND LTRIM(RTRIM(address)) <> ''
+            AND (
+                x IS NULL
+                OR y IS NULL
+            )
+        """)
+        rows = cursor.fetchall()
+
+        cache = {}
+        scanned = 0
+        updated = 0
+
+        for record_id, address in rows:
+            scanned += 1
+            if scanned % 100 == 0:
+                print(f"Scanned {scanned} BCSO rows...")
+
+            address_text = str(address).strip()
+            cache_key = address_text.lower()
+            if cache_key in cache:
+                x, y = cache[cache_key]
+            else:
+                x, y = geocode_address(address_text)
+                cache[cache_key] = (x, y)
+
+            if x is None or y is None:
+                continue
+
+            cursor.execute(
+                """
+                UPDATE search.records
+                SET x = ?, y = ?
+                WHERE record_id = ?
+                """,
+                x,
+                y,
+                record_id,
+            )
+            updated += 1
+            if updated % 100 == 0:
+                conn.commit()
+                print(f"Committed {updated} BCSO rows...")
+
+        conn.commit()
+        print(f"Backfilled BCSO Active Warrants x,y for {updated} rows.")
+    finally:
+        conn.close()
+
+
+def backfill_bcso_active_warrants_xy_force():
+    """
+    Re-geocode ALL BCSO active warrant rows that have an address,
+    even when x/y are already populated.
+    """
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT record_id, address
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+            AND address IS NOT NULL
+            AND LTRIM(RTRIM(address)) <> ''
+        """)
+        rows = cursor.fetchall()
+
+        cache = {}
+        scanned = 0
+        updated = 0
+
+        for record_id, address in rows:
+            scanned += 1
+            if scanned % 100 == 0:
+                print(f"Scanned {scanned} BCSO rows...")
+
+            address_text = str(address).strip()
+            cache_key = address_text.lower()
+            if cache_key in cache:
+                x, y = cache[cache_key]
+            else:
+                x, y = geocode_address(address_text)
+                cache[cache_key] = (x, y)
+
+            if x is None or y is None:
+                continue
+
+            cursor.execute(
+                """
+                UPDATE search.records
+                SET x = ?, y = ?
+                WHERE record_id = ?
+                """,
+                x,
+                y,
+                record_id,
+            )
+            updated += 1
+            if updated % 100 == 0:
+                conn.commit()
+                print(f"Committed {updated} BCSO rows...")
+
+        conn.commit()
+        print(f"Force backfilled BCSO Active Warrants x,y for {updated} rows.")
+    finally:
+        conn.close()
+
+
 def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_keys=None):
     df = read_csv_from_blob(container_name, blob_name)
 
@@ -1301,6 +1472,7 @@ def ingest_bcso_active_warrants_csv(_=None):
             ]
           
             # 4) Insert each row into SQL
+            geocode_cache = {}
             for _, row in df.iterrows():
                 row = row.where(pd.notna(row), None)
                 record_type = row.get("Record Type") or row.get("record_type")
@@ -1314,6 +1486,16 @@ def ingest_bcso_active_warrants_csv(_=None):
 
                 full_name = f"{row.get('last_name')}, {row.get('first_name')}".strip(", ")
                 
+                address_value = row.get("lka")
+                address_text = str(address_value).strip() if address_value is not None else ""
+                cache_key = address_text.lower()
+                if address_text:
+                    if cache_key not in geocode_cache:
+                        geocode_cache[cache_key] = geocode_address(address_text)
+                    x, y = geocode_cache[cache_key]
+                else:
+                    x, y = (None, None)
+
                 record = {
                     "department": "BCSO_ACTIVE_WARRANTS",
                     "source_file": blob.name,
@@ -1333,6 +1515,8 @@ def ingest_bcso_active_warrants_csv(_=None):
                     "issuing_county": row.get("issuing_county"),
                     "notes": row.get("notes"),
                     "address": row.get("lka"),
+                    "x": x,
+                    "y": y,
                 }
 
                 # 1) Try to find existing Active Warrant by case_number (update scenario)
@@ -1374,9 +1558,9 @@ def ingest_bcso_active_warrants_csv(_=None):
                             sex               = COALESCE(NULLIF(?, ''), sex),
                             issuing_county    = COALESCE(NULLIF(?, ''), issuing_county),
                             notes             = COALESCE(NULLIF(?, ''), notes),
-                            address           = COALESCE(NULLIF(?, ''), address)
-                            
-                            
+                            address           = COALESCE(NULLIF(?, ''), address),
+                            x                 = COALESCE(?, x),
+                            y                 = COALESCE(?, y)
                         WHERE record_id = ?
                     """,
                         record.get("source_file") or "",
@@ -1392,8 +1576,8 @@ def ingest_bcso_active_warrants_csv(_=None):
                         record.get("issuing_county") or "",
                         record.get("notes") or "",
                         record.get("address") or "",
-                        
-                       
+                        record.get("x"),
+                        record.get("y"),
                         record_id
                     )
 

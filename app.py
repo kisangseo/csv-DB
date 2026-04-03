@@ -50,16 +50,30 @@ STREET_SUFFIX_SPLIT_RE = re.compile(
 )
 ODYSSEY_FILE_DATE_RE = re.compile(r"(?i)^Odyssey-JobOutput-([A-Za-z]+ \d{1,2}, \d{4})")
 _apt_backfill_attempted = False
-ENABLE_APT_BACKFILL_ON_SEARCH = os.environ.get("ENABLE_APT_BACKFILL_ON_SEARCH", "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+# permanently disabled: apt backfill should not run during search requests
+ENABLE_APT_BACKFILL_ON_SEARCH = False
 
 def geocode_address(address):
     if not address:
         return None, None
+
+    address_text = str(address).strip().strip('"').strip("'")
+
+    parts = [p.strip() for p in address_text.split(",") if p and p.strip()]
+    if len(parts) >= 2:
+        first_part = parts[0]
+        second_part = parts[1]
+        looks_like_leading_code = (
+            bool(re.fullmatch(r"[A-Z0-9 ]{6,}", first_part, flags=re.IGNORECASE))
+            and any(ch.isdigit() for ch in first_part)
+            and bool(re.match(r"^\d+\s+\S+", second_part))
+        )
+        if looks_like_leading_code:
+            parts = parts[1:]
+
+    cleaned_text = ", ".join(parts) if parts else address_text
+    zip_match = re.search(r"\b(\d{5})(?:-\d{4})?\b", cleaned_text)
+    input_zip = zip_match.group(1) if zip_match else None
 
     url = "https://atlas.microsoft.com/search/address/json"
     key = os.getenv("AZURE_MAPS_KEY")
@@ -68,25 +82,58 @@ def geocode_address(address):
         print("ERROR: AZURE_MAPS_KEY is missing")
         return None, None
 
-    params = {
-        "api-version": "1.0",
-        "subscription-key": key,
-        "query": address
-    }
+    query_candidates = [cleaned_text]
+    if len(parts) >= 4:
+        state_part = parts[-2].upper()
+        city_part = parts[-3].upper()
+        if ("MARYLAND" in state_part or state_part == "MD") and city_part != "BALTIMORE":
+            baltimore_parts = parts[:]
+            baltimore_parts[-3] = "Baltimore"
+            forced_baltimore = ", ".join(baltimore_parts)
+            if forced_baltimore not in query_candidates:
+                query_candidates.append(forced_baltimore)
 
     try:
-        r = requests.get(url, params=params, timeout=5)
-        print("GEOCODE STATUS:", r.status_code)
+        for query in query_candidates:
+            params = {
+                "api-version": "1.0",
+                "subscription-key": key,
+                "query": query,
+                "countrySet": "US",
+                "limit": 5,
+            }
+            r = requests.get(url, params=params, timeout=5)
+            print("GEOCODE STATUS:", r.status_code)
 
-        if r.status_code != 200:
-            print("GEOCODE ERROR:", r.text[:300])
-            return None, None
+            if r.status_code != 200:
+                print("GEOCODE ERROR:", r.text[:300])
+                continue
 
-        data = r.json()
+            data = r.json()
 
-        if data.get("results"):
-            pos = data["results"][0]["position"]
-            return pos["lon"], pos["lat"]
+            results = data.get("results") or []
+            if results:
+                def _postal5(value):
+                    m = re.search(r"(\d{5})", str(value or ""))
+                    return m.group(1) if m else None
+
+                def _is_md(addr):
+                    state_code = str(addr.get("countrySubdivisionCode") or "").upper()
+                    state_name = str(addr.get("countrySubdivision") or "").upper()
+                    return state_code in {"MD", "US-MD"} or "MARYLAND" in state_name
+
+                def _score(result):
+                    addr = result.get("address") or {}
+                    score = 0
+                    if input_zip and _postal5(addr.get("postalCode")) == input_zip:
+                        score += 100
+                    if _is_md(addr):
+                        score += 10
+                    return score + float(result.get("score") or 0.0)
+
+                best = max(results, key=_score)
+                pos = best["position"]
+                return pos["lon"], pos["lat"]
 
         print("NO RESULTS FOR:", address)
 
@@ -689,7 +736,7 @@ TABLE_DEFINITIONS = {
         "fields": [
             "issuing_county", "case_number", "warrant_id_number", "warrant_type",
             "issue_date", "warrant_status", "full_name", "sid", "date_of_birth",
-            "race", "sex", "address", "notes"
+            "race", "sex", "address", "x", "y", "notes"
         ]
     },
     "Warrant of Restitution - MDEC": {
@@ -722,7 +769,7 @@ ALL_EDITABLE_COLUMNS = {
     "department", "source_file", "first_name", "last_name", "full_name", "date_of_birth", "sid",
     "case_number", "warrant_id_number", "warrant_type", "warrant_status", "issue_date", "intake_date",
     "address", "apt", "city", "state", "postal_code", "court_document_type", "disposition", "notes",
-    "sex", "race", "issuing_county", "facility", "global_id", "petitioner_name", "served_by"
+    "sex", "race", "issuing_county", "facility", "global_id", "petitioner_name", "served_by", "x", "y"
 }
 
 DATE_FIELDS = {"date_of_birth", "issue_date", "intake_date"}
@@ -1201,6 +1248,16 @@ def create_record():
         if combined:
             insert_data["full_name"] = combined
 
+    if table_name == "BCSO Active Warrants":
+        address_text = (insert_data.get("address") or "").strip()
+        if address_text:
+            x, y = geocode_address(address_text)
+            insert_data["x"] = x
+            insert_data["y"] = y
+        else:
+            insert_data["x"] = None
+            insert_data["y"] = None
+
     columns = list(insert_data.keys())
     placeholders = ", ".join(["?"] * len(columns))
     sql = f"""
@@ -1231,30 +1288,6 @@ def update_record(record_id):
     payload = request.get_json(silent=True) or {}
     updates = payload.get("fields") or {}
 
-    set_parts = []
-    values = []
-
-    for column, value in updates.items():
-        if column not in ALL_EDITABLE_COLUMNS:
-            continue
-
-        clean_value = ("" if value is None else str(value)).strip()
-        if clean_value == "":
-            db_value = None
-        elif column in DATE_FIELDS:
-            parsed = pd.to_datetime(clean_value, errors="coerce")
-            db_value = None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
-        else:
-            db_value = clean_value
-
-        set_parts.append(f"{column} = ?")
-        values.append(db_value)
-
-    if not set_parts:
-        return jsonify({"error": "No valid fields provided"}), 400
-
-    values.append(record_id)
-
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -1262,8 +1295,42 @@ def update_record(record_id):
         existing = cur.fetchone()
         if not existing:
             return jsonify({"error": "Record not found"}), 404
-        if str(existing[0] or "").strip().lower() not in EDITABLE_DEPARTMENTS:
+        department_norm = str(existing[0] or "").strip().lower()
+        if department_norm not in EDITABLE_DEPARTMENTS:
             return jsonify({"error": "Editing is not allowed for this department"}), 403
+
+        set_parts = []
+        values = []
+
+        for column, value in updates.items():
+            if column not in ALL_EDITABLE_COLUMNS:
+                continue
+
+            clean_value = ("" if value is None else str(value)).strip()
+            if clean_value == "":
+                db_value = None
+            elif column in DATE_FIELDS:
+                parsed = pd.to_datetime(clean_value, errors="coerce")
+                db_value = None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+            else:
+                db_value = clean_value
+
+            set_parts.append(f"{column} = ?")
+            values.append(db_value)
+
+        if not set_parts:
+            return jsonify({"error": "No valid fields provided"}), 400
+
+        if department_norm == "bcso_active_warrants" and "address" in updates:
+            updated_address = ("" if updates.get("address") is None else str(updates.get("address"))).strip()
+            if updated_address:
+                x, y = geocode_address(updated_address)
+            else:
+                x, y = (None, None)
+            set_parts.extend(["x = ?", "y = ?"])
+            values.extend([x, y])
+
+        values.append(record_id)
 
         cur.execute(
             f"UPDATE search.records SET {', '.join(set_parts)} WHERE record_id = ?",
