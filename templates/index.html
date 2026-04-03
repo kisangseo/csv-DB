@@ -781,8 +781,17 @@
         });
 
         if (!response.ok) {
-          const err = await response.json();
-          status.textContent = err.error || "Unable to save.";
+          let errorText = "Unable to save.";
+          try {
+            const err = await response.json();
+            errorText = err.error || errorText;
+          } catch (_) {
+            try {
+              const raw = await response.text();
+              if (raw && raw.trim()) errorText = raw.slice(0, 200);
+            } catch (_) {}
+          }
+          status.textContent = errorText;
           return;
         }
 

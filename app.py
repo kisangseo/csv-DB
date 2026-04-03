@@ -779,6 +779,20 @@ def normalize_department_name(value) -> str:
     text = str(value or "").strip().lower().replace("_", " ")
     return " ".join(text.split())
 
+
+def records_has_xy_columns(cur) -> bool:
+    cur.execute(
+        """
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'search'
+          AND TABLE_NAME = 'records'
+          AND COLUMN_NAME IN ('x', 'y')
+        """
+    )
+    found = {str(row[0]).strip().lower() for row in cur.fetchall()}
+    return "x" in found and "y" in found
+
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
@@ -1350,7 +1364,7 @@ def update_record(record_id):
         if not set_parts:
             return jsonify({"error": "No valid fields provided"}), 400
 
-        if department_norm == "bcso active warrants" and "address" in updates:
+        if department_norm == "bcso active warrants" and "address" in updates and records_has_xy_columns(cur):
             updated_address = ("" if updates.get("address") is None else str(updates.get("address"))).strip()
             if updated_address:
                 x, y = geocode_address(updated_address)
