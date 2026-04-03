@@ -439,7 +439,6 @@ def upload_pdf_to_blob_and_get_sas_url(pdf_path):
     except Exception:
         pass
 
-    container = ContainerClient.from_container_url(container_sas_url)
     blob = container.get_blob_client(blob_name)
     with open(pdf_path, "rb") as f:
         blob.upload_blob(
