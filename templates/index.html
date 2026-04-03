@@ -1351,11 +1351,14 @@
         }
       }
 
-      async function uploadDvPdf(file) {
+      async function uploadDvPdf(file, addAsReissue = false) {
         const status = document.getElementById("statusMessage");
         const formData = new FormData();
         formData.append("pdf_file", file);
-        status.textContent = "Uploading DV PDF...";
+        if (addAsReissue) {
+          formData.append("add_as_reissue", "true");
+        }
+        status.textContent = addAsReissue ? "Uploading DV PDF as reissue..." : "Uploading DV PDF...";
         status.classList.add("loading");
         try {
           const response = await fetch(`${window.location.origin}/dv-pdf/upload`, {
@@ -1364,11 +1367,22 @@
           });
           const data = await response.json();
           if (!response.ok) {
+            if (response.status === 409 && data.requires_confirmation) {
+              status.classList.remove("loading");
+              const shouldAdd = window.confirm(data.error || "Duplicate found. Add as reissue?");
+              if (shouldAdd) {
+                return uploadDvPdf(file, true);
+              }
+              status.textContent = "Duplicate DV PDF not added.";
+              return;
+            }
             status.textContent = data.error || "DV PDF upload failed.";
             status.classList.remove("loading");
             return;
           }
-          status.textContent = "DV PDF uploaded and parsed successfully.";
+          status.textContent = data.is_reissue
+            ? "DV PDF uploaded as reissue successfully."
+            : "DV PDF uploaded and parsed successfully.";
           status.classList.remove("loading");
           search({department: "DV PDF"});
         } catch (err) {
