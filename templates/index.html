@@ -921,9 +921,13 @@
         URL.revokeObjectURL(downloadUrl);
       }
 
-      async function search(event) {
-        if (event && typeof event.preventDefault === "function") {
-          event.preventDefault();
+      async function search(eventOrOptions) {
+        const options = (eventOrOptions && typeof eventOrOptions === "object" && typeof eventOrOptions.preventDefault !== "function")
+          ? eventOrOptions
+          : {};
+
+        if (eventOrOptions && typeof eventOrOptions.preventDefault === "function") {
+          eventOrOptions.preventDefault();
         }
 
         const status = document.getElementById("statusMessage");
@@ -962,7 +966,10 @@
           status.textContent = "Search complete.";
           let renderedDepartments = 0;
 
-          const orderedEntries = Object.entries(data).sort(([deptA], [deptB]) => {
+          const targetDepartment = (options.department || "").toLowerCase().trim();
+          const orderedEntries = Object.entries(data)
+            .filter(([dept]) => !targetDepartment || dept.toLowerCase() === targetDepartment)
+            .sort(([deptA], [deptB]) => {
             const aIsDvPdf = deptA.toLowerCase() === "dv pdf";
             const bIsDvPdf = deptB.toLowerCase() === "dv pdf";
             if (aIsDvPdf && !bIsDvPdf) return -1;
@@ -1280,7 +1287,7 @@
           }
           status.textContent = "DV PDF uploaded and parsed successfully.";
           status.classList.remove("loading");
-          search();
+          search({department: "DV PDF"});
         } catch (err) {
           console.error(err);
           status.classList.remove("loading");
