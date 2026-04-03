@@ -766,12 +766,32 @@ REQUIRED_FIELDS_BY_TABLE = {
 EDITABLE_DEPARTMENTS = {
     "active warrants",
     "bcso_active_warrants",
+    "bcso active warrants",
     "field services department",
     "field services department - civil intake",
     "field services department - civil survey",
     "field services department - warrants",
     "civil papers",
 }
+
+
+def normalize_department_name(value) -> str:
+    text = str(value or "").strip().lower().replace("_", " ")
+    return " ".join(text.split())
+
+
+def records_has_xy_columns(cur) -> bool:
+    cur.execute(
+        """
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'search'
+          AND TABLE_NAME = 'records'
+          AND COLUMN_NAME IN ('x', 'y')
+        """
+    )
+    found = {str(row[0]).strip().lower() for row in cur.fetchall()}
+    return "x" in found and "y" in found
 
 CORS(app)
 
@@ -1318,7 +1338,7 @@ def update_record(record_id):
         existing = cur.fetchone()
         if not existing:
             return jsonify({"error": "Record not found"}), 404
-        department_norm = str(existing[0] or "").strip().lower()
+        department_norm = normalize_department_name(existing[0])
         if department_norm not in EDITABLE_DEPARTMENTS:
             return jsonify({"error": "Editing is not allowed for this department"}), 403
 
@@ -1344,7 +1364,7 @@ def update_record(record_id):
         if not set_parts:
             return jsonify({"error": "No valid fields provided"}), 400
 
-        if department_norm == "bcso_active_warrants" and "address" in updates:
+        if department_norm == "bcso active warrants" and "address" in updates and records_has_xy_columns(cur):
             updated_address = ("" if updates.get("address") is None else str(updates.get("address"))).strip()
             if updated_address:
                 x, y = geocode_address(updated_address)
@@ -1380,7 +1400,7 @@ def delete_record(record_id):
         existing = cur.fetchone()
         if not existing:
             return jsonify({"error": "Record not found"}), 404
-        if str(existing[0] or "").strip().lower() not in EDITABLE_DEPARTMENTS:
+        if normalize_department_name(existing[0]) not in EDITABLE_DEPARTMENTS:
             return jsonify({"error": "Deleting is not allowed for this department"}), 403
 
         cur.execute("DELETE FROM search.records WHERE record_id = ?", record_id)
