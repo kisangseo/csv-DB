@@ -16,6 +16,7 @@ import pandas as pd
 import chardet
 from pypdf import PdfReader
 from azure.storage.blob import (
+    BlobSasPermissions,
     ContentSettings,
     ContainerClient,
 )
@@ -459,8 +460,7 @@ def upload_pdf_to_blob_and_get_sas_url(pdf_path):
             "Missing DV_PDF_BLOB_CONTAINER_SAS_URL (or alias), and AZURE_STORAGE_CONNECTION_STRING."
         )
 
-    service = BlobServiceClient.from_connection_string(CONNECTION_STRING)
-    container = service.get_container_client(DV_PDF_BLOB_CONTAINER)
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
     try:
         container.create_container()
     except Exception:
@@ -1216,8 +1216,7 @@ def get_dv_pdf_blob_client(blob_name):
             "Missing DV_PDF_BLOB_CONTAINER_SAS_URL (or alias), and AZURE_STORAGE_CONNECTION_STRING."
         )
 
-    service = BlobServiceClient.from_connection_string(CONNECTION_STRING)
-    container = service.get_container_client(DV_PDF_BLOB_CONTAINER)
+    container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
     return container.get_blob_client(blob_name)
 
 
