@@ -425,12 +425,46 @@ def _connection_string_value(connection_string, key_name):
     return ""
 
 
+def get_dv_pdf_container_sas_url():
+    candidate_keys = [
+        "DV_PDF_BLOB_CONTAINER_SAS_URL",
+        "DV_PDF_CONTAINER_SAS_URL",
+        "DV_PDF_BLOB_SAS_URL",
+    ]
+    for key in candidate_keys:
+        value = (os.getenv(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def upload_pdf_to_blob_and_get_sas_url(pdf_path):
-    container_sas_url = (os.getenv("DV_PDF_BLOB_CONTAINER_SAS_URL") or "").strip()
+    container_sas_url = get_dv_pdf_container_sas_url()
     blob_name = f"{DV_PDF_BLOB_PREFIX}/{os.path.basename(pdf_path)}"
 
-    if not container_sas_url:
-        raise RuntimeError("Missing DV_PDF_BLOB_CONTAINER_SAS_URL env var.")
+    if container_sas_url:
+        container = ContainerClient.from_container_url(container_sas_url)
+        blob = container.get_blob_client(blob_name)
+        with open(pdf_path, "rb") as f:
+            blob.upload_blob(
+                f,
+                overwrite=True,
+                content_settings=ContentSettings(content_type="application/pdf"),
+            )
+        sas_token = urlsplit(container_sas_url).query
+        return f"{blob.url}?{sas_token}", blob_name
+
+    if not CONNECTION_STRING:
+        raise RuntimeError(
+            "Missing DV_PDF_BLOB_CONTAINER_SAS_URL (or alias), and AZURE_STORAGE_CONNECTION_STRING."
+        )
+
+    service = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+    container = service.get_container_client(DV_PDF_BLOB_CONTAINER)
+    try:
+        container.create_container()
+    except Exception:
+        pass
 
     container = ContainerClient.from_container_url(container_sas_url)
     blob = container.get_blob_client(blob_name)
@@ -440,7 +474,27 @@ def upload_pdf_to_blob_and_get_sas_url(pdf_path):
             overwrite=True,
             content_settings=ContentSettings(content_type="application/pdf"),
         )
-    sas_token = urlsplit(container_sas_url).query
+
+    account_name = _connection_string_value(CONNECTION_STRING, "AccountName")
+    account_key = _connection_string_value(CONNECTION_STRING, "AccountKey")
+    if not account_name or not account_key:
+        raise RuntimeError(
+            "AZURE_STORAGE_CONNECTION_STRING must include AccountName and AccountKey "
+            "to generate a temporary SAS URL."
+        )
+
+    sas_start = datetime.now(UTC) - timedelta(minutes=5)
+    sas_expiry = datetime.now(UTC) + timedelta(minutes=DV_PDF_BLOB_SAS_MINUTES)
+    sas_token = generate_blob_sas(
+        account_name=account_name,
+        container_name=DV_PDF_BLOB_CONTAINER,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        start=sas_start,
+        expiry=sas_expiry,
+        protocol="https",
+    )
     return f"{blob.url}?{sas_token}", blob_name
 
 
@@ -1152,10 +1206,18 @@ def upload_dv_pdf():
 
 
 def get_dv_pdf_blob_client(blob_name):
-    container_sas_url = (os.getenv("DV_PDF_BLOB_CONTAINER_SAS_URL") or "").strip()
-    if not container_sas_url:
-        raise RuntimeError("Missing DV_PDF_BLOB_CONTAINER_SAS_URL env var.")
-    container = ContainerClient.from_container_url(container_sas_url)
+    container_sas_url = get_dv_pdf_container_sas_url()
+    if container_sas_url:
+        container = ContainerClient.from_container_url(container_sas_url)
+        return container.get_blob_client(blob_name)
+
+    if not CONNECTION_STRING:
+        raise RuntimeError(
+            "Missing DV_PDF_BLOB_CONTAINER_SAS_URL (or alias), and AZURE_STORAGE_CONNECTION_STRING."
+        )
+
+    service = BlobServiceClient.from_connection_string(CONNECTION_STRING)
+    container = service.get_container_client(DV_PDF_BLOB_CONTAINER)
     return container.get_blob_client(blob_name)
 
 
