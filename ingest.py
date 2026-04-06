@@ -104,6 +104,275 @@ def geocode_address(address):
 print(geocode_address("3900 Kimble Rd Baltimore MD"))
 
 
+def ingest_dv_csv_one_time(csv_file_name="dv_pdf_records.csv"):
+    """
+    One-time ingest for DV CSV files that:
+      1) stores display columns in search.dv_pdf_records
+      2) stores the full original CSV row JSON in SQL (source_row_json)
+    """
+    csv_path = os.path.join(os.path.dirname(__file__), csv_file_name)
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"CSV not found: {csv_path}")
+
+    df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
+    normalized_cols = {str(c).strip().lower(): c for c in df.columns}
+
+    def col(*candidates):
+        for c in candidates:
+            hit = normalized_cols.get(str(c).strip().lower())
+            if hit:
+                return hit
+        return None
+
+    case_col = col("Case Number", "case_number", "Warrant Case Number", "orderID and Version", "ObjectID")
+    respondent_col = col("Respondent Name", "respondent_name", "Name")
+    issue_col = col("Date Order was Issued", "Issue Date", "issue_date", "Issue Date Update")
+    type_col = col("Order Type", "type", "CourtType", "Order Classification")
+    status_col = col("Order Status", "order_status", "Order Status ID")
+    pdf_col = col("pdf_download", "PDF Download")
+
+    if not case_col or not respondent_col:
+        raise ValueError(
+            "CSV must include case/respondent columns (e.g. 'Case Number' and 'Respondent Name')."
+        )
+
+    def parse_recency(row_dict):
+        recency_candidates = [
+            "Date and Time of Reissue",
+            "Date and Time of Dispostion",
+            "Issue Date Update",
+            "EditDate",
+            "CreationDate",
+            "uploaded_at",
+            "Date Order was Issued",
+            "Issue Date",
+            "issue_date",
+        ]
+        best = pd.NaT
+        for candidate in recency_candidates:
+            c = col(candidate)
+            if not c:
+                continue
+            value = str(row_dict.get(c, "")).strip()
+            if not value:
+                continue
+            parsed = pd.to_datetime(value, errors="coerce")
+            if pd.isna(parsed):
+                continue
+            if pd.isna(best) or parsed > best:
+                best = parsed
+        return best
+
+    def info_score(row_dict):
+        return sum(1 for _, v in row_dict.items() if str(v).strip())
+
+    # collapse duplicates in the CSV first:
+    # keep row with most filled-in columns; tie-break by most recent timestamp
+    best_rows_by_key = {}
+    duplicate_rows_dropped = 0
+    for _, row in df.iterrows():
+        case_number = str(row.get(case_col, "")).strip()
+        respondent_name = str(row.get(respondent_col, "")).strip()
+        if not case_number or not respondent_name:
+            continue
+        key = (case_number.lower(), respondent_name.lower())
+        row_dict = row.to_dict()
+        candidate_score = info_score(row_dict)
+        candidate_recency = parse_recency(row_dict)
+
+        current = best_rows_by_key.get(key)
+        if current is None:
+            best_rows_by_key[key] = (row_dict, candidate_score, candidate_recency)
+            continue
+
+        _, current_score, current_recency = current
+        replace = False
+        if candidate_score > current_score:
+            replace = True
+        elif candidate_score == current_score:
+            if pd.isna(current_recency) and not pd.isna(candidate_recency):
+                replace = True
+            elif not pd.isna(current_recency) and not pd.isna(candidate_recency) and candidate_recency > current_recency:
+                replace = True
+
+        if replace:
+            best_rows_by_key[key] = (row_dict, candidate_score, candidate_recency)
+            duplicate_rows_dropped += 1
+        else:
+            duplicate_rows_dropped += 1
+
+    conn = get_conn()
+    inserted = 0
+    skipped = 0
+    updated_existing = 0
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT 1
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = 'search' AND TABLE_NAME = 'dv_pdf_records'
+            """
+        )
+        if cur.fetchone() is None:
+            raise RuntimeError("SQL table search.dv_pdf_records does not exist.")
+
+        cur.execute(
+            """
+            IF COL_LENGTH('search.dv_pdf_records', 'source_row_json') IS NULL
+                ALTER TABLE search.dv_pdf_records ADD source_row_json NVARCHAR(MAX) NULL;
+            IF COL_LENGTH('search.dv_pdf_records', 'source_csv_name') IS NULL
+                ALTER TABLE search.dv_pdf_records ADD source_csv_name NVARCHAR(260) NULL;
+            IF COL_LENGTH('search.dv_pdf_records', 'order_status') IS NULL
+                ALTER TABLE search.dv_pdf_records ADD order_status NVARCHAR(255) NULL;
+            """
+        )
+
+        csv_to_sql_col = {}
+        used_sql_cols = set()
+        for original_col in df.columns:
+            normalized = re.sub(r"[^a-z0-9]+", "_", str(original_col).strip().lower()).strip("_")
+            if not normalized:
+                normalized = "column"
+            if normalized[0].isdigit():
+                normalized = f"c_{normalized}"
+            base_sql_col = f"csv_{normalized}"
+            sql_col = base_sql_col
+            suffix = 2
+            while sql_col in used_sql_cols:
+                sql_col = f"{base_sql_col}_{suffix}"
+                suffix += 1
+            used_sql_cols.add(sql_col)
+            csv_to_sql_col[original_col] = sql_col
+
+        for sql_col in csv_to_sql_col.values():
+            escaped = sql_col.replace("]", "]]")
+            cur.execute(
+                f"""
+                IF COL_LENGTH('search.dv_pdf_records', '{escaped}') IS NULL
+                    ALTER TABLE search.dv_pdf_records ADD [{escaped}] NVARCHAR(MAX) NULL;
+                """
+            )
+
+        cur.execute(
+            """
+            SELECT
+                LOWER(LTRIM(RTRIM(case_number))) AS case_number_norm,
+                LOWER(LTRIM(RTRIM(respondent_name))) AS respondent_name_norm
+            FROM search.dv_pdf_records
+            WHERE is_reissue = 0
+            """
+        )
+        existing_non_reissues = {(r[0] or "", r[1] or "") for r in cur.fetchall()}
+
+        dynamic_column_sql = ", ".join(f"[{name.replace(']', ']]')}]" for name in csv_to_sql_col.values())
+        dynamic_placeholders = ", ".join("?" for _ in csv_to_sql_col)
+
+        insert_sql = f"""
+            INSERT INTO search.dv_pdf_records
+                (
+                    case_number,
+                    respondent_name,
+                    issue_date,
+                    order_type,
+                    order_status,
+                    blob_name,
+                    pdf_download,
+                    uploaded_at,
+                    is_reissue,
+                    source_row_json,
+                    source_csv_name,
+                    {dynamic_column_sql}
+                )
+            VALUES (?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), ?, CAST(? AS NVARCHAR(MAX)), CAST(? AS NVARCHAR(260)), {dynamic_placeholders})
+        """
+
+        dynamic_update_set = ", ".join(
+            f"[{name.replace(']', ']]')}] = CASE "
+            f"WHEN NULLIF(LTRIM(RTRIM([{name.replace(']', ']]')}])), '') IS NULL THEN ? "
+            f"ELSE [{name.replace(']', ']]')}] END"
+            for name in csv_to_sql_col.values()
+        )
+        update_sql = f"""
+            UPDATE search.dv_pdf_records
+            SET
+                issue_date = CASE WHEN issue_date IS NULL THEN ? ELSE issue_date END,
+                order_type = CASE WHEN NULLIF(LTRIM(RTRIM(order_type)), '') IS NULL THEN ? ELSE order_type END,
+                order_status = CASE WHEN NULLIF(LTRIM(RTRIM(order_status)), '') IS NULL THEN ? ELSE order_status END,
+                blob_name = CASE WHEN NULLIF(LTRIM(RTRIM(blob_name)), '') IS NULL THEN ? ELSE blob_name END,
+                pdf_download = CASE WHEN NULLIF(LTRIM(RTRIM(pdf_download)), '') IS NULL THEN ? ELSE pdf_download END,
+                source_row_json = CASE WHEN NULLIF(LTRIM(RTRIM(source_row_json)), '') IS NULL THEN CAST(? AS NVARCHAR(MAX)) ELSE source_row_json END,
+                source_csv_name = CASE WHEN NULLIF(LTRIM(RTRIM(source_csv_name)), '') IS NULL THEN CAST(? AS NVARCHAR(260)) ELSE source_csv_name END,
+                {dynamic_update_set}
+            WHERE LOWER(LTRIM(RTRIM(case_number))) = ?
+              AND LOWER(LTRIM(RTRIM(respondent_name))) = ?
+              AND is_reissue = 0
+        """
+
+        for key, (row_dict, _, _) in best_rows_by_key.items():
+            case_number = str(row_dict.get(case_col, "")).strip()
+            respondent_name = str(row_dict.get(respondent_col, "")).strip()
+            if not case_number or not respondent_name:
+                skipped += 1
+                continue
+
+            issue_text = str(row_dict.get(issue_col, "")).strip() if issue_col else ""
+            issue_date = pd.to_datetime(issue_text, errors="coerce")
+            issue_date_value = None if pd.isna(issue_date) else issue_date.strftime("%Y-%m-%d")
+
+            order_type = str(row_dict.get(type_col, "")).strip() if type_col else ""
+            order_status = str(row_dict.get(status_col, "")).strip() if status_col else ""
+            pdf_download = str(row_dict.get(pdf_col, "")).strip() if pdf_col else ""
+            blob_name = pdf_download.replace("/dv-pdf/file/", "", 1).strip("/")
+            source_row_json = json.dumps(row_dict, ensure_ascii=False, default=str)
+            dynamic_values = [str(row_dict.get(original_col, "")).strip() for original_col in csv_to_sql_col]
+
+            if key in existing_non_reissues:
+                cur.execute(
+                    update_sql,
+                    issue_date_value,
+                    order_type,
+                    order_status,
+                    blob_name,
+                    pdf_download,
+                    source_row_json,
+                    os.path.basename(csv_path),
+                    *dynamic_values,
+                    key[0],
+                    key[1],
+                )
+                if cur.rowcount and cur.rowcount > 0:
+                    updated_existing += 1
+                continue
+
+            cur.execute(
+                insert_sql,
+                case_number,
+                respondent_name,
+                issue_date_value,
+                order_type,
+                order_status,
+                blob_name,
+                pdf_download,
+                0,
+                source_row_json,
+                os.path.basename(csv_path),
+                *dynamic_values,
+            )
+            inserted += 1
+
+        conn.commit()
+        print(
+            f"DV one-time ingest complete for {os.path.basename(csv_path)}: "
+            f"inserted={inserted}, skipped={skipped}, "
+            f"duplicate_rows_dropped={duplicate_rows_dropped}, updated_existing={updated_existing}"
+        )
+    finally:
+        conn.close()
+
+
 def insert_search_record_warrants(cursor, record):
     
     sql = """
