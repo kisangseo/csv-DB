@@ -699,6 +699,11 @@ def _pick_row_value(row, *candidates):
     return None
 
 
+def _normalize_postal_code(value):
+    m = re.search(r"\b(\d{5})(?:-\d{4})?\b", str(value or ""))
+    return m.group(1) if m else None
+
+
 def ingest_civil_papers_one_time(file_name="survey_0.csv"):
     """
     One-time ingest for CIVIL PAPERS from a local CSV file located next to ingest.py.
@@ -915,7 +920,9 @@ def read_csv_from_blob(container_name, blob_name):
     )
 
     data = blob_client.download_blob().readall()
-    return pd.read_csv(io.BytesIO(data))
+    df = pd.read_csv(io.BytesIO(data))
+    df.columns = [str(col).replace("\ufeff", "").strip() for col in df.columns]
+    return df
 
 
 def _pick_address_column(columns):
@@ -1145,9 +1152,9 @@ def build_latest_landlord_tenant_with_apt_blob(container_name="fscsv"):
             # Fallback path:
             # if lookup in search.records misses, geocode the row address directly.
             address = row.get("TenantAddress") or row.get("Address") or row.get("address")
-            city = row.get("TenantCity") or row.get("city")
-            state = row.get("TenantState") or row.get("state")
-            tenant_zip = row.get("TenantZip") or row.get("postal_code")
+            city = _pick_row_value(row, "TenantCity", "city")
+            state = _pick_row_value(row, "TenantState", "state")
+            tenant_zip = _normalize_postal_code(_pick_row_value(row, "TenantZip", "postal_code", "Zip", "ZipCode"))
             address_text = str(address).strip() if address is not None else ""
             if not address_text:
                 return None, None
@@ -1242,6 +1249,67 @@ def backfill_landlord_tenant_xy():
 
         conn.commit()
         print(f"Backfilled landlord/tenant x,y for {updated} rows.")
+    finally:
+        conn.close()
+
+
+def backfill_landlord_tenant_postal_code():
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT r.record_id, rr.raw_payload
+            FROM search.records r
+            LEFT JOIN search.raw_records rr ON rr.record_id = r.record_id
+            WHERE LOWER(LTRIM(RTRIM(r.department))) = 'field services department'
+              AND (
+                    r.postal_code IS NULL
+                    OR LTRIM(RTRIM(CAST(r.postal_code AS NVARCHAR(20)))) = ''
+              )
+              AND rr.raw_payload IS NOT NULL
+        """)
+        rows = cursor.fetchall()
+
+        updated = 0
+        for record_id, raw_payload in rows:
+            payload = raw_payload
+            if isinstance(payload, (bytes, bytearray)):
+                payload = payload.decode("utf-8", errors="ignore")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except Exception:
+                    payload = None
+            if not isinstance(payload, dict):
+                continue
+
+            normalized = {
+                str(k).replace("\ufeff", "").strip().lower(): v
+                for k, v in payload.items()
+            }
+            candidate = (
+                normalized.get("tenantzip")
+                or normalized.get("tenant_zip")
+                or normalized.get("zip")
+                or normalized.get("zipcode")
+                or normalized.get("postal_code")
+            )
+            zip5 = _normalize_postal_code(candidate)
+            if not zip5:
+                continue
+
+            cursor.execute(
+                "UPDATE search.records SET postal_code = ? WHERE record_id = ?",
+                zip5,
+                record_id,
+            )
+            updated += 1
+            if updated % 500 == 0:
+                conn.commit()
+                print(f"Updated postal_code for {updated} rows...")
+
+        conn.commit()
+        print(f"Backfilled landlord/tenant postal_code for {updated} rows.")
     finally:
         conn.close()
 
@@ -1395,9 +1463,9 @@ def ingest_odyssey_civil_from_blob(blob_name, container_name="fscsv", existing_k
                 continue
 
             address, apt = split_address_and_apt(row.get("TenantAddress"))
-            tenant_city = row.get("TenantCity")
-            tenant_state = row.get("TenantState")
-            tenant_zip = row.get("TenantZip")
+            tenant_city = _pick_row_value(row, "TenantCity")
+            tenant_state = _pick_row_value(row, "TenantState")
+            tenant_zip = _normalize_postal_code(_pick_row_value(row, "TenantZip", "Zip", "ZipCode"))
             x, y = geocode_address(address, city=tenant_city, state=tenant_state, postal_code=tenant_zip) if address else (None, None)
             record = {
                 "department": "FIELD SERVICES DEPARTMENT",
@@ -1478,6 +1546,7 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
     finally:
         conn.close()
 
+    backfill_landlord_tenant_postal_code()
     backfill_landlord_tenant_xy()
     build_latest_landlord_tenant_with_apt_blob(container_name)
 
