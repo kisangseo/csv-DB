@@ -363,6 +363,12 @@ def _ensure_dv_pdf_optional_columns(cur):
     )
 
 
+def _dv_pdf_column_exists(cur, column_name):
+    cur.execute("SELECT COL_LENGTH('search.dv_pdf_records', ?) AS len_val", column_name)
+    row = cur.fetchone()
+    return row is not None and row[0] is not None
+
+
 def fetch_dv_pdf_records_from_sql():
     conn = get_conn()
     try:
@@ -370,13 +376,25 @@ def fetch_dv_pdf_records_from_sql():
         if not _dv_pdf_table_exists(cur):
             return []
         _ensure_dv_pdf_optional_columns(cur)
+        reverse_geocode_expr = "'' AS reverse_geocode_output"
+        if _dv_pdf_column_exists(cur, "csv_reverse_geocode_output"):
+            reverse_geocode_expr = "csv_reverse_geocode_output AS reverse_geocode_output"
+
+        order_disposition_expr = "'' AS order_disposition"
+        if _dv_pdf_column_exists(cur, "csv_disposition_of_order"):
+            order_disposition_expr = "csv_disposition_of_order AS order_disposition"
+        elif _dv_pdf_column_exists(cur, "csv_dispostion_of_order"):
+            order_disposition_expr = "csv_dispostion_of_order AS order_disposition"
+
         cur.execute(
-            """
+            f"""
             SELECT
                 case_number,
                 respondent_name,
                 issue_date,
+                {reverse_geocode_expr},
                 order_type,
+                {order_disposition_expr},
                 order_status,
                 pdf_download,
                 uploaded_at
@@ -391,7 +409,9 @@ def fetch_dv_pdf_records_from_sql():
                     "case_number": (row.case_number or "").strip(),
                     "respondent_name": (row.respondent_name or "").strip(),
                     "issue_date": _format_sql_date(row.issue_date),
+                    "reverse_geocode_output": (row.reverse_geocode_output or "").strip(),
                     "order_type": (row.order_type or "").strip(),
+                    "order_disposition": (row.order_disposition or "").strip(),
                     "order_status": (row.order_status or "").strip(),
                     "type": (row.order_type or "").strip(),
                     "pdf_download": (row.pdf_download or "").strip(),
@@ -437,13 +457,24 @@ def find_duplicate_dv_pdf_record(case_number, respondent_name):
         cur = conn.cursor()
         if _dv_pdf_table_exists(cur):
             _ensure_dv_pdf_optional_columns(cur)
+            reverse_geocode_expr = "'' AS reverse_geocode_output"
+            if _dv_pdf_column_exists(cur, "csv_reverse_geocode_output"):
+                reverse_geocode_expr = "csv_reverse_geocode_output AS reverse_geocode_output"
+
+            order_disposition_expr = "'' AS order_disposition"
+            if _dv_pdf_column_exists(cur, "csv_disposition_of_order"):
+                order_disposition_expr = "csv_disposition_of_order AS order_disposition"
+            elif _dv_pdf_column_exists(cur, "csv_dispostion_of_order"):
+                order_disposition_expr = "csv_dispostion_of_order AS order_disposition"
             cur.execute(
-                """
+                f"""
                 SELECT TOP 1
                     case_number,
                     respondent_name,
                     issue_date,
+                    {reverse_geocode_expr},
                     order_type,
+                    {order_disposition_expr},
                     order_status,
                     pdf_download,
                     uploaded_at
@@ -462,7 +493,9 @@ def find_duplicate_dv_pdf_record(case_number, respondent_name):
                     "case_number": (row.case_number or "").strip(),
                     "respondent_name": (row.respondent_name or "").strip(),
                     "issue_date": _format_sql_date(row.issue_date),
+                    "reverse_geocode_output": (row.reverse_geocode_output or "").strip(),
                     "order_type": (row.order_type or "").strip(),
+                    "order_disposition": (row.order_disposition or "").strip(),
                     "order_status": (row.order_status or "").strip(),
                     "type": (row.order_type or "").strip(),
                     "pdf_download": (row.pdf_download or "").strip(),
@@ -544,7 +577,17 @@ def build_dv_pdf_csv_bytes(records):
     buffer = io.StringIO()
     writer = csv.DictWriter(
         buffer,
-        fieldnames=["case_number", "respondent_name", "issue_date", "order_type", "order_status", "pdf_download", "uploaded_at"],
+        fieldnames=[
+            "case_number",
+            "respondent_name",
+            "issue_date",
+            "reverse_geocode_output",
+            "order_type",
+            "order_disposition",
+            "order_status",
+            "pdf_download",
+            "uploaded_at",
+        ],
     )
     writer.writeheader()
     for row in records:
@@ -553,7 +596,9 @@ def build_dv_pdf_csv_bytes(records):
                 "case_number": row.get("case_number", ""),
                 "respondent_name": row.get("respondent_name", ""),
                 "issue_date": row.get("issue_date", ""),
+                "reverse_geocode_output": row.get("reverse_geocode_output", ""),
                 "order_type": row.get("order_type", row.get("type", "")),
+                "order_disposition": row.get("order_disposition", ""),
                 "order_status": row.get("order_status", ""),
                 "pdf_download": row.get("pdf_download", ""),
                 "uploaded_at": row.get("uploaded_at", ""),
