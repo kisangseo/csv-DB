@@ -204,7 +204,7 @@ def ingest_dv_csv_one_time(csv_file_name="dv_pdf_records.csv"):
     conn = get_conn()
     inserted = 0
     skipped = 0
-    skipped_existing = 0
+    updated_existing = 0
 
     try:
         cur = conn.cursor()
@@ -289,15 +289,33 @@ def ingest_dv_csv_one_time(csv_file_name="dv_pdf_records.csv"):
             VALUES (?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), ?, CAST(? AS NVARCHAR(MAX)), CAST(? AS NVARCHAR(260)), {dynamic_placeholders})
         """
 
+        dynamic_update_set = ", ".join(
+            f"[{name.replace(']', ']]')}] = CASE "
+            f"WHEN NULLIF(LTRIM(RTRIM([{name.replace(']', ']]')}])), '') IS NULL THEN ? "
+            f"ELSE [{name.replace(']', ']]')}] END"
+            for name in csv_to_sql_col.values()
+        )
+        update_sql = f"""
+            UPDATE search.dv_pdf_records
+            SET
+                issue_date = CASE WHEN issue_date IS NULL THEN ? ELSE issue_date END,
+                order_type = CASE WHEN NULLIF(LTRIM(RTRIM(order_type)), '') IS NULL THEN ? ELSE order_type END,
+                order_status = CASE WHEN NULLIF(LTRIM(RTRIM(order_status)), '') IS NULL THEN ? ELSE order_status END,
+                blob_name = CASE WHEN NULLIF(LTRIM(RTRIM(blob_name)), '') IS NULL THEN ? ELSE blob_name END,
+                pdf_download = CASE WHEN NULLIF(LTRIM(RTRIM(pdf_download)), '') IS NULL THEN ? ELSE pdf_download END,
+                source_row_json = CASE WHEN NULLIF(LTRIM(RTRIM(source_row_json)), '') IS NULL THEN CAST(? AS NVARCHAR(MAX)) ELSE source_row_json END,
+                source_csv_name = CASE WHEN NULLIF(LTRIM(RTRIM(source_csv_name)), '') IS NULL THEN CAST(? AS NVARCHAR(260)) ELSE source_csv_name END,
+                {dynamic_update_set}
+            WHERE LOWER(LTRIM(RTRIM(case_number))) = ?
+              AND LOWER(LTRIM(RTRIM(respondent_name))) = ?
+              AND is_reissue = 0
+        """
+
         for key, (row_dict, _, _) in best_rows_by_key.items():
             case_number = str(row_dict.get(case_col, "")).strip()
             respondent_name = str(row_dict.get(respondent_col, "")).strip()
             if not case_number or not respondent_name:
                 skipped += 1
-                continue
-
-            if key in existing_non_reissues:
-                skipped_existing += 1
                 continue
 
             issue_text = str(row_dict.get(issue_col, "")).strip() if issue_col else ""
@@ -310,6 +328,25 @@ def ingest_dv_csv_one_time(csv_file_name="dv_pdf_records.csv"):
             blob_name = pdf_download.replace("/dv-pdf/file/", "", 1).strip("/")
             source_row_json = json.dumps(row_dict, ensure_ascii=False, default=str)
             dynamic_values = [str(row_dict.get(original_col, "")).strip() for original_col in csv_to_sql_col]
+
+            if key in existing_non_reissues:
+                cur.execute(
+                    update_sql,
+                    issue_date_value,
+                    order_type,
+                    order_status,
+                    blob_name,
+                    pdf_download,
+                    source_row_json,
+                    os.path.basename(csv_path),
+                    *dynamic_values,
+                    key[0],
+                    key[1],
+                )
+                if cur.rowcount and cur.rowcount > 0:
+                    updated_existing += 1
+                continue
+
             cur.execute(
                 insert_sql,
                 case_number,
@@ -330,7 +367,7 @@ def ingest_dv_csv_one_time(csv_file_name="dv_pdf_records.csv"):
         print(
             f"DV one-time ingest complete for {os.path.basename(csv_path)}: "
             f"inserted={inserted}, skipped={skipped}, "
-            f"duplicate_rows_dropped={duplicate_rows_dropped}, skipped_existing={skipped_existing}"
+            f"duplicate_rows_dropped={duplicate_rows_dropped}, updated_existing={updated_existing}"
         )
     finally:
         conn.close()
