@@ -104,6 +104,137 @@ def geocode_address(address):
 print(geocode_address("3900 Kimble Rd Baltimore MD"))
 
 
+def ingest_dv_csv_one_time(csv_file_name="dv_pdf_records.csv"):
+    """
+    One-time ingest for DV CSV files that:
+      1) stores display columns in search.dv_pdf_records
+      2) stores the full original CSV row JSON in SQL (source_row_json)
+    """
+    csv_path = os.path.join(os.path.dirname(__file__), csv_file_name)
+    if not os.path.exists(csv_path):
+        raise FileNotFoundError(f"CSV not found: {csv_path}")
+
+    df = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
+    normalized_cols = {str(c).strip().lower(): c for c in df.columns}
+
+    def col(*candidates):
+        for c in candidates:
+            hit = normalized_cols.get(str(c).strip().lower())
+            if hit:
+                return hit
+        return None
+
+    case_col = col("Case Number", "case_number", "Warrant Case Number", "orderID and Version", "ObjectID")
+    respondent_col = col("Respondent Name", "respondent_name", "Name")
+    issue_col = col("Date Order was Issued", "Issue Date", "issue_date", "Issue Date Update")
+    type_col = col("Order Type", "type", "CourtType", "Order Classification")
+    pdf_col = col("pdf_download", "PDF Download")
+
+    if not case_col or not respondent_col:
+        raise ValueError(
+            "CSV must include case/respondent columns (e.g. 'Case Number' and 'Respondent Name')."
+        )
+
+    conn = get_conn()
+    inserted = 0
+    skipped = 0
+    reissues = 0
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT 1
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = 'search' AND TABLE_NAME = 'dv_pdf_records'
+            """
+        )
+        if cur.fetchone() is None:
+            raise RuntimeError("SQL table search.dv_pdf_records does not exist.")
+
+        cur.execute(
+            """
+            IF COL_LENGTH('search.dv_pdf_records', 'source_row_json') IS NULL
+                ALTER TABLE search.dv_pdf_records ADD source_row_json NVARCHAR(MAX) NULL;
+            IF COL_LENGTH('search.dv_pdf_records', 'source_csv_name') IS NULL
+                ALTER TABLE search.dv_pdf_records ADD source_csv_name NVARCHAR(260) NULL;
+            """
+        )
+
+        cur.execute(
+            """
+            SELECT
+                LOWER(LTRIM(RTRIM(case_number))) AS case_number_norm,
+                LOWER(LTRIM(RTRIM(respondent_name))) AS respondent_name_norm
+            FROM search.dv_pdf_records
+            WHERE is_reissue = 0
+            """
+        )
+        existing_non_reissues = {(r[0] or "", r[1] or "") for r in cur.fetchall()}
+
+        for _, row in df.iterrows():
+            case_number = str(row.get(case_col, "")).strip()
+            respondent_name = str(row.get(respondent_col, "")).strip()
+            if not case_number or not respondent_name:
+                skipped += 1
+                continue
+
+            issue_text = str(row.get(issue_col, "")).strip() if issue_col else ""
+            issue_date = pd.to_datetime(issue_text, errors="coerce")
+            issue_date_value = None if pd.isna(issue_date) else issue_date.strftime("%Y-%m-%d")
+
+            order_type = str(row.get(type_col, "")).strip() if type_col else ""
+            pdf_download = str(row.get(pdf_col, "")).strip() if pdf_col else ""
+            blob_name = pdf_download.replace("/dv-pdf/file/", "", 1).strip("/")
+
+            dup_key = (case_number.lower(), respondent_name.lower())
+            is_reissue = 1 if dup_key in existing_non_reissues else 0
+            if is_reissue:
+                reissues += 1
+            else:
+                existing_non_reissues.add(dup_key)
+
+            source_row_json = json.dumps(row.to_dict(), ensure_ascii=False, default=str)
+
+            cur.execute(
+                """
+                INSERT INTO search.dv_pdf_records
+                    (
+                        case_number,
+                        respondent_name,
+                        issue_date,
+                        order_type,
+                        blob_name,
+                        pdf_download,
+                        uploaded_at,
+                        is_reissue,
+                        source_row_json,
+                        source_csv_name
+                    )
+                VALUES (?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), ?, CAST(? AS NVARCHAR(4000)), CAST(? AS NVARCHAR(260)))
+                """,
+                case_number,
+                respondent_name,
+                issue_date_value,
+                order_type,
+                blob_name,
+                pdf_download,
+                is_reissue,
+                source_row_json,
+                os.path.basename(csv_path),
+            )
+            inserted += 1
+
+        conn.commit()
+        print(
+            f"DV one-time ingest complete for {os.path.basename(csv_path)}: "
+            f"inserted={inserted}, skipped={skipped}, reissues={reissues}"
+        )
+    finally:
+        conn.close()
+
+
 def insert_search_record_warrants(cursor, record):
     
     sql = """
