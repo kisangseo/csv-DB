@@ -182,7 +182,7 @@ def ingest_dv_csv_one_time(csv_file_name="dv_pdf_records.csv"):
 
             issue_text = str(row.get(issue_col, "")).strip() if issue_col else ""
             issue_date = pd.to_datetime(issue_text, errors="coerce")
-            issue_date_value = None if pd.isna(issue_date) else issue_date.date()
+            issue_date_value = None if pd.isna(issue_date) else issue_date.strftime("%Y-%m-%d")
 
             order_type = str(row.get(type_col, "")).strip() if type_col else ""
             pdf_download = str(row.get(pdf_col, "")).strip() if pdf_col else ""
@@ -212,7 +212,7 @@ def ingest_dv_csv_one_time(csv_file_name="dv_pdf_records.csv"):
                         source_row_json,
                         source_csv_name
                     )
-                VALUES (?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), ?, CAST(? AS NVARCHAR(4000)), CAST(? AS NVARCHAR(260)))
                 """,
                 case_number,
                 respondent_name,
