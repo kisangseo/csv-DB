@@ -114,6 +114,77 @@ def geocode_address(address, city=None, state=None, postal_code=None):
 
     return None, None
 
+
+def geocode_postal_code(address, city=None, state=None):
+    if not address:
+        return None
+
+    address_text = str(address).strip().strip('"').strip("'")
+    city_text = str(city or "").strip()
+    state_text = str(state or "").strip()
+
+    query_parts = [address_text]
+    if city_text:
+        query_parts.append(city_text)
+    if state_text:
+        query_parts.append(state_text)
+    query = ", ".join([part for part in query_parts if part])
+
+    url = "https://atlas.microsoft.com/search/address/json"
+    key = os.getenv("AZURE_MAPS_KEY")
+    if not key:
+        print("ERROR: AZURE_MAPS_KEY is missing")
+        return None
+
+    try:
+        params = {
+            "api-version": "1.0",
+            "subscription-key": key,
+            "query": query,
+            "countrySet": "US",
+            "limit": 5,
+        }
+        r = requests.get(url, params=params, timeout=5)
+        if r.status_code != 200:
+            print("GEOCODE ZIP ERROR:", r.text[:300])
+            return None
+
+        data = r.json()
+        results = data.get("results") or []
+        if not results:
+            return None
+
+        state_norm = state_text.upper()
+        city_norm = city_text.upper()
+
+        def _is_md(addr):
+            state_code = str(addr.get("countrySubdivisionCode") or "").upper()
+            state_name = str(addr.get("countrySubdivision") or "").upper()
+            return state_code in {"MD", "US-MD"} or "MARYLAND" in state_name
+
+        def _score(result):
+            addr = result.get("address") or {}
+            score = float(result.get("score") or 0.0)
+            if _is_md(addr):
+                score += 25
+            if state_norm:
+                addr_state_code = str(addr.get("countrySubdivisionCode") or "").upper()
+                addr_state_name = str(addr.get("countrySubdivision") or "").upper()
+                if state_norm in {addr_state_code, addr_state_name, f"US-{state_norm}"}:
+                    score += 15
+            if city_norm:
+                addr_city = str(addr.get("municipality") or addr.get("localName") or "").upper()
+                if addr_city and addr_city == city_norm:
+                    score += 15
+            return score
+
+        best = max(results, key=_score)
+        addr = best.get("address") or {}
+        return _normalize_postal_code(addr.get("postalCode"))
+    except Exception as exc:
+        print("GEOCODE ZIP EXCEPTION:", str(exc))
+        return None
+
 print(geocode_address("3900 Kimble Rd Baltimore MD"))
 
 
@@ -1314,6 +1385,127 @@ def backfill_landlord_tenant_postal_code():
         conn.close()
 
 
+def backfill_landlord_tenant_postal_code_from_latest_blob(
+    container_name="fscsv",
+    blob_name=LATEST_LT_WITH_APT_BLOB_NAME,
+):
+    try:
+        df = read_csv_from_blob(container_name, blob_name)
+    except Exception as exc:
+        print(f"Unable to read {blob_name} for postal backfill: {exc}")
+        return
+
+    key_to_zip = {}
+    for _, row in df.iterrows():
+        zip5 = _normalize_postal_code(_pick_row_value(row, "TenantZip", "postal_code", "Zip", "ZipCode"))
+        if not zip5:
+            continue
+        event_date = safe_sql_date(_pick_row_value(row, "EventDate", "intake_date"))
+        case_number = _pick_row_value(row, "CaseNum", "CaseNumber", "case_number")
+        full_name = _pick_row_value(row, "Defendant", "DefendantName", "full_name")
+        key = _odyssey_dedupe_key(event_date, case_number, full_name)
+        if key not in key_to_zip:
+            key_to_zip[key] = zip5
+
+    if not key_to_zip:
+        print(f"No usable TenantZip values found in {blob_name}; skipping blob-based postal backfill.")
+        return
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT record_id, intake_date, case_number, full_name
+            FROM search.records
+            WHERE LOWER(LTRIM(RTRIM(department))) = 'field services department'
+              AND (
+                    postal_code IS NULL
+                    OR LTRIM(RTRIM(CAST(postal_code AS NVARCHAR(20)))) = ''
+              )
+        """)
+        rows = cursor.fetchall()
+
+        updated = 0
+        for record_id, intake_date, case_number, full_name in rows:
+            key = _odyssey_dedupe_key(intake_date, case_number, full_name)
+            zip5 = key_to_zip.get(key)
+            if not zip5:
+                continue
+            cursor.execute(
+                "UPDATE search.records SET postal_code = ? WHERE record_id = ?",
+                zip5,
+                record_id,
+            )
+            updated += 1
+            if updated % 500 == 0:
+                conn.commit()
+                print(f"Blob postal backfill updated {updated} rows...")
+
+        conn.commit()
+        print(f"Backfilled landlord/tenant postal_code from {blob_name} for {updated} rows.")
+    finally:
+        conn.close()
+
+
+def backfill_landlord_tenant_postal_code_from_geocode(limit=None):
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        top_clause = ""
+        if isinstance(limit, int) and limit > 0:
+            top_clause = f"TOP {limit}"
+
+        cursor.execute(f"""
+            SELECT {top_clause} record_id, address, city, state
+            FROM search.records
+            WHERE LOWER(LTRIM(RTRIM(department))) = 'field services department'
+              AND address IS NOT NULL
+              AND LTRIM(RTRIM(CAST(address AS NVARCHAR(500)))) <> ''
+              AND (
+                    postal_code IS NULL
+                    OR LTRIM(RTRIM(CAST(postal_code AS NVARCHAR(20)))) = ''
+              )
+            ORDER BY record_id
+        """)
+        rows = cursor.fetchall()
+
+        cache = {}
+        updated = 0
+        scanned = 0
+        for record_id, address, city, state in rows:
+            scanned += 1
+            address_text = str(address or "").strip()
+            city_text = str(city or "").strip()
+            state_text = str(state or "").strip()
+            if not address_text:
+                continue
+
+            cache_key = "|".join([address_text.lower(), city_text.lower(), state_text.lower()])
+            if cache_key in cache:
+                zip5 = cache[cache_key]
+            else:
+                zip5 = geocode_postal_code(address_text, city=city_text, state=state_text)
+                cache[cache_key] = zip5
+
+            if not zip5:
+                continue
+
+            cursor.execute(
+                "UPDATE search.records SET postal_code = ? WHERE record_id = ?",
+                zip5,
+                record_id,
+            )
+            updated += 1
+            if updated % 200 == 0:
+                conn.commit()
+                print(f"Geocode postal backfill updated {updated} rows (scanned {scanned})...")
+
+        conn.commit()
+        print(f"Backfilled landlord/tenant postal_code from geocode for {updated} rows (scanned {scanned}).")
+    finally:
+        conn.close()
+
+
 def backfill_bcso_active_warrants_xy():
     conn = get_conn()
     try:
@@ -1546,7 +1738,9 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
     finally:
         conn.close()
 
+    backfill_landlord_tenant_postal_code_from_latest_blob(container_name=container_name)
     backfill_landlord_tenant_postal_code()
+    backfill_landlord_tenant_postal_code_from_geocode()
     backfill_landlord_tenant_xy()
     build_latest_landlord_tenant_with_apt_blob(container_name)
 
