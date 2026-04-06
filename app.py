@@ -19,6 +19,7 @@ from azure.storage.blob import (
     BlobSasPermissions,
     ContentSettings,
     ContainerClient,
+    generate_blob_sas,
 )
 from db_connect import get_conn
 from search_sql import search_by_name, build_search_sql
@@ -326,7 +327,74 @@ def ensure_dv_pdf_storage():
             writer.writeheader()
 
 
+def _format_sql_date(value):
+    if not value:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%m/%d/%Y")
+    return str(value)
+
+
+def _format_sql_datetime(value):
+    if not value:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value)
+
+
+def _dv_pdf_table_exists(cur):
+    cur.execute(
+        """
+        SELECT 1
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = 'search' AND TABLE_NAME = 'dv_pdf_records'
+        """
+    )
+    return cur.fetchone() is not None
+
+
+def fetch_dv_pdf_records_from_sql():
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if not _dv_pdf_table_exists(cur):
+            return []
+        cur.execute(
+            """
+            SELECT
+                case_number,
+                respondent_name,
+                issue_date,
+                order_type,
+                pdf_download,
+                uploaded_at
+            FROM search.dv_pdf_records
+            ORDER BY uploaded_at DESC, id DESC
+            """
+        )
+        rows = []
+        for row in cur.fetchall():
+            rows.append(
+                {
+                    "case_number": (row.case_number or "").strip(),
+                    "respondent_name": (row.respondent_name or "").strip(),
+                    "issue_date": _format_sql_date(row.issue_date),
+                    "type": (row.order_type or "").strip(),
+                    "pdf_download": (row.pdf_download or "").strip(),
+                    "uploaded_at": _format_sql_datetime(row.uploaded_at),
+                }
+            )
+        return rows
+    finally:
+        conn.close()
+
+
 def read_dv_pdf_records():
+    sql_rows = fetch_dv_pdf_records_from_sql()
+    if sql_rows:
+        return sql_rows
+
     ensure_dv_pdf_storage()
     rows = []
     with open(DV_PDF_CSV_PATH, "r", newline="", encoding="utf-8") as f:
@@ -343,6 +411,157 @@ def append_dv_pdf_record(record):
             fieldnames=["case_number", "respondent_name", "issue_date", "type", "pdf_download", "uploaded_at"],
         )
         writer.writerow(record)
+
+
+def find_duplicate_dv_pdf_record(case_number, respondent_name):
+    normalized_case = (case_number or "").strip().lower()
+    normalized_name = (respondent_name or "").strip().lower()
+    if not normalized_case or not normalized_name:
+        return None
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if _dv_pdf_table_exists(cur):
+            cur.execute(
+                """
+                SELECT TOP 1
+                    case_number,
+                    respondent_name,
+                    issue_date,
+                    order_type,
+                    pdf_download,
+                    uploaded_at
+                FROM search.dv_pdf_records
+                WHERE LOWER(LTRIM(RTRIM(case_number))) = LOWER(LTRIM(RTRIM(?)))
+                  AND LOWER(LTRIM(RTRIM(respondent_name))) = LOWER(LTRIM(RTRIM(?)))
+                  AND is_reissue = 0
+                ORDER BY uploaded_at DESC, id DESC
+                """,
+                case_number,
+                respondent_name,
+            )
+            row = cur.fetchone()
+            if row:
+                return {
+                    "case_number": (row.case_number or "").strip(),
+                    "respondent_name": (row.respondent_name or "").strip(),
+                    "issue_date": _format_sql_date(row.issue_date),
+                    "type": (row.order_type or "").strip(),
+                    "pdf_download": (row.pdf_download or "").strip(),
+                    "uploaded_at": _format_sql_datetime(row.uploaded_at),
+                }
+    finally:
+        conn.close()
+
+    for row in read_dv_pdf_records():
+        row_case = (row.get("case_number") or "").strip().lower()
+        row_name = (row.get("respondent_name") or "").strip().lower()
+        if row_case == normalized_case and row_name == normalized_name:
+            return row
+    return None
+
+
+def insert_dv_pdf_record_in_sql(record, is_reissue):
+    issue_date = (record.get("issue_date") or "").strip()
+    issue_date_value = None
+    if issue_date:
+        try:
+            issue_date_value = datetime.strptime(issue_date, "%m/%d/%Y").date()
+        except ValueError:
+            issue_date_value = None
+
+    uploaded_at = (record.get("uploaded_at") or "").strip()
+    uploaded_at_value = None
+    if uploaded_at:
+        try:
+            uploaded_at_value = datetime.strptime(uploaded_at, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            uploaded_at_value = None
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if not _dv_pdf_table_exists(cur):
+            raise RuntimeError("SQL table search.dv_pdf_records does not exist.")
+        if uploaded_at_value is None:
+            cur.execute(
+                """
+                INSERT INTO search.dv_pdf_records
+                    (case_number, respondent_name, issue_date, order_type, blob_name, pdf_download, uploaded_at, is_reissue)
+                VALUES (?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), ?)
+                """,
+                record.get("case_number", ""),
+                record.get("respondent_name", ""),
+                issue_date_value,
+                record.get("type", ""),
+                (record.get("pdf_download") or "").replace("/dv-pdf/file/", "", 1),
+                record.get("pdf_download", ""),
+                1 if is_reissue else 0,
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO search.dv_pdf_records
+                    (case_number, respondent_name, issue_date, order_type, blob_name, pdf_download, uploaded_at, is_reissue)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                record.get("case_number", ""),
+                record.get("respondent_name", ""),
+                issue_date_value,
+                record.get("type", ""),
+                (record.get("pdf_download") or "").replace("/dv-pdf/file/", "", 1),
+                record.get("pdf_download", ""),
+                uploaded_at_value.strftime("%Y-%m-%d %H:%M:%S"),
+                1 if is_reissue else 0,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def build_dv_pdf_csv_bytes(records):
+    buffer = io.StringIO()
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=["case_number", "respondent_name", "issue_date", "type", "pdf_download", "uploaded_at"],
+    )
+    writer.writeheader()
+    for row in records:
+        writer.writerow(
+            {
+                "case_number": row.get("case_number", ""),
+                "respondent_name": row.get("respondent_name", ""),
+                "issue_date": row.get("issue_date", ""),
+                "type": row.get("type", ""),
+                "pdf_download": row.get("pdf_download", ""),
+                "uploaded_at": row.get("uploaded_at", ""),
+            }
+        )
+    return buffer.getvalue().encode("utf-8")
+
+
+def sync_dv_pdf_csv_to_local_and_blob():
+    records = fetch_dv_pdf_records_from_sql()
+    if not records:
+        return
+
+    ensure_dv_pdf_storage()
+    with open(DV_PDF_CSV_PATH, "wb") as f:
+        f.write(build_dv_pdf_csv_bytes(records))
+
+    if CONNECTION_STRING:
+        container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
+        try:
+            container.create_container()
+        except Exception:
+            pass
+        blob = container.get_blob_client(DV_PDF_CSV_BLOB_NAME)
+        blob.upload_blob(
+            build_dv_pdf_csv_bytes(records),
+            overwrite=True,
+            content_settings=ContentSettings(content_type="text/csv"),
+        )
 
 
 def extract_text_with_doc_intelligence(pdf_path):
@@ -439,7 +658,6 @@ def upload_pdf_to_blob_and_get_sas_url(pdf_path):
     except Exception:
         pass
 
-    container = ContainerClient.from_container_url(container_sas_url)
     blob = container.get_blob_client(blob_name)
     with open(pdf_path, "rb") as f:
         blob.upload_blob(
@@ -813,6 +1031,12 @@ DV_PDF_CSV_PATH = os.path.join("static", "uploads", "dv_pdf_records.csv")
 DV_PDF_BLOB_CONTAINER = os.environ.get("DV_PDF_BLOB_CONTAINER", "dvcsv").strip() or "dvcsv"
 DV_PDF_BLOB_PREFIX = os.environ.get("DV_PDF_BLOB_PREFIX", "dv_pdf").strip().strip("/") or "dv_pdf"
 DV_PDF_BLOB_SAS_MINUTES = int(os.environ.get("DV_PDF_BLOB_SAS_MINUTES", "30"))
+DV_PDF_CSV_BLOB_NAME = (
+    os.environ.get("DV_PDF_CSV_BLOB_NAME", f"{EXPORTS_BLOB_PREFIX}/dv_pdf_records.csv")
+    .strip()
+    .strip("/")
+    or f"{EXPORTS_BLOB_PREFIX}/dv_pdf_records.csv"
+)
 ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
 
 
@@ -1204,8 +1428,22 @@ def upload_dv_pdf():
         "pdf_download": f"/dv-pdf/file/{extracted.get('blob_name', '')}",
         "uploaded_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
     }
-    append_dv_pdf_record(record)
-    return jsonify({"status": "success", "record": record})
+
+    wants_reissue = (request.form.get("add_as_reissue") or "").strip().lower() in {"1", "true", "yes"}
+    duplicate = find_duplicate_dv_pdf_record(record["case_number"], record["respondent_name"])
+    if duplicate and not wants_reissue:
+        return jsonify({
+            "status": "duplicate",
+            "error": "Duplicate DV PDF detected (same case number and respondent name). Add as reissue?",
+            "requires_confirmation": True,
+            "existing_record": duplicate,
+            "candidate_record": record,
+        }), 409
+
+    is_reissue = bool(duplicate)
+    insert_dv_pdf_record_in_sql(record, is_reissue=is_reissue)
+    sync_dv_pdf_csv_to_local_and_blob()
+    return jsonify({"status": "success", "record": record, "is_reissue": bool(duplicate)})
 
 
 def get_dv_pdf_blob_client(blob_name):
@@ -1248,6 +1486,22 @@ def download_dv_pdf_file(blob_name):
 def download_dv_pdf_csv():
     if "user_id" not in session:
         return redirect("/login")
+    try:
+        if CONNECTION_STRING:
+            container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
+            blob = container.get_blob_client(DV_PDF_CSV_BLOB_NAME)
+            if blob.exists():
+                data = blob.download_blob().readall()
+                return send_file(
+                    io.BytesIO(data),
+                    mimetype="text/csv",
+                    as_attachment=True,
+                    download_name="dv_pdf_records.csv",
+                )
+    except Exception:
+        pass
+
+    sync_dv_pdf_csv_to_local_and_blob()
     ensure_dv_pdf_storage()
     return send_file(
         DV_PDF_CSV_PATH,
