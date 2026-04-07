@@ -387,6 +387,7 @@ def fetch_dv_pdf_records_from_sql():
         cur.execute(
             f"""
             SELECT
+                id,
                 case_number,
                 respondent_name,
                 issue_date,
@@ -406,6 +407,7 @@ def fetch_dv_pdf_records_from_sql():
                 {
                     "case_number": (row.case_number or "").strip(),
                     "respondent_name": (row.respondent_name or "").strip(),
+                    "record_id": row.id,
                     "issue_date": _format_sql_date(row.issue_date),
                     "reverse_geocode_output": (row.reverse_geocode_output or "").strip(),
                     "order_type": (row.order_type or "").strip(),
@@ -1704,6 +1706,72 @@ def update_record(record_id):
         cur.execute(
             f"UPDATE search.records SET {', '.join(set_parts)} WHERE record_id = ?",
             tuple(values)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"status": "success"})
+
+
+@app.route("/dv-pdf/records/<int:record_id>", methods=["PATCH"])
+def update_dv_pdf_record(record_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    if not can_edit_records():
+        return jsonify({"error": "You do not have permission to edit records"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    updates = payload.get("fields") or {}
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if not _dv_pdf_table_exists(cur):
+            return jsonify({"error": "DV PDF table does not exist"}), 404
+        _ensure_dv_pdf_optional_columns(cur)
+
+        cur.execute("SELECT id FROM search.dv_pdf_records WHERE id = ?", record_id)
+        existing = cur.fetchone()
+        if not existing:
+            return jsonify({"error": "Record not found"}), 404
+
+        set_parts = []
+        values = []
+
+        if "case_number" in updates:
+            set_parts.append("case_number = ?")
+            values.append(str(updates.get("case_number") or "").strip())
+
+        if "respondent_name" in updates:
+            set_parts.append("respondent_name = ?")
+            values.append(str(updates.get("respondent_name") or "").strip())
+
+        if "issue_date" in updates:
+            issue_text = str(updates.get("issue_date") or "").strip()
+            parsed = pd.to_datetime(issue_text, errors="coerce")
+            values.append(None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d"))
+            set_parts.append("issue_date = ?")
+
+        if "order_type" in updates:
+            set_parts.append("order_type = ?")
+            values.append(str(updates.get("order_type") or "").strip())
+
+        if "reverse_geocode_output" in updates and _dv_pdf_column_exists(cur, "csv_reverse_geocode_output"):
+            set_parts.append("csv_reverse_geocode_output = ?")
+            values.append(str(updates.get("reverse_geocode_output") or "").strip())
+
+        if "order_disposition" in updates and _dv_pdf_column_exists(cur, "csv_order_disposition"):
+            set_parts.append("csv_order_disposition = ?")
+            values.append(str(updates.get("order_disposition") or "").strip())
+
+        if not set_parts:
+            return jsonify({"error": "No valid DV PDF fields provided"}), 400
+
+        values.append(record_id)
+        cur.execute(
+            f"UPDATE search.dv_pdf_records SET {', '.join(set_parts)} WHERE id = ?",
+            tuple(values),
         )
         conn.commit()
     finally:
