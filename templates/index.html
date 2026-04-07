@@ -689,7 +689,9 @@
         if (dept.toLowerCase() === "dv pdf") {
           if (headerLabel === "Respondent Name") return row.respondent_name || "";
           if (headerLabel === "Issue Date") return row.issue_date || "";
-          if (headerLabel === "Type") return row.type || "";
+          if (headerLabel === "Respondent Address") return row.reverse_geocode_output || "";
+          if (headerLabel === "Order Type") return row.order_type || row.type || "";
+          if (headerLabel === "Order Disposition") return row.order_disposition || "";
         }
         if (headerLabel === "Address") {
           if (dataHeaders.includes("City/State")) return row.address || "";
@@ -1161,7 +1163,7 @@
             } else if (dept.toLowerCase() === "field services department") {
               headers = ["Name","Case Number","Address","City/State","APT/Unit","Event Type","Event Date","Case Type"];
             } else if (dept.toLowerCase() === "dv pdf") {
-              headers = ["Case Number","Respondent Name","Issue Date","Type","PDF Download"];
+              headers = ["Case Number","Respondent Name","Issue Date","Respondent Address","Order Type","Order Disposition"];
             } else if (dept.toLowerCase() === "civil papers") {
               headers = ["Intake Date","Case Number","Court Document Type","Court Issued Date","Tenant, Defendant, or Respondent Name","Tenant, Defendant or Respondent Address","Petitioner or Plaintiff Name","Administrative Status","Served By","Comments"];
             } else {
@@ -1211,7 +1213,88 @@
               const isDvPdf = deptKey === "dv pdf";
 
               if (isDvPdf) {
-                actionsTd.textContent = "—";
+                const editBtn = document.createElement("button");
+                editBtn.type = "button";
+                editBtn.textContent = "Edit";
+                editBtn.className = "table-action-btn";
+
+                const cancelBtn = document.createElement("button");
+                cancelBtn.type = "button";
+                cancelBtn.textContent = "Cancel";
+                cancelBtn.className = "table-action-btn danger-btn";
+                cancelBtn.style.display = "none";
+
+                const mapHeaderToField = (headerLabel) => {
+                  if (headerLabel === "Case Number") return "case_number";
+                  if (headerLabel === "Respondent Name") return "respondent_name";
+                  if (headerLabel === "Issue Date") return "issue_date";
+                  if (headerLabel === "Respondent Address") return "reverse_geocode_output";
+                  if (headerLabel === "Order Type") return "order_type";
+                  if (headerLabel === "Order Disposition") return "order_disposition";
+                  return null;
+                };
+
+                editBtn.addEventListener("click", async () => {
+                  if (!CAN_EDIT) {
+                    alert("You do not have permission to edit records.");
+                    return;
+                  }
+
+                  const isEditing = actionsTd.dataset.editing === "true";
+                  if (!isEditing) {
+                    dataHeaders.forEach((headerLabel, index) => {
+                      const key = mapHeaderToField(headerLabel);
+                      if (!key) return;
+                      const td = tr.children[index];
+                      const input = document.createElement("input");
+                      input.type = "text";
+                      input.value = row[key] || "";
+                      input.dataset.dvField = key;
+                      td.innerHTML = "";
+                      td.appendChild(input);
+                    });
+                    actionsTd.dataset.editing = "true";
+                    editBtn.textContent = "Save";
+                    cancelBtn.style.display = "inline-block";
+                    return;
+                  }
+
+                  const fields = {};
+                  tr.querySelectorAll("input[data-dv-field]").forEach((input) => {
+                    fields[input.dataset.dvField] = input.value.trim();
+                  });
+
+                  const response = await fetch(`${window.location.origin}/dv-pdf/records/${row.record_id}`, {
+                    method: "PATCH",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({fields})
+                  });
+                  if (!response.ok) {
+                    let errText = "Unable to save DV record.";
+                    try {
+                      const err = await response.json();
+                      errText = err.error || errText;
+                    } catch (_) {}
+                    alert(errText);
+                    return;
+                  }
+
+                  Object.keys(fields).forEach((k) => { row[k] = fields[k]; });
+                  updateRenderedRowCells(tr, row, dataHeaders, dept);
+                  actionsTd.dataset.editing = "";
+                  editBtn.textContent = "Edit";
+                  cancelBtn.style.display = "none";
+                });
+
+                cancelBtn.addEventListener("click", () => {
+                  updateRenderedRowCells(tr, row, dataHeaders, dept);
+                  actionsTd.dataset.editing = "";
+                  editBtn.textContent = "Edit";
+                  cancelBtn.style.display = "none";
+                });
+
+                actionsTd.appendChild(editBtn);
+                actionsTd.appendChild(cancelBtn);
               } else if (isActionableDept) {
                 const editBtn = document.createElement("button");
                 editBtn.type = "button";

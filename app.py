@@ -354,19 +354,47 @@ def _dv_pdf_table_exists(cur):
     return cur.fetchone() is not None
 
 
+def _ensure_dv_pdf_optional_columns(cur):
+    cur.execute(
+        """
+        IF COL_LENGTH('search.dv_pdf_records', 'order_status') IS NULL
+            ALTER TABLE search.dv_pdf_records ADD order_status NVARCHAR(255) NULL;
+        """
+    )
+
+
+def _dv_pdf_column_exists(cur, column_name):
+    cur.execute("SELECT COL_LENGTH('search.dv_pdf_records', ?) AS len_val", column_name)
+    row = cur.fetchone()
+    return row is not None and row[0] is not None
+
+
 def fetch_dv_pdf_records_from_sql():
     conn = get_conn()
     try:
         cur = conn.cursor()
         if not _dv_pdf_table_exists(cur):
             return []
+        _ensure_dv_pdf_optional_columns(cur)
+        reverse_geocode_expr = "'' AS reverse_geocode_output"
+        if _dv_pdf_column_exists(cur, "csv_reverse_geocode_output"):
+            reverse_geocode_expr = "csv_reverse_geocode_output AS reverse_geocode_output"
+
+        order_disposition_expr = "'' AS order_disposition"
+        if _dv_pdf_column_exists(cur, "csv_order_disposition"):
+            order_disposition_expr = "csv_order_disposition AS order_disposition"
+
         cur.execute(
-            """
+            f"""
             SELECT
+                id,
                 case_number,
                 respondent_name,
                 issue_date,
+                {reverse_geocode_expr},
                 order_type,
+                {order_disposition_expr},
+                order_status,
                 pdf_download,
                 uploaded_at
             FROM search.dv_pdf_records
@@ -379,7 +407,12 @@ def fetch_dv_pdf_records_from_sql():
                 {
                     "case_number": (row.case_number or "").strip(),
                     "respondent_name": (row.respondent_name or "").strip(),
+                    "record_id": row.id,
                     "issue_date": _format_sql_date(row.issue_date),
+                    "reverse_geocode_output": (row.reverse_geocode_output or "").strip(),
+                    "order_type": (row.order_type or "").strip(),
+                    "order_disposition": (row.order_disposition or "").strip(),
+                    "order_status": (row.order_status or "").strip(),
                     "type": (row.order_type or "").strip(),
                     "pdf_download": (row.pdf_download or "").strip(),
                     "uploaded_at": _format_sql_datetime(row.uploaded_at),
@@ -423,13 +456,24 @@ def find_duplicate_dv_pdf_record(case_number, respondent_name):
     try:
         cur = conn.cursor()
         if _dv_pdf_table_exists(cur):
+            _ensure_dv_pdf_optional_columns(cur)
+            reverse_geocode_expr = "'' AS reverse_geocode_output"
+            if _dv_pdf_column_exists(cur, "csv_reverse_geocode_output"):
+                reverse_geocode_expr = "csv_reverse_geocode_output AS reverse_geocode_output"
+
+            order_disposition_expr = "'' AS order_disposition"
+            if _dv_pdf_column_exists(cur, "csv_order_disposition"):
+                order_disposition_expr = "csv_order_disposition AS order_disposition"
             cur.execute(
-                """
+                f"""
                 SELECT TOP 1
                     case_number,
                     respondent_name,
                     issue_date,
+                    {reverse_geocode_expr},
                     order_type,
+                    {order_disposition_expr},
+                    order_status,
                     pdf_download,
                     uploaded_at
                 FROM search.dv_pdf_records
@@ -447,6 +491,10 @@ def find_duplicate_dv_pdf_record(case_number, respondent_name):
                     "case_number": (row.case_number or "").strip(),
                     "respondent_name": (row.respondent_name or "").strip(),
                     "issue_date": _format_sql_date(row.issue_date),
+                    "reverse_geocode_output": (row.reverse_geocode_output or "").strip(),
+                    "order_type": (row.order_type or "").strip(),
+                    "order_disposition": (row.order_disposition or "").strip(),
+                    "order_status": (row.order_status or "").strip(),
                     "type": (row.order_type or "").strip(),
                     "pdf_download": (row.pdf_download or "").strip(),
                     "uploaded_at": _format_sql_datetime(row.uploaded_at),
@@ -484,17 +532,19 @@ def insert_dv_pdf_record_in_sql(record, is_reissue):
         cur = conn.cursor()
         if not _dv_pdf_table_exists(cur):
             raise RuntimeError("SQL table search.dv_pdf_records does not exist.")
+        _ensure_dv_pdf_optional_columns(cur)
         if uploaded_at_value is None:
             cur.execute(
                 """
                 INSERT INTO search.dv_pdf_records
-                    (case_number, respondent_name, issue_date, order_type, blob_name, pdf_download, uploaded_at, is_reissue)
-                VALUES (?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), ?)
+                    (case_number, respondent_name, issue_date, order_type, order_status, blob_name, pdf_download, uploaded_at, is_reissue)
+                VALUES (?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), ?)
                 """,
                 record.get("case_number", ""),
                 record.get("respondent_name", ""),
                 issue_date_value,
-                record.get("type", ""),
+                record.get("order_type", record.get("type", "")),
+                record.get("order_status", ""),
                 (record.get("pdf_download") or "").replace("/dv-pdf/file/", "", 1),
                 record.get("pdf_download", ""),
                 1 if is_reissue else 0,
@@ -503,13 +553,14 @@ def insert_dv_pdf_record_in_sql(record, is_reissue):
             cur.execute(
                 """
                 INSERT INTO search.dv_pdf_records
-                    (case_number, respondent_name, issue_date, order_type, blob_name, pdf_download, uploaded_at, is_reissue)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (case_number, respondent_name, issue_date, order_type, order_status, blob_name, pdf_download, uploaded_at, is_reissue)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 record.get("case_number", ""),
                 record.get("respondent_name", ""),
                 issue_date_value,
-                record.get("type", ""),
+                record.get("order_type", record.get("type", "")),
+                record.get("order_status", ""),
                 (record.get("pdf_download") or "").replace("/dv-pdf/file/", "", 1),
                 record.get("pdf_download", ""),
                 uploaded_at_value.strftime("%Y-%m-%d %H:%M:%S"),
@@ -524,7 +575,17 @@ def build_dv_pdf_csv_bytes(records):
     buffer = io.StringIO()
     writer = csv.DictWriter(
         buffer,
-        fieldnames=["case_number", "respondent_name", "issue_date", "type", "pdf_download", "uploaded_at"],
+        fieldnames=[
+            "case_number",
+            "respondent_name",
+            "issue_date",
+            "reverse_geocode_output",
+            "order_type",
+            "order_disposition",
+            "order_status",
+            "pdf_download",
+            "uploaded_at",
+        ],
     )
     writer.writeheader()
     for row in records:
@@ -533,7 +594,10 @@ def build_dv_pdf_csv_bytes(records):
                 "case_number": row.get("case_number", ""),
                 "respondent_name": row.get("respondent_name", ""),
                 "issue_date": row.get("issue_date", ""),
-                "type": row.get("type", ""),
+                "reverse_geocode_output": row.get("reverse_geocode_output", ""),
+                "order_type": row.get("order_type", row.get("type", "")),
+                "order_disposition": row.get("order_disposition", ""),
+                "order_status": row.get("order_status", ""),
                 "pdf_download": row.get("pdf_download", ""),
                 "uploaded_at": row.get("uploaded_at", ""),
             }
@@ -1642,6 +1706,72 @@ def update_record(record_id):
         cur.execute(
             f"UPDATE search.records SET {', '.join(set_parts)} WHERE record_id = ?",
             tuple(values)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"status": "success"})
+
+
+@app.route("/dv-pdf/records/<int:record_id>", methods=["PATCH"])
+def update_dv_pdf_record(record_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    if not can_edit_records():
+        return jsonify({"error": "You do not have permission to edit records"}), 403
+
+    payload = request.get_json(silent=True) or {}
+    updates = payload.get("fields") or {}
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if not _dv_pdf_table_exists(cur):
+            return jsonify({"error": "DV PDF table does not exist"}), 404
+        _ensure_dv_pdf_optional_columns(cur)
+
+        cur.execute("SELECT id FROM search.dv_pdf_records WHERE id = ?", record_id)
+        existing = cur.fetchone()
+        if not existing:
+            return jsonify({"error": "Record not found"}), 404
+
+        set_parts = []
+        values = []
+
+        if "case_number" in updates:
+            set_parts.append("case_number = ?")
+            values.append(str(updates.get("case_number") or "").strip())
+
+        if "respondent_name" in updates:
+            set_parts.append("respondent_name = ?")
+            values.append(str(updates.get("respondent_name") or "").strip())
+
+        if "issue_date" in updates:
+            issue_text = str(updates.get("issue_date") or "").strip()
+            parsed = pd.to_datetime(issue_text, errors="coerce")
+            values.append(None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d"))
+            set_parts.append("issue_date = ?")
+
+        if "order_type" in updates:
+            set_parts.append("order_type = ?")
+            values.append(str(updates.get("order_type") or "").strip())
+
+        if "reverse_geocode_output" in updates and _dv_pdf_column_exists(cur, "csv_reverse_geocode_output"):
+            set_parts.append("csv_reverse_geocode_output = ?")
+            values.append(str(updates.get("reverse_geocode_output") or "").strip())
+
+        if "order_disposition" in updates and _dv_pdf_column_exists(cur, "csv_order_disposition"):
+            set_parts.append("csv_order_disposition = ?")
+            values.append(str(updates.get("order_disposition") or "").strip())
+
+        if not set_parts:
+            return jsonify({"error": "No valid DV PDF fields provided"}), 400
+
+        values.append(record_id)
+        cur.execute(
+            f"UPDATE search.dv_pdf_records SET {', '.join(set_parts)} WHERE id = ?",
+            tuple(values),
         )
         conn.commit()
     finally:
