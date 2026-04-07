@@ -381,8 +381,8 @@ def fetch_dv_pdf_records_from_sql():
             reverse_geocode_expr = "csv_reverse_geocode_output AS reverse_geocode_output"
 
         order_disposition_expr = "'' AS order_disposition"
-        if _dv_pdf_column_exists(cur, "csv_disposition_of_order"):
-            order_disposition_expr = "csv_disposition_of_order AS order_disposition"
+        if _dv_pdf_column_exists(cur, "csv_order_disposition"):
+            order_disposition_expr = "csv_order_disposition AS order_disposition"
 
         cur.execute(
             f"""
@@ -460,8 +460,8 @@ def find_duplicate_dv_pdf_record(case_number, respondent_name):
                 reverse_geocode_expr = "csv_reverse_geocode_output AS reverse_geocode_output"
 
             order_disposition_expr = "'' AS order_disposition"
-            if _dv_pdf_column_exists(cur, "csv_disposition_of_order"):
-                order_disposition_expr = "csv_disposition_of_order AS order_disposition"
+            if _dv_pdf_column_exists(cur, "csv_order_disposition"):
+                order_disposition_expr = "csv_order_disposition AS order_disposition"
             cur.execute(
                 f"""
                 SELECT TOP 1
