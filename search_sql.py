@@ -145,6 +145,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         address AS address,
         apt AS apt,
         city AS city,
+        postal_code AS postal_code,
         petitioner_name,
         global_id,
         served_by,
