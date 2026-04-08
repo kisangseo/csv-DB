@@ -1738,11 +1738,14 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
     finally:
         conn.close()
 
+    # Keep the "latest_landlord_tenant_with_apt.csv" blob fresh even when a
+    # later backfill step (for example geocoding) is slow or interrupted.
+    # This also ensures blob-based postal backfill reads the newest file.
+    build_latest_landlord_tenant_with_apt_blob(container_name)
     backfill_landlord_tenant_postal_code_from_latest_blob(container_name=container_name)
     backfill_landlord_tenant_postal_code()
     backfill_landlord_tenant_postal_code_from_geocode()
     backfill_landlord_tenant_xy()
-    build_latest_landlord_tenant_with_apt_blob(container_name)
 
 def ingest_population_from_table(table_name, display_department, source_file):
     """
