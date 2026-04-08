@@ -1660,46 +1660,38 @@ def esri_webhook():
             return None
 
     record = {
-        "department": "Civil Papers",
-        "source_file": "survey123",
+        "Doc": attrs.get("Doc"),
+        "type": attrs.get("type"),
+        "Type_of_RFS": attrs.get("Type of RFS"),
+        "Type_of_Child_Support": attrs.get("Type of Child Support"),
+        "doc_address": attrs.get("doc address"),
+        "unit": attrs.get("unit"),
+        "Resp_Name": attrs.get("Resp Name"),
+        "AgId": attrs.get("AgId"),
+        "Unit_ID": attrs.get("Unit ID"),
+        "return_Deputy": attrs.get("return Deputy"),
+        "return_Rank": attrs.get("return Rank"),
+        "return_Sequence": attrs.get("return Sequence"),
+        "return_email": attrs.get("return email"),
+        "Member_Reporting": attrs.get("Member Reporting"),
 
-        "global_id": attrs.get("globalid"),
-        "full_name": attrs.get("Tenant, Defendant, or Respondent"),
-        "case_number": attrs.get("Case Number"),
-        "court_document_type": attrs.get("Court Document Type"),
+        "Date_and_Time_Attempted": to_dt(attrs.get("Date and Time Attempted")),
+        "Service_Disp": attrs.get("Service Disp"),
+        "Prior_Attempt_Date_Admin": to_dt(attrs.get("Prior Attempt Date - Admin")),
+        "Prior_Attempt_Date": to_dt(attrs.get("Prior Attempt Date")),
+        "Location_of_Prior_Attempt": attrs.get("Location of Prior Attempt"),
+        "method_of_service": attrs.get("method of service"),
+        "Two_prior": attrs.get("Two prior: Yes"),
+        "Name_of_Adult": attrs.get("Name of Adult"),
+        "Relationship_to_Respondent": attrs.get("Relationship to Respondent"),
+        "Reason_for_Non_Est": attrs.get("Reason for Non Est"),
+        "reason_for_non_est_other": attrs.get("reason_for_non_est_other"),
+        "Notes_from_Attempt": attrs.get("Notes from Attempt"),
+        "Parent_Document": attrs.get("Parent Document"),
 
-        "issue_date": to_dt(attrs.get("Court Issued Date")),
-        "intake_date": to_dt(attrs.get("Intake Date")),
-
-        "address": attrs.get("Tenant, Defendant or Respondent Address"),
-        "petitioner_name": attrs.get("Petitioner or Plaintiff Name"),
-
-        "disposition": attrs.get("Administrative Status"),
-        "served_by": attrs.get("Served By"),
-        "notes": attrs.get("Comments"),
-
-        "service_days": attrs.get("Service Days"),
-        "expiration_date": to_dt(attrs.get("Expiration Date")),
-        "trial_date": to_dt(attrs.get("Trial Date")),
-        "payment_amount": attrs.get("Payment Amount"),
-
-        "area_number": attrs.get("Area Number"),
-        "post_number": attrs.get("Post Number"),
-
-        "administrative_status": attrs.get("Administrative Status"),
-        "service_method": attrs.get("Service Method"),
-        "scheduled_date": to_dt(attrs.get("Scheduled Date")),
-        "unable_to_serve_reason": attrs.get("Unable to Serve Reason"),
-
-        "attempt_1": to_dt(attrs.get("Attempt #1")),
-        "attempt_2": to_dt(attrs.get("Attempt #2")),
-        "attempt_3": to_dt(attrs.get("Attempt #3")),
-
-        "parcel_pin": attrs.get("Parcel PIN"),
-        "assigned_deputy": attrs.get("Assigned Deputy"),
-
-        "due_date": to_dt(attrs.get("Due Date")),
-        "date_time_served": to_dt(attrs.get("Date and Time Served")),
+        "Date_Received": to_dt(attrs.get("Date Received")),
+        "globalid": attrs.get("globalid"),
+        "objectid": attrs.get("objectid"),
     }
 
     conn = get_conn()
@@ -1711,7 +1703,7 @@ def esri_webhook():
     finally:
         conn.close()
 
-    return {"status": "ok"}
+    return jsonify({"status": "ok"})
 
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):

@@ -692,78 +692,111 @@ def insert_search_record_odyssey(cursor, record):
 def insert_search_record_civil_papers(cursor, record):
     
     sql = """
-        INSERT INTO search.records (
-            department,
-            source_file,
-            global_id,
-            full_name,
-            case_number,
-            court_document_type,
-            issue_date,
-            intake_date,
-            address,
-            petitioner_name,
-            disposition,
-            served_by,
-            notes,
-            service_days,
-            expiration_date,
-            trial_date,
-            payment_amount,
-            area_number,
-            post_number,
-            administrative_status,
-            service_method,
-            scheduled_date,
-            unable_to_serve_reason,
-            attempt_1,
-            attempt_2,
-            attempt_3,
-            parcel_pin,
-            assigned_deputy,
-            due_date,
-            date_time_served
-        )
-        OUTPUT INSERTED.record_id
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
+    INSERT INTO search.records (
+        department,
+        source_file,
+
+        case_number,
+        court_document_type,
+
+        type_of_rfs,
+        type_of_child_support,
+
+        doc_address,
+        unit,
+
+        resp_name,
+        agid,
+        unit_id,
+
+        return_deputy,
+        return_rank,
+        return_sequence,
+        return_email,
+
+        member_reporting,
+
+        date_time_attempted,
+        service_disp,
+
+        prior_attempt_date_admin,
+        prior_attempt_date,
+        location_of_prior_attempt,
+
+        method_of_service,
+
+        two_prior,
+        name_of_adult,
+        relationship_to_respondent,
+
+        reason_for_non_est,
+        reason_for_non_est_other,
+
+        notes_from_attempt,
+
+        parent_document,
+
+        date_received,
+
+        globalid,
+        objectid
+    )
+    OUTPUT INSERTED.record_id
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
 
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
 
     values = tuple(clean(v) for v in (
-        record.get("department"),
-        record.get("source_file"),
-        record.get("global_id"),
-        record.get("full_name"),
-        record.get("case_number"),
-        record.get("court_document_type"),
-        record.get("issue_date"),
-        record.get("intake_date"),
-        record.get("address"),
-        record.get("petitioner_name"),
-        record.get("disposition"),
-        record.get("served_by"),
-        record.get("notes"),
+    "Civil Papers",
+    "survey123",
 
-        record.get("service_days"),
-        record.get("expiration_date"),
-        record.get("trial_date"),
-        record.get("payment_amount"),
-        record.get("area_number"),
-        record.get("post_number"),
-        record.get("administrative_status"),
-        record.get("service_method"),
-        record.get("scheduled_date"),
-        record.get("unable_to_serve_reason"),
-        record.get("attempt_1"),
-        record.get("attempt_2"),
-        record.get("attempt_3"),
-        record.get("parcel_pin"),
-        record.get("assigned_deputy"),
-        record.get("due_date"),
-        record.get("date_time_served"),
-    ))
+    record.get("Doc"),
+    record.get("type"),
+
+    record.get("Type of RFS"),
+    record.get("Type of Child Support"),
+
+    record.get("doc address"),
+    record.get("unit"),
+
+    record.get("Resp Name"),
+    record.get("AgId"),
+    record.get("Unit ID"),
+
+    record.get("return Deputy"),
+    record.get("return Rank"),
+    record.get("return Sequence"),
+    record.get("return email"),
+
+    record.get("Member Reporting"),
+
+    record.get("Date and Time Attempted"),
+    record.get("Service Disp"),
+
+    record.get("Prior Attempt Date - Admin"),
+    record.get("Prior Attempt Date"),
+    record.get("Location of Prior Attempt"),
+
+    record.get("method of service"),
+
+    record.get("Two prior: Yes"),
+    record.get("Name of Adult"),
+    record.get("Relationship to Respondent"),
+
+    record.get("Reason for Non Est"),
+    record.get("reason_for_non_est_other"),
+
+    record.get("Notes from Attempt"),
+
+    record.get("Parent Document"),
+
+    record.get("Date Received"),
+
+    record.get("globalid"),
+    record.get("objectid"),
+))
 
     cursor.execute(sql, *values)
     return cursor.fetchone()[0]
