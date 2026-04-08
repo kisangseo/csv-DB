@@ -1651,8 +1651,68 @@ def create_record():
 @app.route("/esri-webhook", methods=["POST"])
 def esri_webhook():
     data = request.json or {}
-    print("INCOMING:", data)
+    attrs = data.get("feature", {}).get("attributes", {})
+
+    def to_dt(ms):
+        try:
+            return datetime.utcfromtimestamp(int(ms) / 1000) if ms else None
+        except:
+            return None
+
+    record = {
+        "department": "Civil Papers",
+        "source_file": "survey123",
+
+        "global_id": attrs.get("globalid"),
+        "full_name": attrs.get("Tenant, Defendant, or Respondent"),
+        "case_number": attrs.get("Case Number"),
+        "court_document_type": attrs.get("Court Document Type"),
+
+        "issue_date": to_dt(attrs.get("Court Issued Date")),
+        "intake_date": to_dt(attrs.get("Intake Date")),
+
+        "address": attrs.get("Tenant, Defendant or Respondent Address"),
+        "petitioner_name": attrs.get("Petitioner or Plaintiff Name"),
+
+        "disposition": attrs.get("Administrative Status"),
+        "served_by": attrs.get("Served By"),
+        "notes": attrs.get("Comments"),
+
+        "service_days": attrs.get("Service Days"),
+        "expiration_date": to_dt(attrs.get("Expiration Date")),
+        "trial_date": to_dt(attrs.get("Trial Date")),
+        "payment_amount": attrs.get("Payment Amount"),
+
+        "area_number": attrs.get("Area Number"),
+        "post_number": attrs.get("Post Number"),
+
+        "administrative_status": attrs.get("Administrative Status"),
+        "service_method": attrs.get("Service Method"),
+        "scheduled_date": to_dt(attrs.get("Scheduled Date")),
+        "unable_to_serve_reason": attrs.get("Unable to Serve Reason"),
+
+        "attempt_1": to_dt(attrs.get("Attempt #1")),
+        "attempt_2": to_dt(attrs.get("Attempt #2")),
+        "attempt_3": to_dt(attrs.get("Attempt #3")),
+
+        "parcel_pin": attrs.get("Parcel PIN"),
+        "assigned_deputy": attrs.get("Assigned Deputy"),
+
+        "due_date": to_dt(attrs.get("Due Date")),
+        "date_time_served": to_dt(attrs.get("Date and Time Served")),
+    }
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        from ingest import insert_search_record_civil_papers
+        insert_search_record_civil_papers(cursor, record)
+        conn.commit()
+    finally:
+        conn.close()
+
     return {"status": "ok"}
+
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):
     if "user_id" not in session:
