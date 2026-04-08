@@ -804,6 +804,146 @@ def ensure_civil_papers_columns(cursor):
     """)
 
 
+def ensure_esri_webhook1_columns(cursor):
+    cursor.execute("""
+        IF COL_LENGTH('search.records', 're_issue') IS NULL
+            ALTER TABLE search.records ADD re_issue NVARCHAR(100) NULL;
+        IF COL_LENGTH('search.records', 'request_for_service_type') IS NULL
+            ALTER TABLE search.records ADD request_for_service_type NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'court_issued_date') IS NULL
+            ALTER TABLE search.records ADD court_issued_date DATETIME NULL;
+        IF COL_LENGTH('search.records', 'trial_date') IS NULL
+            ALTER TABLE search.records ADD trial_date DATETIME NULL;
+        IF COL_LENGTH('search.records', 'service_days') IS NULL
+            ALTER TABLE search.records ADD service_days INT NULL;
+        IF COL_LENGTH('search.records', 'expiration_date') IS NULL
+            ALTER TABLE search.records ADD expiration_date DATETIME NULL;
+        IF COL_LENGTH('search.records', 'check_or_money_order_number') IS NULL
+            ALTER TABLE search.records ADD check_or_money_order_number NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'payment_amount') IS NULL
+            ALTER TABLE search.records ADD payment_amount DECIMAL(18,2) NULL;
+        IF COL_LENGTH('search.records', 'tenant_defendant_or_respondent') IS NULL
+            ALTER TABLE search.records ADD tenant_defendant_or_respondent NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'tenant_defendant_or_respondent_address') IS NULL
+            ALTER TABLE search.records ADD tenant_defendant_or_respondent_address NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'apartment_unit_or_secondary_address') IS NULL
+            ALTER TABLE search.records ADD apartment_unit_or_secondary_address NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'area_number') IS NULL
+            ALTER TABLE search.records ADD area_number NVARCHAR(100) NULL;
+        IF COL_LENGTH('search.records', 'post_number') IS NULL
+            ALTER TABLE search.records ADD post_number NVARCHAR(100) NULL;
+        IF COL_LENGTH('search.records', 'petitioner_or_plaintiff_name') IS NULL
+            ALTER TABLE search.records ADD petitioner_or_plaintiff_name NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'petitioner_address') IS NULL
+            ALTER TABLE search.records ADD petitioner_address NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'administrative_status') IS NULL
+            ALTER TABLE search.records ADD administrative_status NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'service_method') IS NULL
+            ALTER TABLE search.records ADD service_method NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'scheduled_date') IS NULL
+            ALTER TABLE search.records ADD scheduled_date DATETIME NULL;
+        IF COL_LENGTH('search.records', 'unable_to_serve_reason') IS NULL
+            ALTER TABLE search.records ADD unable_to_serve_reason NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'relationship') IS NULL
+            ALTER TABLE search.records ADD relationship NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'age') IS NULL
+            ALTER TABLE search.records ADD age NVARCHAR(100) NULL;
+        IF COL_LENGTH('search.records', 'race') IS NULL
+            ALTER TABLE search.records ADD race NVARCHAR(100) NULL;
+        IF COL_LENGTH('search.records', 'sex') IS NULL
+            ALTER TABLE search.records ADD sex NVARCHAR(100) NULL;
+        IF COL_LENGTH('search.records', 'height') IS NULL
+            ALTER TABLE search.records ADD height NVARCHAR(100) NULL;
+        IF COL_LENGTH('search.records', 'weight') IS NULL
+            ALTER TABLE search.records ADD weight NVARCHAR(100) NULL;
+        IF COL_LENGTH('search.records', 'attempt_1') IS NULL
+            ALTER TABLE search.records ADD attempt_1 DATETIME NULL;
+        IF COL_LENGTH('search.records', 'attempt_2') IS NULL
+            ALTER TABLE search.records ADD attempt_2 DATETIME NULL;
+        IF COL_LENGTH('search.records', 'attempt_3') IS NULL
+            ALTER TABLE search.records ADD attempt_3 DATETIME NULL;
+        IF COL_LENGTH('search.records', 'parcel_pin') IS NULL
+            ALTER TABLE search.records ADD parcel_pin NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'serving_or_attempting_deputy') IS NULL
+            ALTER TABLE search.records ADD serving_or_attempting_deputy NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'assigned_deputy') IS NULL
+            ALTER TABLE search.records ADD assigned_deputy NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'due_date') IS NULL
+            ALTER TABLE search.records ADD due_date DATETIME NULL;
+        IF COL_LENGTH('search.records', 'date_time_served') IS NULL
+            ALTER TABLE search.records ADD date_time_served DATETIME NULL;
+    """)
+
+
+def insert_search_record_civil_papers_webhook1(cursor, record):
+    def clean(v):
+        return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
+
+    payload = {
+        "department": "Civil Papers",
+        "source_file": "survey123-webhook1",
+        "intake_date": record.get("intake_date"),
+        "case_number": record.get("case_number"),
+        "re_issue": record.get("re_issue"),
+        "court_document_type": record.get("court_document_type"),
+        "type_of_child_support": record.get("type_of_child_support"),
+        "request_for_service_type": record.get("request_for_service_type"),
+        "court_issued_date": record.get("court_issued_date"),
+        "trial_date": record.get("trial_date"),
+        "service_days": record.get("service_days"),
+        "expiration_date": record.get("expiration_date"),
+        "check_or_money_order_number": record.get("check_or_money_order_number"),
+        "payment_amount": record.get("payment_amount"),
+        "tenant_defendant_or_respondent": record.get("tenant_defendant_or_respondent"),
+        "tenant_defendant_or_respondent_address": record.get("tenant_defendant_or_respondent_address"),
+        "apartment_unit_or_secondary_address": record.get("apartment_unit_or_secondary_address"),
+        "area_number": record.get("area_number"),
+        "post_number": record.get("post_number"),
+        "petitioner_or_plaintiff_name": record.get("petitioner_or_plaintiff_name"),
+        "petitioner_address": record.get("petitioner_address"),
+        "administrative_status": record.get("administrative_status"),
+        "service_method": record.get("service_method"),
+        "scheduled_date": record.get("scheduled_date"),
+        "unable_to_serve_reason": record.get("unable_to_serve_reason"),
+        "relationship": record.get("relationship"),
+        "age": record.get("age"),
+        "race": record.get("race"),
+        "sex": record.get("sex"),
+        "height": record.get("height"),
+        "weight": record.get("weight"),
+        "served_by": record.get("served_by"),
+        "attempt_1": record.get("attempt_1"),
+        "attempt_2": record.get("attempt_2"),
+        "attempt_3": record.get("attempt_3"),
+        "notes": record.get("notes"),
+        "parcel_pin": record.get("parcel_pin"),
+        "serving_or_attempting_deputy": record.get("serving_or_attempting_deputy"),
+        "assigned_deputy": record.get("assigned_deputy"),
+        "due_date": record.get("due_date"),
+        "date_time_served": record.get("date_time_served"),
+        "globalid": record.get("globalid"),
+        "objectid": record.get("objectid"),
+    }
+
+    cursor.execute("""
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'search' AND TABLE_NAME = 'records'
+    """)
+    available = {row[0] for row in cursor.fetchall()}
+    filtered = {k: clean(v) for k, v in payload.items() if k in available}
+
+    columns = list(filtered.keys())
+    placeholders = ", ".join(["?"] * len(columns))
+    sql = f"""
+    INSERT INTO search.records ({", ".join(columns)})
+    OUTPUT INSERTED.record_id
+    VALUES ({placeholders})
+    """
+    cursor.execute(sql, tuple(filtered[c] for c in columns))
+    return cursor.fetchone()[0]
+
+
 def _pick_row_value(row, *candidates):
     def normalize_key(value):
         return " ".join(str(value or "").replace("\n", " ").replace("\r", " ").strip().lower().split())
