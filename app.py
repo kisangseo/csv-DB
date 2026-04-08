@@ -1653,6 +1653,12 @@ def esri_webhook():
     data = request.json or {}
     attrs = data.get("feature", {}).get("attributes", {})
 
+    def pick(*keys):
+        for key in keys:
+            if key in attrs:
+                return attrs.get(key)
+        return None
+
     def to_dt(ms):
         try:
             return datetime.utcfromtimestamp(int(ms) / 1000) if ms else None
@@ -1660,38 +1666,35 @@ def esri_webhook():
             return None
 
     record = {
-        "Doc": attrs.get("Doc"),
-        "type": attrs.get("type"),
-        "Type_of_RFS": attrs.get("Type of RFS"),
-        "Type_of_Child_Support": attrs.get("Type of Child Support"),
-        "doc_address": attrs.get("doc address"),
-        "unit": attrs.get("unit"),
-        "Resp_Name": attrs.get("Resp Name"),
-        "AgId": attrs.get("AgId"),
-        "Unit_ID": attrs.get("Unit ID"),
-        "return_Deputy": attrs.get("return Deputy"),
-        "return_Rank": attrs.get("return Rank"),
-        "return_Sequence": attrs.get("return Sequence"),
-        "return_email": attrs.get("return email"),
-        "Member_Reporting": attrs.get("Member Reporting"),
-
-        "Date_and_Time_Attempted": to_dt(attrs.get("Date and Time Attempted")),
-        "Service_Disp": attrs.get("Service Disp"),
-        "Prior_Attempt_Date_Admin": to_dt(attrs.get("Prior Attempt Date - Admin")),
-        "Prior_Attempt_Date": to_dt(attrs.get("Prior Attempt Date")),
-        "Location_of_Prior_Attempt": attrs.get("Location of Prior Attempt"),
-        "method_of_service": attrs.get("method of service"),
-        "Two_prior": attrs.get("Two prior: Yes"),
-        "Name_of_Adult": attrs.get("Name of Adult"),
-        "Relationship_to_Respondent": attrs.get("Relationship to Respondent"),
-        "Reason_for_Non_Est": attrs.get("Reason for Non Est"),
-        
-        "Notes_from_Attempt": attrs.get("Notes from Attempt"),
-        "Parent_Document": attrs.get("Parent Document"),
-
-        "Date_Received": to_dt(attrs.get("Date Received")),
-        "globalid": attrs.get("globalid"),
-        "objectid": attrs.get("objectid"),
+        "Doc": pick("Doc", "doc"),
+        "type": pick("type", "Type"),
+        "Type of RFS": pick("Type of RFS", "r_type"),
+        "Type of Child Support": pick("Type of Child Support", "type_of_child_support"),
+        "doc address": pick("doc address", "doc_address"),
+        "unit": pick("unit", "Unit"),
+        "Resp Name": pick("Resp Name", "resp_name"),
+        "AgId": pick("AgId", "Ag ID", "agol_id"),
+        "Unit ID": pick("Unit ID", "unit_id"),
+        "return Deputy": pick("return Deputy", "return_deputy"),
+        "return Rank": pick("return Rank", "return_rank"),
+        "return Sequence": pick("return Sequence", "return_sequence"),
+        "return email": pick("return email", "return_email"),
+        "Member Reporting": pick("Member Reporting", "member_reporting"),
+        "Date and Time Attempted": to_dt(pick("Date and Time Attempted", "date_and_time_attempted")),
+        "Service Disp": pick("Service Disp", "service_disp"),
+        "Prior Attempt Date - Admin": to_dt(pick("Prior Attempt Date - Admin", "prior_attempt_date_admin")),
+        "Prior Attempt Date": to_dt(pick("Prior Attempt Date", "prior_attempt_date")),
+        "Location of Prior Attempt": pick("Location of Prior Attempt", "location_of_prior_attempt"),
+        "method of service": pick("method of service", "method_of_service"),
+        "Two prior": pick("Two prior", "two_prior"),
+        "Name of Adult": pick("Name of Adult", "name_of_adult"),
+        "Relationship to Respondent": pick("Relationship to Respondent", "relationship_to_respondent"),
+        "Reason for Non Est": pick("Reason for Non Est", "reason_for_non_est"),
+        "Notes from Attempt": pick("Notes from Attempt", "notes_from_attempt"),
+        "Parent Document": pick("Parent Document", "parent_document"),
+        "Date Received": to_dt(pick("Date Received", "date_received")),
+        "globalid": pick("globalid", "global_id"),
+        "objectid": pick("objectid", "object_id"),
     }
 
     conn = get_conn()
