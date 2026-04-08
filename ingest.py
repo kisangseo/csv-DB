@@ -695,30 +695,22 @@ def insert_search_record_civil_papers(cursor, record):
     INSERT INTO search.records (
         department,
         source_file,
-
         case_number,
         court_document_type,
-
         type_of_rfs,
         type_of_child_support,
-
         doc_address,
         unit,
-
         resp_name,
         agid,
         unit_id,
-
         return_deputy,
         return_rank,
         return_sequence,
         return_email,
-
         member_reporting,
-
         date_time_attempted,
         service_disp,
-
         prior_attempt_date_admin,
         prior_attempt_date,
         location_of_prior_attempt,
@@ -781,7 +773,7 @@ def insert_search_record_civil_papers(cursor, record):
 
     record.get("method of service"),
 
-    record.get("Two prior: Yes"),
+    record.get("Two prior"),
     record.get("Name of Adult"),
     record.get("Relationship to Respondent"),
 
@@ -798,7 +790,7 @@ def insert_search_record_civil_papers(cursor, record):
     record.get("objectid"),
 ))
 
-    cursor.execute(sql, *values)
+    cursor.execute(sql, values)
     return cursor.fetchone()[0]
 
 def ensure_civil_papers_columns(cursor):
