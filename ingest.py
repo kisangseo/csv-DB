@@ -730,7 +730,7 @@ def insert_search_record_civil_papers(cursor, record):
         relationship_to_respondent,
 
         reason_for_non_est,
-        reason_for_non_est_other,
+        
 
         notes_from_attempt,
 
@@ -742,7 +742,7 @@ def insert_search_record_civil_papers(cursor, record):
         objectid
     )
     OUTPUT INSERTED.record_id
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     def clean(v):
@@ -786,7 +786,7 @@ def insert_search_record_civil_papers(cursor, record):
     record.get("Relationship to Respondent"),
 
     record.get("Reason for Non Est"),
-    record.get("reason_for_non_est_other"),
+    
 
     record.get("Notes from Attempt"),
 
