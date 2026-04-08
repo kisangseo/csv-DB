@@ -1708,6 +1708,98 @@ def esri_webhook():
 
     return jsonify({"status": "ok"})
 
+
+@app.route("/esri-webhook1", methods=["POST"])
+def esri_webhook1():
+    data = request.json or {}
+    attrs = data.get("feature", {}).get("attributes", {})
+
+    def pick(*keys):
+        for key in keys:
+            if key in attrs:
+                return attrs.get(key)
+        return None
+
+    def to_dt(ms):
+        try:
+            return datetime.utcfromtimestamp(int(ms) / 1000) if ms else None
+        except Exception:
+            return None
+
+    def to_int(value):
+        try:
+            return int(value) if value not in (None, "") else None
+        except Exception:
+            return None
+
+    def to_decimal(value):
+        try:
+            return float(value) if value not in (None, "") else None
+        except Exception:
+            return None
+
+    record = {
+        "intake_date": to_dt(pick("Intake Date", "intake_date")),
+        "case_number": pick("Case Number", "case_number"),
+        "re_issue": pick("Re-Issue", "re_issue"),
+        "court_document_type": pick("Court Document Type", "court_document_type"),
+        "type_of_child_support": pick("Child Support Type", "child_support_type"),
+        "request_for_service_type": pick("Request for Service Type", "request_for_service_type"),
+        "court_issued_date": to_dt(pick("Court Issued Date", "court_issued_date")),
+        "trial_date": to_dt(pick("Trial Date", "trial_date")),
+        "service_days": to_int(pick("Service Days", "service_days")),
+        "expiration_date": to_dt(pick("Expiration Date", "expiration_date")),
+        "check_or_money_order_number": pick("Check or Money Order Number", "check_or_money_order_number"),
+        "payment_amount": to_decimal(pick("Payment Amount", "payment_amount")),
+        "tenant_defendant_or_respondent": pick("Tenant, Defendant, or Respondent", "tenant_defendant_or_respondent"),
+        "tenant_defendant_or_respondent_address": pick(
+            "Tenant, Defendant or Respondent Address",
+            "tenant_defendant_or_respondent_address",
+        ),
+        "apartment_unit_or_secondary_address": pick(
+            "Apartment, Unit or Secondary Address",
+            "apartment_unit_or_secondary_address",
+        ),
+        "area_number": pick("Area Number", "area_number"),
+        "post_number": pick("Post Number", "post_number"),
+        "petitioner_or_plaintiff_name": pick("Petitioner or Plaintiff Name", "petitioner_or_plaintiff_name"),
+        "petitioner_address": pick("Petitioner Address", "petitioner_address"),
+        "administrative_status": pick("Administrative Status", "administrative_status"),
+        "service_method": pick("Service Method", "service_method"),
+        "scheduled_date": to_dt(pick("Scheduled Date", "scheduled_date")),
+        "unable_to_serve_reason": pick("Unable to Serve Reason", "unable_to_serve_reason"),
+        "relationship": pick("Relationship", "relationship"),
+        "age": pick("Age", "age"),
+        "race": pick("Race", "race"),
+        "sex": pick("Sex", "sex"),
+        "height": pick("Height", "height"),
+        "weight": pick("Weight", "weight"),
+        "served_by": pick("Served By", "served_by"),
+        "attempt_1": to_dt(pick("Attempt #1", "attempt_1")),
+        "attempt_2": to_dt(pick("Attempt #2", "attempt_2")),
+        "attempt_3": to_dt(pick("Attempt #3", "attempt_3")),
+        "notes": pick("Notes", "Comments", "notes"),
+        "parcel_pin": pick("Parcel PIN", "parcel_pin"),
+        "serving_or_attempting_deputy": pick("Serving or Attempting Deputy", "serving_or_attempting_deputy"),
+        "assigned_deputy": pick("Assigned Deputy", "assigned_deputy"),
+        "due_date": to_dt(pick("Due Date", "due_date")),
+        "date_time_served": to_dt(pick("Date and Time Served", "date_time_served")),
+        "globalid": pick("globalid", "global_id"),
+        "objectid": pick("objectid", "object_id"),
+    }
+
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        from ingest import ensure_esri_webhook1_columns, insert_search_record_civil_papers_webhook1
+        ensure_esri_webhook1_columns(cursor)
+        insert_search_record_civil_papers_webhook1(cursor, record)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"status": "ok"})
+
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):
     if "user_id" not in session:
