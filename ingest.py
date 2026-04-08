@@ -690,25 +690,43 @@ def insert_search_record_odyssey(cursor, record):
 
 
 def insert_search_record_civil_papers(cursor, record):
+    
     sql = """
-    INSERT INTO search.records (
-        department,
-        source_file,
-        global_id,
-        full_name,
-        case_number,
-        court_document_type,
-        issue_date,
-        intake_date,
-        address,
-        petitioner_name,
-        disposition,
-        served_by,
-        notes
-    )
-    OUTPUT INSERTED.record_id
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
+        INSERT INTO search.records (
+            department,
+            source_file,
+            global_id,
+            full_name,
+            case_number,
+            court_document_type,
+            issue_date,
+            intake_date,
+            address,
+            petitioner_name,
+            disposition,
+            served_by,
+            notes,
+            service_days,
+            expiration_date,
+            trial_date,
+            payment_amount,
+            area_number,
+            post_number,
+            administrative_status,
+            service_method,
+            scheduled_date,
+            unable_to_serve_reason,
+            attempt_1,
+            attempt_2,
+            attempt_3,
+            parcel_pin,
+            assigned_deputy,
+            due_date,
+            date_time_served
+        )
+        OUTPUT INSERTED.record_id
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
 
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
@@ -727,6 +745,24 @@ def insert_search_record_civil_papers(cursor, record):
         record.get("disposition"),
         record.get("served_by"),
         record.get("notes"),
+
+        record.get("service_days"),
+        record.get("expiration_date"),
+        record.get("trial_date"),
+        record.get("payment_amount"),
+        record.get("area_number"),
+        record.get("post_number"),
+        record.get("administrative_status"),
+        record.get("service_method"),
+        record.get("scheduled_date"),
+        record.get("unable_to_serve_reason"),
+        record.get("attempt_1"),
+        record.get("attempt_2"),
+        record.get("attempt_3"),
+        record.get("parcel_pin"),
+        record.get("assigned_deputy"),
+        record.get("due_date"),
+        record.get("date_time_served"),
     ))
 
     cursor.execute(sql, *values)

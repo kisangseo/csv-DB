@@ -1648,7 +1648,11 @@ def create_record():
 
     return jsonify({"status": "success", "record_id": record_id})
 
-
+@app.route("/esri-webhook", methods=["POST"])
+def esri_webhook():
+    data = request.json or {}
+    print("INCOMING:", data)
+    return {"status": "ok"}
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):
     if "user_id" not in session:
