@@ -1792,7 +1792,10 @@ def esri_webhook1():
     try:
         cursor = conn.cursor()
         from ingest import ensure_esri_webhook1_columns, insert_search_record_civil_papers_webhook1
-        ensure_esri_webhook1_columns(cursor)
+        try:
+            ensure_esri_webhook1_columns(cursor)
+        except Exception as exc:
+            print(f"WARNING: ensure_esri_webhook1_columns skipped: {exc}")
         insert_search_record_civil_papers_webhook1(cursor, record)
         conn.commit()
     finally:

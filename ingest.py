@@ -876,105 +876,71 @@ def ensure_esri_webhook1_columns(cursor):
 
 
 def insert_search_record_civil_papers_webhook1(cursor, record):
-    sql = """
-    INSERT INTO search.records (
-        department,
-        source_file,
-        intake_date,
-        case_number,
-        re_issue,
-        court_document_type,
-        type_of_child_support,
-        request_for_service_type,
-        court_issued_date,
-        trial_date,
-        service_days,
-        expiration_date,
-        check_or_money_order_number,
-        payment_amount,
-        tenant_defendant_or_respondent,
-        tenant_defendant_or_respondent_address,
-        apartment_unit_or_secondary_address,
-        area_number,
-        post_number,
-        petitioner_or_plaintiff_name,
-        petitioner_address,
-        administrative_status,
-        service_method,
-        scheduled_date,
-        unable_to_serve_reason,
-        relationship,
-        age,
-        race,
-        sex,
-        height,
-        weight,
-        served_by,
-        attempt_1,
-        attempt_2,
-        attempt_3,
-        notes,
-        parcel_pin,
-        serving_or_attempting_deputy,
-        assigned_deputy,
-        due_date,
-        date_time_served,
-        globalid,
-        objectid
-    )
-    OUTPUT INSERTED.record_id
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
 
-    values = tuple(clean(v) for v in (
-        "Civil Papers",
-        "survey123-webhook1",
-        record.get("intake_date"),
-        record.get("case_number"),
-        record.get("re_issue"),
-        record.get("court_document_type"),
-        record.get("type_of_child_support"),
-        record.get("request_for_service_type"),
-        record.get("court_issued_date"),
-        record.get("trial_date"),
-        record.get("service_days"),
-        record.get("expiration_date"),
-        record.get("check_or_money_order_number"),
-        record.get("payment_amount"),
-        record.get("tenant_defendant_or_respondent"),
-        record.get("tenant_defendant_or_respondent_address"),
-        record.get("apartment_unit_or_secondary_address"),
-        record.get("area_number"),
-        record.get("post_number"),
-        record.get("petitioner_or_plaintiff_name"),
-        record.get("petitioner_address"),
-        record.get("administrative_status"),
-        record.get("service_method"),
-        record.get("scheduled_date"),
-        record.get("unable_to_serve_reason"),
-        record.get("relationship"),
-        record.get("age"),
-        record.get("race"),
-        record.get("sex"),
-        record.get("height"),
-        record.get("weight"),
-        record.get("served_by"),
-        record.get("attempt_1"),
-        record.get("attempt_2"),
-        record.get("attempt_3"),
-        record.get("notes"),
-        record.get("parcel_pin"),
-        record.get("serving_or_attempting_deputy"),
-        record.get("assigned_deputy"),
-        record.get("due_date"),
-        record.get("date_time_served"),
-        record.get("globalid"),
-        record.get("objectid"),
-    ))
-    cursor.execute(sql, values)
+    payload = {
+        "department": "Civil Papers",
+        "source_file": "survey123-webhook1",
+        "intake_date": record.get("intake_date"),
+        "case_number": record.get("case_number"),
+        "re_issue": record.get("re_issue"),
+        "court_document_type": record.get("court_document_type"),
+        "type_of_child_support": record.get("type_of_child_support"),
+        "request_for_service_type": record.get("request_for_service_type"),
+        "court_issued_date": record.get("court_issued_date"),
+        "trial_date": record.get("trial_date"),
+        "service_days": record.get("service_days"),
+        "expiration_date": record.get("expiration_date"),
+        "check_or_money_order_number": record.get("check_or_money_order_number"),
+        "payment_amount": record.get("payment_amount"),
+        "tenant_defendant_or_respondent": record.get("tenant_defendant_or_respondent"),
+        "tenant_defendant_or_respondent_address": record.get("tenant_defendant_or_respondent_address"),
+        "apartment_unit_or_secondary_address": record.get("apartment_unit_or_secondary_address"),
+        "area_number": record.get("area_number"),
+        "post_number": record.get("post_number"),
+        "petitioner_or_plaintiff_name": record.get("petitioner_or_plaintiff_name"),
+        "petitioner_address": record.get("petitioner_address"),
+        "administrative_status": record.get("administrative_status"),
+        "service_method": record.get("service_method"),
+        "scheduled_date": record.get("scheduled_date"),
+        "unable_to_serve_reason": record.get("unable_to_serve_reason"),
+        "relationship": record.get("relationship"),
+        "age": record.get("age"),
+        "race": record.get("race"),
+        "sex": record.get("sex"),
+        "height": record.get("height"),
+        "weight": record.get("weight"),
+        "served_by": record.get("served_by"),
+        "attempt_1": record.get("attempt_1"),
+        "attempt_2": record.get("attempt_2"),
+        "attempt_3": record.get("attempt_3"),
+        "notes": record.get("notes"),
+        "parcel_pin": record.get("parcel_pin"),
+        "serving_or_attempting_deputy": record.get("serving_or_attempting_deputy"),
+        "assigned_deputy": record.get("assigned_deputy"),
+        "due_date": record.get("due_date"),
+        "date_time_served": record.get("date_time_served"),
+        "globalid": record.get("globalid"),
+        "objectid": record.get("objectid"),
+    }
+
+    cursor.execute("""
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'search' AND TABLE_NAME = 'records'
+    """)
+    available = {row[0] for row in cursor.fetchall()}
+    filtered = {k: clean(v) for k, v in payload.items() if k in available}
+
+    columns = list(filtered.keys())
+    placeholders = ", ".join(["?"] * len(columns))
+    sql = f"""
+    INSERT INTO search.records ({", ".join(columns)})
+    OUTPUT INSERTED.record_id
+    VALUES ({placeholders})
+    """
+    cursor.execute(sql, tuple(filtered[c] for c in columns))
     return cursor.fetchone()[0]
 
 
