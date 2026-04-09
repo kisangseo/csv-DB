@@ -689,34 +689,54 @@ def insert_search_record_odyssey(cursor, record):
     return cursor.fetchone()[0]
 
 
-def _civil_duplicate_exists(cursor, case_number, administrative_status, served_by):
+def _find_civil_duplicate_record_id(cursor, case_number, administrative_status, served_by):
     case_number = (case_number or "").strip()
     administrative_status = (administrative_status or "").strip()
     served_by = (served_by or "").strip()
 
     if not (case_number and administrative_status and served_by):
-        return False
+        return None
 
     cursor.execute(
         """
-        SELECT TOP 1 1
+        SELECT TOP 1 record_id
         FROM search.records
         WHERE department = 'Civil Papers'
           AND LTRIM(RTRIM(ISNULL(case_number, ''))) = ?
-          AND LTRIM(RTRIM(ISNULL(administrative_status, ''))) = ?
-          AND LTRIM(RTRIM(ISNULL(served_by, ''))) = ?
+          AND COALESCE(
+                NULLIF(LTRIM(RTRIM(ISNULL(administrative_status, ''))), ''),
+                NULLIF(LTRIM(RTRIM(ISNULL(service_disp, ''))), '')
+          ) = ?
+          AND COALESCE(
+                NULLIF(LTRIM(RTRIM(ISNULL(served_by, ''))), ''),
+                NULLIF(LTRIM(RTRIM(ISNULL(member_reporting, ''))), ''),
+                NULLIF(LTRIM(RTRIM(ISNULL(serving_or_attempting_deputy, ''))), ''),
+                NULLIF(LTRIM(RTRIM(ISNULL(return_deputy, ''))), '')
+          ) = ?
+        ORDER BY record_id DESC
         """,
         (case_number, administrative_status, served_by),
     )
-    return cursor.fetchone() is not None
+    row = cursor.fetchone()
+    return row[0] if row else None
 
 
 def insert_search_record_civil_papers(cursor, record):
     case_number = record.get("Doc")
     administrative_status = record.get("Service Disp")
     served_by = record.get("Member Reporting")
-    if _civil_duplicate_exists(cursor, case_number, administrative_status, served_by):
-        return None
+    duplicate_record_id = _find_civil_duplicate_record_id(cursor, case_number, administrative_status, served_by)
+    if duplicate_record_id:
+        cursor.execute(
+            """
+            UPDATE search.records
+            SET intake_date = COALESCE(intake_date, ?),
+                date_received = COALESCE(date_received, ?)
+            WHERE record_id = ?
+            """,
+            (record.get("Date Received"), record.get("Date Received"), duplicate_record_id),
+        )
+        return duplicate_record_id
 
     sql = """
     INSERT INTO search.records (
@@ -908,13 +928,22 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
 
-    if _civil_duplicate_exists(
+    duplicate_record_id = _find_civil_duplicate_record_id(
         cursor,
         record.get("case_number"),
         record.get("administrative_status"),
         record.get("served_by"),
-    ):
-        return None
+    )
+    if duplicate_record_id:
+        cursor.execute(
+            """
+            UPDATE search.records
+            SET intake_date = COALESCE(intake_date, ?)
+            WHERE record_id = ?
+            """,
+            (record.get("intake_date"), duplicate_record_id),
+        )
+        return duplicate_record_id
 
     payload = {
         "department": "Civil Papers",
