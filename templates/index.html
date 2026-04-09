@@ -273,6 +273,7 @@
         intake_date: "Intake Date",
         petitioner_name: "Petitioner or Plaintiff Name",
         served_by: "Served By",
+        date_time_attempted: "Served Date/Time",
         x: "X",
         y: "Y"
       };
@@ -283,7 +284,7 @@
         "BCSO Active Warrants": ["issuing_county","case_number","warrant_id_number","warrant_type","issue_date","warrant_status","full_name","sid","date_of_birth","race","sex","address","x","y","notes"],
         "Warrant of Restitution - MDEC": ["full_name","case_number","address","court_document_type","intake_date","disposition"],
         "Field Services Department": ["full_name","case_number","address","apt","intake_date","disposition","notes"],
-        "Civil Papers": ["global_id","intake_date","case_number","court_document_type","issue_date","full_name","address","petitioner_name","disposition","served_by","notes"]      };
+        "Civil Papers": ["intake_date","case_number","court_document_type","issue_date","full_name","address","petitioner_name","disposition","served_by","date_time_attempted","notes"]      };
 
       const BCSO_DROPDOWN_OPTIONS = {
         issuing_county: [
@@ -342,7 +343,7 @@
         ,"civil papers": "Civil Papers"
       };
 
-      const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants", "field services department"]);
+      const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants", "field services department", "civil papers"]);
       const LANDLORD_TENANT_DEPARTMENTS = new Set([
         "field services department",
         "field services department - civil intake",
@@ -429,6 +430,26 @@
         "Warrant of Restitution - Status",
         "DV PDF"
       ];
+
+      function getFieldLabelForTable(tableName, field) {
+        if (tableName === "Civil Papers") {
+          const civilFieldLabels = {
+            intake_date: "Intake Date",
+            case_number: "Case Number",
+            court_document_type: "Court Document Type",
+            issue_date: "Court Issued Date",
+            full_name: "Tenant, Defendant, or Respondent Name",
+            address: "Tenant, Defendant or Respondent Address",
+            petitioner_name: "Petitioner or Plaintiff Name",
+            disposition: "Administrative Status",
+            served_by: "Served By (Deputy Name)",
+            date_time_attempted: "Served Date/Time",
+            notes: "Comments",
+          };
+          return civilFieldLabels[field] || FIELD_LABELS[field] || field;
+        }
+        return FIELD_LABELS[field] || field;
+      }
 
       function addSectionHeaderActions(headerActions, departmentName) {
         const normalizedName = (departmentName || "").toLowerCase();
@@ -542,7 +563,7 @@
             hint.style.fontWeight = "400";
             label.appendChild(hint);
           } else {
-            label.textContent = `${FIELD_LABELS[field] || field}${isRequired ? " *" : ""}`;
+            label.textContent = `${getFieldLabelForTable(tableName, field)}${isRequired ? " *" : ""}`;
           }
 
           if (field === "address" && tableName === "BCSO Active Warrants" && isBcsoAdd) {
@@ -631,7 +652,7 @@
             if (bcsoOptions) {
               const emptyOption = document.createElement("option");
               emptyOption.value = "";
-              emptyOption.textContent = `Select ${FIELD_LABELS[field] || field}`;
+              emptyOption.textContent = `Select ${getFieldLabelForTable(tableName, field)}`;
               input.appendChild(emptyOption);
 
               bcsoOptions.forEach(optionValue => {
@@ -644,7 +665,13 @@
               input.value = values[field] ?? "";
             } else {
               if (field !== "notes") {
-                input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+                if (["date_of_birth", "issue_date", "intake_date"].includes(field)) {
+                  input.type = "date";
+                } else if (field === "date_time_attempted") {
+                  input.type = "datetime-local";
+                } else {
+                  input.type = "text";
+                }
               }
               input.value = values[field] ?? "";
             }
@@ -679,7 +706,8 @@
 
         fields.forEach(field => {
           if (field === "full_name") out[field] = row.name || "";
-          else if (field === "issue_date") out[field] = row.record_date || "";
+          else if (field === "issue_date") out[field] = row.issue_date || row.record_date || "";
+          else if (field === "date_time_attempted") out[field] = row.date_time_attempted_iso || "";
           else out[field] = row[field] || "";
         });
         return {tableName, out};
@@ -722,6 +750,59 @@
             td.textContent = val;
           }
         });
+      }
+
+      function getCivilRowDateValue(row) {
+        return row.intake_date || row.issue_date || row.date_time_attempted || row.prior_attempt_date || row.date_received || row.record_date || "";
+      }
+
+      function compareCivilRowsAsc(a, b) {
+        const aDate = getCivilRowDateValue(a);
+        const bDate = getCivilRowDateValue(b);
+        if (!aDate && !bDate) return 0;
+        if (!aDate) return -1;
+        if (!bDate) return 1;
+        return aDate.localeCompare(bDate);
+      }
+
+      function getCivilServedByValue(row) {
+        const deputy = row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "";
+        const attemptedAt = row.date_time_attempted_display || "";
+        if (!deputy) return "";
+        if (!attemptedAt) return deputy;
+        return `${deputy} at ${attemptedAt}`;
+      }
+
+      function buildCivilDisplayRows(rows) {
+        const groups = new Map();
+        rows.forEach((row) => {
+          const caseKey = (row.case_number || "").trim().toLowerCase();
+          if (!caseKey) return;
+          if (!groups.has(caseKey)) groups.set(caseKey, []);
+          groups.get(caseKey).push({...row});
+        });
+
+        const parents = [];
+        groups.forEach((groupRows) => {
+          const sorted = [...groupRows].sort(compareCivilRowsAsc);
+          const webhook1Rows = sorted.filter((r) => (r.source_file || "").toLowerCase() === "survey123-webhook1");
+          const parent = (webhook1Rows[0] || sorted[0] || null);
+          if (!parent) return;
+
+          const children = sorted.filter((r) => r.record_id !== parent.record_id);
+          const latestWithServedBy = [...sorted]
+            .sort((a, b) => compareCivilRowsAsc(b, a))
+            .find((r) => getCivilServedByValue(r));
+          if (latestWithServedBy) {
+            parent.served_by = getCivilServedByValue(latestWithServedBy);
+          }
+          parents.push({
+            parent,
+            children
+          });
+        });
+
+        return parents.sort((a, b) => compareCivilRowsAsc(a.parent, b.parent));
       }
 
       function mergeEditedFieldsIntoRow(tableName, row, fields) {
@@ -792,7 +873,8 @@
 
         const status = document.getElementById("modalStatus");
         const tableName = document.getElementById("tableSelect").value;
-        if (!ADD_ALLOWED_TABLES.has(tableName)) {
+        const isEdit = activeEditContext && activeEditContext.mode === "edit";
+        if (!isEdit && !ADD_ALLOWED_TABLES.has(tableName)) {
           status.textContent = "Adding records is only available for Warrants to Audit and BCSO Active Warrants.";
           return;
         }
@@ -839,7 +921,6 @@
           return;
         }
 
-        const isEdit = activeEditContext && activeEditContext.mode === "edit";
         const url = isEdit
           ? `${window.location.origin}/records/${activeEditContext.recordId}`
           : `${window.location.origin}/records`;
@@ -1140,9 +1221,11 @@
 
             const content = document.createElement("div");
             content.className = "department-content";
+            const civilDisplayRows = dept.toLowerCase() === "civil papers" ? buildCivilDisplayRows(rows) : [];
             const countText = document.createElement("div");
             countText.className = "count";
-            countText.textContent = `Results: ${count} record${count !== 1 ? "s" : ""}`;
+            const displayedCount = dept.toLowerCase() === "civil papers" ? civilDisplayRows.length : count;
+            countText.textContent = `Results: ${displayedCount} record${displayedCount !== 1 ? "s" : ""}`;
             content.appendChild(countText);
 
             title.style.cursor = "pointer";
@@ -1186,7 +1269,10 @@
             table.appendChild(thead);
 
             const tbody = document.createElement("tbody");
-            rows.forEach(row => {
+            const rowsToRender = dept.toLowerCase() === "civil papers"
+              ? civilDisplayRows.map((entry) => entry.parent)
+              : rows;
+            rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
               const dataHeaders = headers.slice(0, -1);
               const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
@@ -1362,7 +1448,7 @@
                 actionsTd.appendChild(editBtn);
 
                 let deleteBtn = null;
-                if (!isLandlordTenantDept) {
+                if (!isLandlordTenantDept && deptKey !== "civil papers") {
                   deleteBtn = document.createElement("button");
                   deleteBtn.type = "button";
                   deleteBtn.textContent = "Delete";
@@ -1413,6 +1499,45 @@
               tr.appendChild(actionsTd);
 
               tbody.appendChild(tr);
+
+              if (dept.toLowerCase() === "civil papers") {
+                const civilEntry = civilDisplayRows.find((entry) => entry.parent.record_id === row.record_id);
+                const childRows = (civilEntry && civilEntry.children) || [];
+                childRows.forEach((child) => {
+                  const childTr = document.createElement("tr");
+                  childTr.className = "civil-child-row";
+                  childTr.style.display = "none";
+                  const childCells = dataHeaders.map((h) => getCellDisplayValue(h, child, dataHeaders, dept));
+                  childCells.forEach((val) => {
+                    const td = document.createElement("td");
+                    td.textContent = val;
+                    childTr.appendChild(td);
+                  });
+                  const childActionsTd = document.createElement("td");
+                  childActionsTd.className = "table-actions-cell";
+                  childActionsTd.textContent = "";
+                  childTr.appendChild(childActionsTd);
+                  tbody.appendChild(childTr);
+                });
+
+                if (childRows.length > 0) {
+                  tr.style.cursor = "pointer";
+                  tr.addEventListener("click", (event) => {
+                    const clickedInsideActions = event.target && event.target.closest && event.target.closest(".table-actions-cell");
+                    if (clickedInsideActions) return;
+                    let next = tr.nextSibling;
+                    let toggledAny = false;
+                    while (next && next.classList && next.classList.contains("civil-child-row")) {
+                      next.style.display = next.style.display === "none" ? "" : "none";
+                      toggledAny = true;
+                      next = next.nextSibling;
+                    }
+                    if (toggledAny) {
+                      tr.classList.toggle("expanded");
+                    }
+                  });
+                }
+              }
             });
 
             table.appendChild(tbody);
