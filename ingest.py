@@ -695,6 +695,7 @@ def insert_search_record_civil_papers(cursor, record):
     INSERT INTO search.records (
         department,
         source_file,
+        intake_date,
         case_number,
         court_document_type,
         type_of_rfs,
@@ -734,7 +735,7 @@ def insert_search_record_civil_papers(cursor, record):
         objectid
     )
     OUTPUT INSERTED.record_id
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     def clean(v):
@@ -743,6 +744,7 @@ def insert_search_record_civil_papers(cursor, record):
     values = tuple(clean(v) for v in (
     "Civil Papers",
     "civil-paper-attempts",
+    record.get("Date Received"),
 
     record.get("Doc"),
     record.get("type"),
