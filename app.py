@@ -1863,12 +1863,18 @@ def esri_webhook1():
             ensure_esri_webhook1_columns(cursor)
         except Exception as exc:
             print(f"WARNING: ensure_esri_webhook1_columns skipped: {exc}")
-        insert_search_record_civil_papers_webhook1(cursor, record)
+        record_id = insert_search_record_civil_papers_webhook1(cursor, record)
         conn.commit()
     finally:
         conn.close()
 
-    return jsonify({"status": "ok"})
+    return jsonify({
+        "status": "ok",
+        "record_id": record_id,
+        "case_number": record.get("case_number"),
+        "administrative_status": record.get("administrative_status"),
+        "served_by": record.get("served_by"),
+    })
 
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):
