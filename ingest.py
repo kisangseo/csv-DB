@@ -1947,6 +1947,7 @@ def ingest_all_odyssey_civil_blobs(container_name="fscsv"):
     backfill_landlord_tenant_postal_code()
     backfill_landlord_tenant_postal_code_from_geocode()
     backfill_landlord_tenant_xy()
+    build_latest_landlord_tenant_with_apt_blob(container_name)
 
 def ingest_population_from_table(table_name, display_department, source_file):
     """
