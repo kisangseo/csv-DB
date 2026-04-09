@@ -796,6 +796,7 @@
       }
 
       function buildCivilDisplayRows(rows) {
+        const CIVIL_SERVE_SOURCES = new Set(["civil-paper-serves", "survey123-webhook1"]);
         const groups = new Map();
         rows.forEach((row) => {
           const caseKey = (row.case_number || "").trim().toLowerCase();
@@ -807,7 +808,7 @@
         const parents = [];
         groups.forEach((groupRows) => {
           const sorted = [...groupRows].sort(compareCivilRowsAsc);
-          const webhook1Rows = sorted.filter((r) => (r.source_file || "").toLowerCase() === "survey123-webhook1");
+          const webhook1Rows = sorted.filter((r) => CIVIL_SERVE_SOURCES.has((r.source_file || "").toLowerCase()));
           const parent = (webhook1Rows[0] || sorted[0] || null);
           if (!parent) return;
 
@@ -1262,6 +1263,9 @@
             });
 
             const table = document.createElement("table");
+            if (dept.toLowerCase() === "civil papers") {
+              table.classList.add("civil-papers-table");
+            }
             let headers = [];
             if (dept.toLowerCase() === "bcso active warrants") {
               headers = ["Issuing County","Case Number","Warrant ID Number","Warrant Type","Issue Date","Warrant Status","Name","SID","Date of Birth","Race","Sex","LKA","X","Y","Notes"];

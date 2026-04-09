@@ -227,6 +227,25 @@ tr.civil-child-row td {
   padding-left: 18px;
 }
 
+.civil-papers-table th,
+.civil-papers-table td {
+  line-height: 1.25;
+}
+
+.civil-papers-table td:nth-child(9) {
+  min-width: 210px;
+  white-space: normal;
+}
+
+.civil-papers-table td:nth-child(10) {
+  min-width: 120px;
+  white-space: normal;
+}
+
+.civil-papers-table .table-actions-cell {
+  justify-content: center;
+}
+
 /* ===== Responsive Design ===== */
 @media (max-width: 768px) {
   form {

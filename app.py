@@ -1654,6 +1654,7 @@ def create_record():
 
     return jsonify({"status": "success", "record_id": record_id})
 
+@app.route("/civil-paper-attempts", methods=["POST"])
 @app.route("/esri-webhook", methods=["POST"])
 def esri_webhook():
     data = request.json or {}
@@ -1715,6 +1716,7 @@ def esri_webhook():
     return jsonify({"status": "ok"})
 
 
+@app.route("/civil-paper-serves", methods=["POST"])
 @app.route("/esri-webhook1", methods=["POST"])
 def esri_webhook1():
     data = request.json or {}
