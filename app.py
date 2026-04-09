@@ -51,6 +51,64 @@ _apt_backfill_attempted = False
 # permanently disabled: apt backfill should not run during search requests
 ENABLE_APT_BACKFILL_ON_SEARCH = False
 
+
+def parse_request_json_lenient(req):
+    """
+    Parse request JSON with a fallback that tolerates raw control characters
+    (like literal newlines) embedded in string values.
+    """
+    parsed = req.get_json(silent=True)
+    if parsed is not None:
+        return parsed
+
+    raw_text = req.get_data(as_text=True) or ""
+    if not raw_text.strip():
+        return {}
+
+    try:
+        return json.loads(_escape_control_chars_inside_json_strings(raw_text))
+    except Exception:
+        return {}
+
+
+def _escape_control_chars_inside_json_strings(text):
+    escaped = []
+    in_string = False
+    backslash_run = 0
+
+    for ch in text:
+        if ch == "\\":
+            escaped.append(ch)
+            backslash_run += 1
+            continue
+
+        is_escaped_quote = ch == '"' and (backslash_run % 2 == 1)
+        if ch == '"' and not is_escaped_quote:
+            in_string = not in_string
+            escaped.append(ch)
+            backslash_run = 0
+            continue
+
+        backslash_run = 0
+
+        if in_string:
+            if ch == "\n":
+                escaped.append("\\n")
+                continue
+            if ch == "\r":
+                escaped.append("\\r")
+                continue
+            if ch == "\t":
+                escaped.append("\\t")
+                continue
+            if ord(ch) < 0x20:
+                escaped.append(f"\\u{ord(ch):04x}")
+                continue
+
+        escaped.append(ch)
+
+    return "".join(escaped)
+
 def geocode_address(address):
     if not address:
         return None, None
@@ -1657,7 +1715,7 @@ def create_record():
 @app.route("/civil-paper-attempts", methods=["POST"])
 @app.route("/esri-webhook", methods=["POST"])
 def esri_webhook():
-    data = request.json or {}
+    data = parse_request_json_lenient(request)
     attrs = data.get("feature", {}).get("attributes", {})
 
     def pick(*keys):
@@ -1719,13 +1777,14 @@ def esri_webhook():
 @app.route("/civil-paper-serves", methods=["POST"])
 @app.route("/esri-webhook1", methods=["POST"])
 def esri_webhook1():
-    data = request.json or {}
-    attrs = data.get("feature", {}).get("attributes", {})
+    data = request.get_json() or {}
+    attributes = data.get("feature", {}).get("attributes", {})
+    print("ATTRIBUTES:", attributes)
 
     def pick(*keys):
         for key in keys:
-            if key in attrs:
-                return attrs.get(key)
+            if key in attributes:
+                return attributes.get(key)
         return None
 
     def to_dt(ms):
@@ -1804,12 +1863,18 @@ def esri_webhook1():
             ensure_esri_webhook1_columns(cursor)
         except Exception as exc:
             print(f"WARNING: ensure_esri_webhook1_columns skipped: {exc}")
-        insert_search_record_civil_papers_webhook1(cursor, record)
+        record_id = insert_search_record_civil_papers_webhook1(cursor, record)
         conn.commit()
     finally:
         conn.close()
 
-    return jsonify({"status": "ok"})
+    return jsonify({
+        "status": "ok",
+        "record_id": record_id,
+        "case_number": record.get("case_number"),
+        "administrative_status": record.get("administrative_status"),
+        "served_by": record.get("served_by"),
+    })
 
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):
