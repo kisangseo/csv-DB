@@ -689,8 +689,35 @@ def insert_search_record_odyssey(cursor, record):
     return cursor.fetchone()[0]
 
 
+def _civil_duplicate_exists(cursor, case_number, administrative_status, served_by):
+    case_number = (case_number or "").strip()
+    administrative_status = (administrative_status or "").strip()
+    served_by = (served_by or "").strip()
+
+    if not (case_number and administrative_status and served_by):
+        return False
+
+    cursor.execute(
+        """
+        SELECT TOP 1 1
+        FROM search.records
+        WHERE department = 'Civil Papers'
+          AND LTRIM(RTRIM(ISNULL(case_number, ''))) = ?
+          AND LTRIM(RTRIM(ISNULL(administrative_status, ''))) = ?
+          AND LTRIM(RTRIM(ISNULL(served_by, ''))) = ?
+        """,
+        (case_number, administrative_status, served_by),
+    )
+    return cursor.fetchone() is not None
+
+
 def insert_search_record_civil_papers(cursor, record):
-    
+    case_number = record.get("Doc")
+    administrative_status = record.get("Service Disp")
+    served_by = record.get("Member Reporting")
+    if _civil_duplicate_exists(cursor, case_number, administrative_status, served_by):
+        return None
+
     sql = """
     INSERT INTO search.records (
         department,
@@ -880,6 +907,14 @@ def ensure_esri_webhook1_columns(cursor):
 def insert_search_record_civil_papers_webhook1(cursor, record):
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
+
+    if _civil_duplicate_exists(
+        cursor,
+        record.get("case_number"),
+        record.get("administrative_status"),
+        record.get("served_by"),
+    ):
+        return None
 
     payload = {
         "department": "Civil Papers",
