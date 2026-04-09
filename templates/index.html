@@ -508,19 +508,37 @@
         const modal = document.getElementById("recordModal");
         const title = document.getElementById("modalTitle");
         const tableSelect = document.getElementById("tableSelect");
+        const tableSelectRow = tableSelect.closest(".modal-table-row");
         const status = document.getElementById("modalStatus");
         status.textContent = "";
 
         activeEditContext = {mode, recordId, onSave};
         title.textContent = mode === "edit" ? "Edit Record" : "Add Record";
+        if (mode === "edit" && tableName) {
+          const hasTableOption = Array.from(tableSelect.options).some(opt => opt.value === tableName);
+          if (!hasTableOption) {
+            const opt = document.createElement("option");
+            opt.value = tableName;
+            opt.textContent = tableName;
+            tableSelect.appendChild(opt);
+          }
+        }
         tableSelect.value = tableName || tableSelect.options[0]?.value;
         tableSelect.disabled = mode === "edit" || lockTable;
+        if (tableSelectRow) {
+          tableSelectRow.style.display = mode === "edit" ? "none" : "";
+        }
         renderDynamicFields(tableSelect.value, values);
 
         modal.classList.remove("hidden");
       }
 
       function closeModal() {
+        const tableSelect = document.getElementById("tableSelect");
+        const tableSelectRow = tableSelect.closest(".modal-table-row");
+        if (tableSelectRow) {
+          tableSelectRow.style.display = "";
+        }
         document.getElementById("recordModal").classList.add("hidden");
         activeEditContext = null;
       }
@@ -707,7 +725,7 @@
         fields.forEach(field => {
           if (field === "full_name") out[field] = row.name || "";
           else if (field === "issue_date") out[field] = row.issue_date || row.record_date || "";
-          else if (field === "date_time_attempted") out[field] = row.date_time_attempted_iso || "";
+          else if (field === "date_time_attempted") out[field] = row.date_time_attempted_iso || row.date_time_served_iso || "";
           else out[field] = row[field] || "";
         });
         return {tableName, out};
@@ -753,7 +771,7 @@
       }
 
       function getCivilRowDateValue(row) {
-        return row.intake_date || row.issue_date || row.date_time_attempted || row.prior_attempt_date || row.date_received || row.record_date || "";
+        return row.intake_date || row.issue_date || row.date_time_attempted || row.date_time_served || row.prior_attempt_date || row.date_received || row.record_date || "";
       }
 
       function compareCivilRowsAsc(a, b) {
@@ -767,7 +785,7 @@
 
       function getCivilServedByValue(row) {
         const deputy = row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "";
-        const attemptedAt = row.date_time_attempted_display || "";
+        const attemptedAt = row.date_time_attempted_display || row.date_time_served_display || "";
         if (!deputy) return "";
         if (!attemptedAt) return deputy;
         return `${deputy} at ${attemptedAt}`;
