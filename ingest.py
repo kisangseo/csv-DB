@@ -742,7 +742,7 @@ def insert_search_record_civil_papers(cursor, record):
 
     values = tuple(clean(v) for v in (
     "Civil Papers",
-    "survey123",
+    "civil-paper-attempts",
 
     record.get("Doc"),
     record.get("type"),
@@ -881,7 +881,7 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
 
     payload = {
         "department": "Civil Papers",
-        "source_file": "survey123-webhook1",
+        "source_file": "civil-paper-serves",
         "intake_date": record.get("intake_date"),
         "case_number": record.get("case_number"),
         "re_issue": record.get("re_issue"),
