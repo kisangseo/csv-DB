@@ -837,6 +837,65 @@
         return parents.sort((a, b) => compareCivilRowsAsc(a.parent, b.parent));
       }
 
+      function getCivilRowDateValue(row) {
+        return row.intake_date || row.issue_date || row.date_time_attempted || row.date_time_served || row.prior_attempt_date || row.date_received || row.record_date || "";
+      }
+
+      function compareCivilRowsAsc(a, b) {
+        const aDate = getCivilRowDateValue(a);
+        const bDate = getCivilRowDateValue(b);
+        if (!aDate && !bDate) return 0;
+        if (!aDate) return -1;
+        if (!bDate) return 1;
+        return aDate.localeCompare(bDate);
+      }
+
+      function getCivilServedByValue(row) {
+        const deputy = row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "";
+        const attemptedAt = row.date_time_attempted_display || row.date_time_served_display || "";
+        if (!deputy) return "";
+        if (typeof deputy === "string" && /\sat\s\d{2}-\d{2}-\d{4}\s\d{2}:\d{2}\s(?:AM|PM)$/i.test(deputy.trim())) return deputy;
+        if (!attemptedAt) return deputy;
+        return `${deputy} at ${attemptedAt}`;
+      }
+
+      function buildCivilDisplayRows(rows) {
+        const CIVIL_SERVE_SOURCES = new Set(["civil-paper-serves", "survey123-webhook1"]);
+        const groups = new Map();
+        rows.forEach((row) => {
+          const caseKey = (row.case_number || "").trim().toLowerCase();
+          if (!caseKey) return;
+          if (!groups.has(caseKey)) groups.set(caseKey, []);
+          groups.get(caseKey).push({...row});
+        });
+
+        const parents = [];
+        groups.forEach((groupRows) => {
+          const sorted = [...groupRows].sort(compareCivilRowsAsc);
+          const webhook1Rows = sorted.filter((r) => CIVIL_SERVE_SOURCES.has((r.source_file || "").toLowerCase()));
+          const parent = (webhook1Rows[0] || sorted[0] || null);
+          if (!parent) return;
+
+          sorted.forEach((r) => {
+            r.served_by_display = getCivilServedByValue(r);
+          });
+          const children = sorted.filter((r) => r.record_id !== parent.record_id);
+          const latestWithServedBy = [...sorted]
+            .sort((a, b) => compareCivilRowsAsc(b, a))
+            .find((r) => getCivilServedByValue(r));
+          if (latestWithServedBy) {
+            parent.served_by = getCivilServedByValue(latestWithServedBy);
+            parent.served_by_display = parent.served_by;
+          }
+          parents.push({
+            parent,
+            children
+          });
+        });
+
+        return parents.sort((a, b) => compareCivilRowsAsc(a.parent, b.parent));
+      }
+
       function mergeEditedFieldsIntoRow(tableName, row, fields) {
         Object.keys(fields || {}).forEach((field) => {
           row[field] = fields[field];
