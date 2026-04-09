@@ -724,6 +724,59 @@
         });
       }
 
+      function getCivilRowDateValue(row) {
+        return row.intake_date || row.issue_date || row.date_time_attempted || row.prior_attempt_date || row.date_received || row.record_date || "";
+      }
+
+      function compareCivilRowsAsc(a, b) {
+        const aDate = getCivilRowDateValue(a);
+        const bDate = getCivilRowDateValue(b);
+        if (!aDate && !bDate) return 0;
+        if (!aDate) return -1;
+        if (!bDate) return 1;
+        return aDate.localeCompare(bDate);
+      }
+
+      function getCivilServedByValue(row) {
+        const deputy = row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "";
+        const attemptedAt = row.date_time_attempted_display || "";
+        if (!deputy) return "";
+        if (!attemptedAt) return deputy;
+        return `${deputy} at ${attemptedAt}`;
+      }
+
+      function buildCivilDisplayRows(rows) {
+        const groups = new Map();
+        rows.forEach((row) => {
+          const caseKey = (row.case_number || "").trim().toLowerCase();
+          if (!caseKey) return;
+          if (!groups.has(caseKey)) groups.set(caseKey, []);
+          groups.get(caseKey).push({...row});
+        });
+
+        const parents = [];
+        groups.forEach((groupRows) => {
+          const sorted = [...groupRows].sort(compareCivilRowsAsc);
+          const webhook1Rows = sorted.filter((r) => (r.source_file || "").toLowerCase() === "survey123-webhook1");
+          const parent = (webhook1Rows[0] || sorted[0] || null);
+          if (!parent) return;
+
+          const children = sorted.filter((r) => r.record_id !== parent.record_id);
+          const latestWithServedBy = [...sorted]
+            .sort((a, b) => compareCivilRowsAsc(b, a))
+            .find((r) => getCivilServedByValue(r));
+          if (latestWithServedBy) {
+            parent.served_by = getCivilServedByValue(latestWithServedBy);
+          }
+          parents.push({
+            parent,
+            children
+          });
+        });
+
+        return parents.sort((a, b) => compareCivilRowsAsc(a.parent, b.parent));
+      }
+
       function mergeEditedFieldsIntoRow(tableName, row, fields) {
         Object.keys(fields || {}).forEach((field) => {
           row[field] = fields[field];
@@ -1140,9 +1193,11 @@
 
             const content = document.createElement("div");
             content.className = "department-content";
+            const civilDisplayRows = dept.toLowerCase() === "civil papers" ? buildCivilDisplayRows(rows) : [];
             const countText = document.createElement("div");
             countText.className = "count";
-            countText.textContent = `Results: ${count} record${count !== 1 ? "s" : ""}`;
+            const displayedCount = dept.toLowerCase() === "civil papers" ? civilDisplayRows.length : count;
+            countText.textContent = `Results: ${displayedCount} record${displayedCount !== 1 ? "s" : ""}`;
             content.appendChild(countText);
 
             title.style.cursor = "pointer";
@@ -1186,7 +1241,10 @@
             table.appendChild(thead);
 
             const tbody = document.createElement("tbody");
-            rows.forEach(row => {
+            const rowsToRender = dept.toLowerCase() === "civil papers"
+              ? civilDisplayRows.map((entry) => entry.parent)
+              : rows;
+            rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
               const dataHeaders = headers.slice(0, -1);
               const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
@@ -1413,6 +1471,45 @@
               tr.appendChild(actionsTd);
 
               tbody.appendChild(tr);
+
+              if (dept.toLowerCase() === "civil papers") {
+                const civilEntry = civilDisplayRows.find((entry) => entry.parent.record_id === row.record_id);
+                const childRows = (civilEntry && civilEntry.children) || [];
+                childRows.forEach((child) => {
+                  const childTr = document.createElement("tr");
+                  childTr.className = "civil-child-row";
+                  childTr.style.display = "none";
+                  const childCells = dataHeaders.map((h) => getCellDisplayValue(h, child, dataHeaders, dept));
+                  childCells.forEach((val) => {
+                    const td = document.createElement("td");
+                    td.textContent = val;
+                    childTr.appendChild(td);
+                  });
+                  const childActionsTd = document.createElement("td");
+                  childActionsTd.className = "table-actions-cell";
+                  childActionsTd.textContent = "";
+                  childTr.appendChild(childActionsTd);
+                  tbody.appendChild(childTr);
+                });
+
+                if (childRows.length > 0) {
+                  tr.style.cursor = "pointer";
+                  tr.addEventListener("click", (event) => {
+                    const clickedInsideActions = event.target && event.target.closest && event.target.closest(".table-actions-cell");
+                    if (clickedInsideActions) return;
+                    let next = tr.nextSibling;
+                    let toggledAny = false;
+                    while (next && next.classList && next.classList.contains("civil-child-row")) {
+                      next.style.display = next.style.display === "none" ? "" : "none";
+                      toggledAny = true;
+                      next = next.nextSibling;
+                    }
+                    if (toggledAny) {
+                      tr.classList.toggle("expanded");
+                    }
+                  });
+                }
+              }
             });
 
             table.appendChild(tbody);
