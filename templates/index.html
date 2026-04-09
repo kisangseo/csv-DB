@@ -802,7 +802,7 @@
 
       function isCivilServedRecord(row) {
         const statusText = String(
-          row.disposition || row.administrative_status || row.order_disposition || ""
+          row.disposition || row.administrative_status || row.service_disp || row.order_disposition || ""
         ).toLowerCase();
         const servedByText = getCivilServedByValue(row).toLowerCase();
         const sourceFile = String(row.source_file || "").toLowerCase();
@@ -817,10 +817,32 @@
         return hasServedStatus || servedByText.length > 0;
       }
 
+      function normalizeCivilCaseKey(caseNumber) {
+        return String(caseNumber || "")
+          .replace(/[​-‍﻿]/g, "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "");
+      }
+
+      function normalizeCivilText(value) {
+        return String(value || "")
+          .replace(/[​-‍﻿]/g, "")
+          .trim()
+          .toLowerCase();
+      }
+
+      function getCivilDuplicateFingerprint(row) {
+        const caseKey = normalizeCivilCaseKey(row.case_number);
+        const deputy = normalizeCivilText(row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "");
+        const status = normalizeCivilText(row.administrative_status || row.service_disp || row.disposition || row.order_disposition || "");
+        const attemptedAt = normalizeCivilText(row.date_time_attempted_iso || row.date_time_served_iso || row.date_time_attempted || row.date_time_served || "");
+        return [caseKey, deputy, status, attemptedAt].join("|");
+      }
+
       function buildCivilDisplayRows(rows) {
         const groups = new Map();
         rows.forEach((row) => {
-          const caseKey = (row.case_number || "").trim().toLowerCase();
+          const caseKey = normalizeCivilCaseKey(row.case_number);
           if (!caseKey) return;
           if (!groups.has(caseKey)) groups.set(caseKey, []);
           groups.get(caseKey).push({...row});
@@ -828,7 +850,16 @@
 
         const parents = [];
         groups.forEach((groupRows) => {
-          const sorted = [...groupRows].sort(compareCivilRowsAsc);
+          const fingerprintedRows = new Map();
+          groupRows.forEach((row) => {
+            const fingerprint = getCivilDuplicateFingerprint(row);
+            const existing = fingerprintedRows.get(fingerprint);
+            if (!existing || Number(row.record_id || 0) > Number(existing.record_id || 0)) {
+              fingerprintedRows.set(fingerprint, {...row});
+            }
+          });
+
+          const sorted = [...fingerprintedRows.values()].sort(compareCivilRowsAsc);
           sorted.forEach((r) => {
             r.served_by_display = getCivilServedByValue(r);
           });
