@@ -695,6 +695,7 @@ def insert_search_record_civil_papers(cursor, record):
     INSERT INTO search.records (
         department,
         source_file,
+        intake_date,
         case_number,
         court_document_type,
         type_of_rfs,
@@ -734,7 +735,7 @@ def insert_search_record_civil_papers(cursor, record):
         objectid
     )
     OUTPUT INSERTED.record_id
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     def clean(v):
@@ -742,7 +743,8 @@ def insert_search_record_civil_papers(cursor, record):
 
     values = tuple(clean(v) for v in (
     "Civil Papers",
-    "survey123",
+    "civil-paper-attempts",
+    record.get("Date Received"),
 
     record.get("Doc"),
     record.get("type"),
@@ -881,7 +883,7 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
 
     payload = {
         "department": "Civil Papers",
-        "source_file": "survey123-webhook1",
+        "source_file": "civil-paper-serves",
         "intake_date": record.get("intake_date"),
         "case_number": record.get("case_number"),
         "re_issue": record.get("re_issue"),
