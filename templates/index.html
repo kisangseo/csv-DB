@@ -733,6 +733,9 @@
 
       function getCellDisplayValue(headerLabel, row, dataHeaders, dept) {
         if (headerLabel === "PDF Download") return row.pdf_download || "";
+        if (dept.toLowerCase() === "civil papers" && headerLabel === "Served By") {
+          return row.served_by_display || getCivilServedByValue(row) || "";
+        }
         if (dept.toLowerCase() === "dv pdf") {
           if (headerLabel === "Respondent Name") return row.respondent_name || "";
           if (headerLabel === "Issue Date") return row.issue_date || "";
@@ -787,6 +790,7 @@
         const deputy = row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "";
         const attemptedAt = row.date_time_attempted_display || row.date_time_served_display || "";
         if (!deputy) return "";
+        if (typeof deputy === "string" && /\sat\s\d{2}-\d{2}-\d{4}\s\d{2}:\d{2}\s(?:AM|PM)$/i.test(deputy.trim())) return deputy;
         if (!attemptedAt) return deputy;
         return `${deputy} at ${attemptedAt}`;
       }
@@ -807,12 +811,16 @@
           const parent = (webhook1Rows[0] || sorted[0] || null);
           if (!parent) return;
 
+          sorted.forEach((r) => {
+            r.served_by_display = getCivilServedByValue(r);
+          });
           const children = sorted.filter((r) => r.record_id !== parent.record_id);
           const latestWithServedBy = [...sorted]
             .sort((a, b) => compareCivilRowsAsc(b, a))
             .find((r) => getCivilServedByValue(r));
           if (latestWithServedBy) {
             parent.served_by = getCivilServedByValue(latestWithServedBy);
+            parent.served_by_display = parent.served_by;
           }
           parents.push({
             parent,
@@ -1533,7 +1541,33 @@
                   });
                   const childActionsTd = document.createElement("td");
                   childActionsTd.className = "table-actions-cell";
-                  childActionsTd.textContent = "";
+                  if (isActionableDept) {
+                    const childEditBtn = document.createElement("button");
+                    childEditBtn.type = "button";
+                    childEditBtn.textContent = "Edit";
+                    childEditBtn.className = "table-action-btn";
+                    childEditBtn.addEventListener("click", () => {
+                      if (!CAN_EDIT) {
+                        alert("You do not have permission to edit records.");
+                        return;
+                      }
+                      const {tableName, out} = mapRowToFields(dept, child);
+                      openModal({
+                        mode: "edit",
+                        tableName,
+                        values: out,
+                        recordId: child.record_id,
+                        onSave: ({savedFields}) => {
+                          mergeEditedFieldsIntoRow(tableName, child, savedFields);
+                          child.served_by_display = getCivilServedByValue(child);
+                          updateRenderedRowCells(childTr, child, dataHeaders, dept);
+                        }
+                      });
+                    });
+                    childActionsTd.appendChild(childEditBtn);
+                  } else {
+                    childActionsTd.textContent = "—";
+                  }
                   childTr.appendChild(childActionsTd);
                   tbody.appendChild(childTr);
                 });
