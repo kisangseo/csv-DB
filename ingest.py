@@ -921,29 +921,34 @@ def ensure_esri_webhook1_columns(cursor):
             ALTER TABLE search.records ADD due_date DATETIME NULL;
         IF COL_LENGTH('search.records', 'date_time_served') IS NULL
             ALTER TABLE search.records ADD date_time_served DATETIME NULL;
+        IF COL_LENGTH('search.records', 'full_name') IS NULL
+            ALTER TABLE search.records ADD full_name NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'address') IS NULL
+            ALTER TABLE search.records ADD address NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'apt') IS NULL
+            ALTER TABLE search.records ADD apt NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'petitioner_name') IS NULL
+            ALTER TABLE search.records ADD petitioner_name NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'disposition') IS NULL
+            ALTER TABLE search.records ADD disposition NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'service_disp') IS NULL
+            ALTER TABLE search.records ADD service_disp NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'resp_name') IS NULL
+            ALTER TABLE search.records ADD resp_name NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'doc_address') IS NULL
+            ALTER TABLE search.records ADD doc_address NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'method_of_service') IS NULL
+            ALTER TABLE search.records ADD method_of_service NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'date_time_attempted') IS NULL
+            ALTER TABLE search.records ADD date_time_attempted DATETIME NULL;
+        IF COL_LENGTH('search.records', 'notes_from_attempt') IS NULL
+            ALTER TABLE search.records ADD notes_from_attempt NVARCHAR(MAX) NULL;
     """)
 
 
 def insert_search_record_civil_papers_webhook1(cursor, record):
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
-
-    duplicate_record_id = _find_civil_duplicate_record_id(
-        cursor,
-        record.get("case_number"),
-        record.get("administrative_status"),
-        record.get("served_by"),
-    )
-    if duplicate_record_id:
-        cursor.execute(
-            """
-            UPDATE search.records
-            SET intake_date = COALESCE(intake_date, ?)
-            WHERE record_id = ?
-            """,
-            (record.get("intake_date"), duplicate_record_id),
-        )
-        return duplicate_record_id
 
     payload = {
         "department": "Civil Papers",
@@ -989,6 +994,19 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "date_time_served": record.get("date_time_served"),
         "globalid": record.get("globalid"),
         "objectid": record.get("objectid"),
+        # Backfill existing "Civil Papers" UI/search columns so serves data is visible
+        # in current site views that still read legacy field names.
+        "full_name": record.get("tenant_defendant_or_respondent"),
+        "address": record.get("tenant_defendant_or_respondent_address"),
+        "apt": record.get("apartment_unit_or_secondary_address"),
+        "petitioner_name": record.get("petitioner_or_plaintiff_name"),
+        "disposition": record.get("administrative_status"),
+        "service_disp": record.get("administrative_status"),
+        "resp_name": record.get("tenant_defendant_or_respondent"),
+        "doc_address": record.get("tenant_defendant_or_respondent_address"),
+        "method_of_service": record.get("service_method"),
+        "date_time_attempted": record.get("date_time_served"),
+        "notes_from_attempt": record.get("notes"),
     }
 
     cursor.execute("""
@@ -998,6 +1016,24 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     """)
     available = {row[0] for row in cursor.fetchall()}
     filtered = {k: clean(v) for k, v in payload.items() if k in available}
+
+    duplicate_record_id = _find_civil_duplicate_record_id(
+        cursor,
+        record.get("case_number"),
+        record.get("administrative_status"),
+        record.get("served_by"),
+    )
+    if duplicate_record_id:
+        update_values = {k: v for k, v in filtered.items() if k not in ("department", "source_file", "case_number")}
+        update_parts = [f"{col} = COALESCE({col}, ?)" for col in update_values]
+        if update_parts:
+            sql = f"""
+            UPDATE search.records
+            SET {", ".join(update_parts)}
+            WHERE record_id = ?
+            """
+            cursor.execute(sql, tuple(update_values[c] for c in update_values) + (duplicate_record_id,))
+        return duplicate_record_id
 
     columns = list(filtered.keys())
     placeholders = ", ".join(["?"] * len(columns))

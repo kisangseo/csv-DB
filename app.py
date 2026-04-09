@@ -51,6 +51,64 @@ _apt_backfill_attempted = False
 # permanently disabled: apt backfill should not run during search requests
 ENABLE_APT_BACKFILL_ON_SEARCH = False
 
+
+def parse_request_json_lenient(req):
+    """
+    Parse request JSON with a fallback that tolerates raw control characters
+    (like literal newlines) embedded in string values.
+    """
+    parsed = req.get_json(silent=True)
+    if parsed is not None:
+        return parsed
+
+    raw_text = req.get_data(as_text=True) or ""
+    if not raw_text.strip():
+        return {}
+
+    try:
+        return json.loads(_escape_control_chars_inside_json_strings(raw_text))
+    except Exception:
+        return {}
+
+
+def _escape_control_chars_inside_json_strings(text):
+    escaped = []
+    in_string = False
+    backslash_run = 0
+
+    for ch in text:
+        if ch == "\\":
+            escaped.append(ch)
+            backslash_run += 1
+            continue
+
+        is_escaped_quote = ch == '"' and (backslash_run % 2 == 1)
+        if ch == '"' and not is_escaped_quote:
+            in_string = not in_string
+            escaped.append(ch)
+            backslash_run = 0
+            continue
+
+        backslash_run = 0
+
+        if in_string:
+            if ch == "\n":
+                escaped.append("\\n")
+                continue
+            if ch == "\r":
+                escaped.append("\\r")
+                continue
+            if ch == "\t":
+                escaped.append("\\t")
+                continue
+            if ord(ch) < 0x20:
+                escaped.append(f"\\u{ord(ch):04x}")
+                continue
+
+        escaped.append(ch)
+
+    return "".join(escaped)
+
 def geocode_address(address):
     if not address:
         return None, None
@@ -1657,7 +1715,7 @@ def create_record():
 @app.route("/civil-paper-attempts", methods=["POST"])
 @app.route("/esri-webhook", methods=["POST"])
 def esri_webhook():
-    data = request.json or {}
+    data = parse_request_json_lenient(request)
     attrs = data.get("feature", {}).get("attributes", {})
 
     def pick(*keys):
@@ -1719,13 +1777,39 @@ def esri_webhook():
 @app.route("/civil-paper-serves", methods=["POST"])
 @app.route("/esri-webhook1", methods=["POST"])
 def esri_webhook1():
-    data = request.json or {}
-    attrs = data.get("feature", {}).get("attributes", {})
+    data = request.get_json() or {}
+    attributes = data.get("feature", {}).get("attributes", {})
+    print("ATTRIBUTES:", attributes)
+
+    def normalize_key(value):
+        text = str(value or "").replace("\n", " ").replace("\r", " ").lower().strip()
+        for ch in (",", ":", ";", "#", "-", "/", "(", ")", "[", "]"):
+            text = text.replace(ch, " ")
+        return " ".join(text.split())
+
+    normalized_attributes = {
+        normalize_key(key): value
+        for key, value in attributes.items()
+    }
 
     def pick(*keys):
         for key in keys:
-            if key in attrs:
-                return attrs.get(key)
+            direct = attributes.get(key)
+            if direct not in (None, ""):
+                return direct
+
+            normalized = normalized_attributes.get(normalize_key(key))
+            if normalized not in (None, ""):
+                return normalized
+
+        candidate_normalized_keys = list(normalized_attributes.keys())
+        for key in keys:
+            target = normalize_key(key)
+            for attr_key in candidate_normalized_keys:
+                if target and (target in attr_key or attr_key in target):
+                    value = normalized_attributes.get(attr_key)
+                    if value not in (None, ""):
+                        return value
         return None
 
     def to_dt(ms):
@@ -1759,21 +1843,38 @@ def esri_webhook1():
         "expiration_date": to_dt(pick("Expiration Date", "expiration_date")),
         "check_or_money_order_number": pick("Check or Money Order Number", "check_or_money_order_number"),
         "payment_amount": to_decimal(pick("Payment Amount", "payment_amount")),
-        "tenant_defendant_or_respondent": pick("Tenant, Defendant, or Respondent", "tenant_defendant_or_respondent"),
+        "tenant_defendant_or_respondent": pick(
+            "Tenant, Defendant, or Respondent",
+            "Tenant, Defendant, or Respondent Name",
+            "tenant_defendant_or_respondent",
+            "tenant_name",
+            "resp_name",
+        ),
         "tenant_defendant_or_respondent_address": pick(
             "Tenant, Defendant or Respondent Address",
+            "Tenant, Defendant, or Respondent Address",
+            "Defendant Address",
             "tenant_defendant_or_respondent_address",
+            "tenant_address",
+            "doc_address",
         ),
         "apartment_unit_or_secondary_address": pick(
             "Apartment, Unit or Secondary Address",
+            "Secondary Address",
             "apartment_unit_or_secondary_address",
+            "secondary_address",
+            "unit",
         ),
         "area_number": pick("Area Number", "area_number"),
         "post_number": pick("Post Number", "post_number"),
-        "petitioner_or_plaintiff_name": pick("Petitioner or Plaintiff Name", "petitioner_or_plaintiff_name"),
+        "petitioner_or_plaintiff_name": pick(
+            "Petitioner or Plaintiff Name",
+            "petitioner_or_plaintiff_name",
+            "petitioner_name",
+        ),
         "petitioner_address": pick("Petitioner Address", "petitioner_address"),
         "administrative_status": pick("Administrative Status", "administrative_status"),
-        "service_method": pick("Service Method", "service_method"),
+        "service_method": pick("Service Method", "method of service", "service_method", "method_of_service"),
         "scheduled_date": to_dt(pick("Scheduled Date", "scheduled_date")),
         "unable_to_serve_reason": pick("Unable to Serve Reason", "unable_to_serve_reason"),
         "relationship": pick("Relationship", "relationship"),
@@ -1782,7 +1883,7 @@ def esri_webhook1():
         "sex": pick("Sex", "sex"),
         "height": pick("Height", "height"),
         "weight": pick("Weight", "weight"),
-        "served_by": pick("Served By", "served_by"),
+        "served_by": pick("Served By", "Member Reporting", "served_by", "member_reporting"),
         "attempt_1": to_dt(pick("Attempt #1", "attempt_1")),
         "attempt_2": to_dt(pick("Attempt #2", "attempt_2")),
         "attempt_3": to_dt(pick("Attempt #3", "attempt_3")),
@@ -1804,12 +1905,18 @@ def esri_webhook1():
             ensure_esri_webhook1_columns(cursor)
         except Exception as exc:
             print(f"WARNING: ensure_esri_webhook1_columns skipped: {exc}")
-        insert_search_record_civil_papers_webhook1(cursor, record)
+        record_id = insert_search_record_civil_papers_webhook1(cursor, record)
         conn.commit()
     finally:
         conn.close()
 
-    return jsonify({"status": "ok"})
+    return jsonify({
+        "status": "ok",
+        "record_id": record_id,
+        "case_number": record.get("case_number"),
+        "administrative_status": record.get("administrative_status"),
+        "served_by": record.get("served_by"),
+    })
 
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):
