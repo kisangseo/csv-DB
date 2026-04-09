@@ -158,6 +158,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         FORMAT(COALESCE(issue_date, court_issued_date), 'yyyy-MM-dd') AS issue_date,
         FORMAT(intake_date, 'yyyy-MM-dd') AS intake_date,
         FORMAT(date_time_attempted, 'yyyy-MM-dd') AS date_time_attempted,
+        FORMAT(date_time_attempted, 'MM-dd-yyyy hh:mm tt') AS date_time_attempted_display,
         FORMAT(prior_attempt_date, 'yyyy-MM-dd') AS prior_attempt_date,
         FORMAT(date_received, 'yyyy-MM-dd') AS date_received,
         FORMAT(COALESCE(issue_date, court_issued_date, intake_date, date_time_attempted, prior_attempt_date, date_received), 'yyyy-MM-dd') AS record_date,

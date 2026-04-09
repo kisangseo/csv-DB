@@ -738,7 +738,11 @@
       }
 
       function getCivilServedByValue(row) {
-        return row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "";
+        const deputy = row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "";
+        const attemptedAt = row.date_time_attempted_display || "";
+        if (!deputy) return "";
+        if (!attemptedAt) return deputy;
+        return `${deputy} at ${attemptedAt}`;
       }
 
       function buildCivilDisplayRows(rows) {
