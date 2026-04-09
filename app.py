@@ -14,7 +14,7 @@ import time
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
-from pypdf import PdfReader
+from PyPDF2 import PdfReader
 from azure.storage.blob import (
     BlobSasPermissions,
     ContentSettings,
