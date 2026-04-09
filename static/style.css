@@ -222,6 +222,11 @@ tr:hover {
   transition: background-color 0.2s ease;
 }
 
+tr.civil-child-row td {
+  background-color: #f7f7ff;
+  padding-left: 18px;
+}
+
 /* ===== Responsive Design ===== */
 @media (max-width: 768px) {
   form {
