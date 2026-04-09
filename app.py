@@ -1017,7 +1017,6 @@ TABLE_DEFINITIONS = {
     "Civil Papers": {
         "department": "CIVIL PAPERS",
         "fields": [
-            "global_id",
             "intake_date",
             "case_number",
             "court_document_type",
@@ -1027,6 +1026,7 @@ TABLE_DEFINITIONS = {
             "petitioner_name",
             "disposition",
             "served_by",
+            "date_time_attempted",
             "notes",
         ],
     }
@@ -1036,10 +1036,11 @@ ALL_EDITABLE_COLUMNS = {
     "department", "source_file", "first_name", "last_name", "full_name", "date_of_birth", "sid",
     "case_number", "warrant_id_number", "warrant_type", "warrant_status", "issue_date", "intake_date",
     "address", "apt", "city", "state", "postal_code", "court_document_type", "disposition", "notes",
-    "sex", "race", "issuing_county", "facility", "global_id", "petitioner_name", "served_by", "x", "y"
+    "sex", "race", "issuing_county", "facility", "global_id", "petitioner_name", "served_by", "date_time_attempted", "x", "y"
 }
 
 DATE_FIELDS = {"date_of_birth", "issue_date", "intake_date"}
+DATETIME_FIELDS = {"date_time_attempted"}
 
 REQUIRED_FIELDS_BY_TABLE = {
     "BCSO Active Warrants": {"case_number", "warrant_type", "issue_date", "full_name", "warrant_status"}
@@ -1610,6 +1611,11 @@ def create_record():
             clean_value = None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
             if clean_value is None:
                 continue
+        elif column in DATETIME_FIELDS:
+            parsed = pd.to_datetime(clean_value, errors="coerce")
+            clean_value = None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d %H:%M:%S")
+            if clean_value is None:
+                continue
         insert_data[column] = clean_value
 
     if "full_name" not in insert_data:
@@ -1837,6 +1843,9 @@ def update_record(record_id):
             elif column in DATE_FIELDS:
                 parsed = pd.to_datetime(clean_value, errors="coerce")
                 db_value = None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+            elif column in DATETIME_FIELDS:
+                parsed = pd.to_datetime(clean_value, errors="coerce")
+                db_value = None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d %H:%M:%S")
             else:
                 db_value = clean_value
 

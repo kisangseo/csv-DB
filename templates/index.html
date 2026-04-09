@@ -273,6 +273,7 @@
         intake_date: "Intake Date",
         petitioner_name: "Petitioner or Plaintiff Name",
         served_by: "Served By",
+        date_time_attempted: "Served Date/Time",
         x: "X",
         y: "Y"
       };
@@ -283,7 +284,7 @@
         "BCSO Active Warrants": ["issuing_county","case_number","warrant_id_number","warrant_type","issue_date","warrant_status","full_name","sid","date_of_birth","race","sex","address","x","y","notes"],
         "Warrant of Restitution - MDEC": ["full_name","case_number","address","court_document_type","intake_date","disposition"],
         "Field Services Department": ["full_name","case_number","address","apt","intake_date","disposition","notes"],
-        "Civil Papers": ["global_id","intake_date","case_number","court_document_type","issue_date","full_name","address","petitioner_name","disposition","served_by","notes"]      };
+        "Civil Papers": ["intake_date","case_number","court_document_type","issue_date","full_name","address","petitioner_name","disposition","served_by","date_time_attempted","notes"]      };
 
       const BCSO_DROPDOWN_OPTIONS = {
         issuing_county: [
@@ -342,7 +343,7 @@
         ,"civil papers": "Civil Papers"
       };
 
-      const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants", "field services department"]);
+      const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants", "field services department", "civil papers"]);
       const LANDLORD_TENANT_DEPARTMENTS = new Set([
         "field services department",
         "field services department - civil intake",
@@ -429,6 +430,26 @@
         "Warrant of Restitution - Status",
         "DV PDF"
       ];
+
+      function getFieldLabelForTable(tableName, field) {
+        if (tableName === "Civil Papers") {
+          const civilFieldLabels = {
+            intake_date: "Intake Date",
+            case_number: "Case Number",
+            court_document_type: "Court Document Type",
+            issue_date: "Court Issued Date",
+            full_name: "Tenant, Defendant, or Respondent Name",
+            address: "Tenant, Defendant or Respondent Address",
+            petitioner_name: "Petitioner or Plaintiff Name",
+            disposition: "Administrative Status",
+            served_by: "Served By (Deputy Name)",
+            date_time_attempted: "Served Date/Time",
+            notes: "Comments",
+          };
+          return civilFieldLabels[field] || FIELD_LABELS[field] || field;
+        }
+        return FIELD_LABELS[field] || field;
+      }
 
       function addSectionHeaderActions(headerActions, departmentName) {
         const normalizedName = (departmentName || "").toLowerCase();
@@ -542,7 +563,7 @@
             hint.style.fontWeight = "400";
             label.appendChild(hint);
           } else {
-            label.textContent = `${FIELD_LABELS[field] || field}${isRequired ? " *" : ""}`;
+            label.textContent = `${getFieldLabelForTable(tableName, field)}${isRequired ? " *" : ""}`;
           }
 
           if (field === "address" && tableName === "BCSO Active Warrants" && isBcsoAdd) {
@@ -631,7 +652,7 @@
             if (bcsoOptions) {
               const emptyOption = document.createElement("option");
               emptyOption.value = "";
-              emptyOption.textContent = `Select ${FIELD_LABELS[field] || field}`;
+              emptyOption.textContent = `Select ${getFieldLabelForTable(tableName, field)}`;
               input.appendChild(emptyOption);
 
               bcsoOptions.forEach(optionValue => {
@@ -644,7 +665,13 @@
               input.value = values[field] ?? "";
             } else {
               if (field !== "notes") {
-                input.type = ["date_of_birth", "issue_date", "intake_date"].includes(field) ? "date" : "text";
+                if (["date_of_birth", "issue_date", "intake_date"].includes(field)) {
+                  input.type = "date";
+                } else if (field === "date_time_attempted") {
+                  input.type = "datetime-local";
+                } else {
+                  input.type = "text";
+                }
               }
               input.value = values[field] ?? "";
             }
@@ -679,7 +706,8 @@
 
         fields.forEach(field => {
           if (field === "full_name") out[field] = row.name || "";
-          else if (field === "issue_date") out[field] = row.record_date || "";
+          else if (field === "issue_date") out[field] = row.issue_date || row.record_date || "";
+          else if (field === "date_time_attempted") out[field] = row.date_time_attempted_iso || "";
           else out[field] = row[field] || "";
         });
         return {tableName, out};
@@ -845,7 +873,8 @@
 
         const status = document.getElementById("modalStatus");
         const tableName = document.getElementById("tableSelect").value;
-        if (!ADD_ALLOWED_TABLES.has(tableName)) {
+        const isEdit = activeEditContext && activeEditContext.mode === "edit";
+        if (!isEdit && !ADD_ALLOWED_TABLES.has(tableName)) {
           status.textContent = "Adding records is only available for Warrants to Audit and BCSO Active Warrants.";
           return;
         }
@@ -892,7 +921,6 @@
           return;
         }
 
-        const isEdit = activeEditContext && activeEditContext.mode === "edit";
         const url = isEdit
           ? `${window.location.origin}/records/${activeEditContext.recordId}`
           : `${window.location.origin}/records`;
@@ -1420,7 +1448,7 @@
                 actionsTd.appendChild(editBtn);
 
                 let deleteBtn = null;
-                if (!isLandlordTenantDept) {
+                if (!isLandlordTenantDept && deptKey !== "civil papers") {
                   deleteBtn = document.createElement("button");
                   deleteBtn.type = "button";
                   deleteBtn.textContent = "Delete";
