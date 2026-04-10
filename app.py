@@ -1761,6 +1761,7 @@ def esri_webhook():
         "globalid": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
     }
+
     conn = get_conn()
     try:
         cursor = conn.cursor()
@@ -1778,38 +1779,12 @@ def esri_webhook():
 def esri_webhook1():
     data = request.get_json() or {}
     attributes = data.get("feature", {}).get("attributes", {})
-    geometry = data.get("feature", {}).get("geometry", {}) or {}
     print("ATTRIBUTES:", attributes)
-
-    def normalize_key(value):
-        text = str(value or "").replace("\n", " ").replace("\r", " ").lower().strip()
-        for ch in (",", ":", ";", "#", "-", "/", "(", ")", "[", "]"):
-            text = text.replace(ch, " ")
-        return " ".join(text.split())
-
-    normalized_attributes = {
-        normalize_key(key): value
-        for key, value in attributes.items()
-    }
 
     def pick(*keys):
         for key in keys:
-            direct = attributes.get(key)
-            if direct not in (None, ""):
-                return direct
-
-            normalized = normalized_attributes.get(normalize_key(key))
-            if normalized not in (None, ""):
-                return normalized
-
-        candidate_normalized_keys = list(normalized_attributes.keys())
-        for key in keys:
-            target = normalize_key(key)
-            for attr_key in candidate_normalized_keys:
-                if target and (target in attr_key or attr_key in target):
-                    value = normalized_attributes.get(attr_key)
-                    if value not in (None, ""):
-                        return value
+            if key in attributes:
+                return attributes.get(key)
         return None
 
     def to_dt(ms):
@@ -1834,59 +1809,30 @@ def esri_webhook1():
         "intake_date": to_dt(pick("Intake Date", "intake_date")),
         "case_number": pick("Case Number", "case_number"),
         "re_issue": pick("Re-Issue", "re_issue"),
-        "court_document_type": pick("Court Document Type", "court_doc_type", "court_document_type"),
+        "court_document_type": pick("Court Document Type", "court_document_type"),
         "type_of_child_support": pick("Child Support Type", "child_support_type"),
-        "request_for_service_type": pick("Request for Service Type", "type_of_rfs_paper", "request_for_service_type"),
+        "request_for_service_type": pick("Request for Service Type", "request_for_service_type"),
         "court_issued_date": to_dt(pick("Court Issued Date", "court_issued_date")),
-        "trial_date": to_dt(pick("Trial Date", "trial_date", "court_of_trial_date")),
-        "service_days": to_int(pick("Service Days", "service_days", "days_for_service")),
+        "trial_date": to_dt(pick("Trial Date", "trial_date")),
+        "service_days": to_int(pick("Service Days", "service_days")),
         "expiration_date": to_dt(pick("Expiration Date", "expiration_date")),
-        "check_or_money_order_number": pick(
-            "Check or Money Order Number",
-            "check_or_money_order_number",
-            "check_of_money_order_number",
-        ),
+        "check_or_money_order_number": pick("Check or Money Order Number", "check_or_money_order_number"),
         "payment_amount": to_decimal(pick("Payment Amount", "payment_amount")),
-        "tenant_defendant_or_respondent": pick(
-            "Tenant, Defendant, or Respondent",
-            "Tenant, Defendant, or Respondent Name",
-            "tenant_defendant_or_respondent",
-            "tenant_name",
-            "resp_name",
-        ),
+        "tenant_defendant_or_respondent": pick("Tenant, Defendant, or Respondent", "tenant_defendant_or_respondent"),
         "tenant_defendant_or_respondent_address": pick(
             "Tenant, Defendant or Respondent Address",
-            "Tenant, Defendant, or Respondent Address",
-            "Defendant Address",
             "tenant_defendant_or_respondent_address",
-            "tenant_address",
-            "doc_address",
         ),
         "apartment_unit_or_secondary_address": pick(
             "Apartment, Unit or Secondary Address",
-            "Secondary Address",
             "apartment_unit_or_secondary_address",
-            "secondary_address",
-            "unit",
         ),
         "area_number": pick("Area Number", "area_number"),
         "post_number": pick("Post Number", "post_number"),
-        "petitioner_or_plaintiff_name": pick(
-            "Petitioner or Plaintiff Name",
-            "Petitioner or Plaintiff",
-            "petitioner_or_plaintiff_name",
-            "petitioner_name",
-        ),
+        "petitioner_or_plaintiff_name": pick("Petitioner or Plaintiff Name", "petitioner_or_plaintiff_name"),
         "petitioner_address": pick("Petitioner Address", "petitioner_address"),
-        "administrative_status": pick(
-            "Administrative Status",
-            "Admin Status",
-            "Service Disp",
-            "administrative_status",
-            "service_disp",
-            "disposition",
-        ),
-        "service_method": pick("Service Method", "method of service", "service_method", "method_of_service"),
+        "administrative_status": pick("Administrative Status", "administrative_status"),
+        "service_method": pick("Service Method", "service_method"),
         "scheduled_date": to_dt(pick("Scheduled Date", "scheduled_date")),
         "unable_to_serve_reason": pick("Unable to Serve Reason", "unable_to_serve_reason"),
         "relationship": pick("Relationship", "relationship"),
@@ -1895,55 +1841,19 @@ def esri_webhook1():
         "sex": pick("Sex", "sex"),
         "height": pick("Height", "height"),
         "weight": pick("Weight", "weight"),
-        "served_by": pick(
-            "Served By",
-            "served_by_name",
-            "Member Reporting",
-            "Serving or Attempting Deputy",
-            "Assigned Deputy",
-            "served_by",
-            "member_reporting",
-            "serving_or_attempting_deputy",
-            "assigned_deputy",
-        ),
+        "served_by": pick("Served By", "served_by"),
         "attempt_1": to_dt(pick("Attempt #1", "attempt_1")),
         "attempt_2": to_dt(pick("Attempt #2", "attempt_2")),
         "attempt_3": to_dt(pick("Attempt #3", "attempt_3")),
-        "notes": pick("Notes", "Comments", "Notes from Attempt", "notes", "notes_from_attempt"),
+        "notes": pick("Notes", "Comments", "notes"),
         "parcel_pin": pick("Parcel PIN", "parcel_pin"),
         "serving_or_attempting_deputy": pick("Serving or Attempting Deputy", "serving_or_attempting_deputy"),
-        "assigned_deputy": pick("Assigned Deputy", "Assigned_Deputy", "assigned_deputy"),
-        "due_date": to_dt(pick("Due Date", "Due_Date", "due_date")),
-        "date_time_served": to_dt(pick("Date and Time Served", "dateTime_Served", "date_time_served")),
+        "assigned_deputy": pick("Assigned Deputy", "assigned_deputy"),
+        "due_date": to_dt(pick("Due Date", "due_date")),
+        "date_time_served": to_dt(pick("Date and Time Served", "date_time_served")),
         "globalid": pick("globalid", "global_id"),
-        "global_id": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
-        "admin_status": pick("admin_status", "Administrative Status", "administrative_status"),
-        "type_of_rfs": pick("type_of_rfs_paper", "Request for Service Type", "request_for_service_type"),
-        "doc_address": pick(
-            "tenant_address",
-            "Tenant, Defendant or Respondent Address",
-            "Tenant, Defendant, or Respondent Address",
-            "doc_address",
-        ),
-        "unit": pick("secondary_address", "Apartment, Unit or Secondary Address", "unit"),
-        "resp_name": pick("tenant_name", "Tenant, Defendant, or Respondent", "resp_name"),
-        "member_reporting": pick("served_by_name", "Served By", "member_reporting"),
-        "service_disp": pick("admin_status", "Administrative Status", "service_disp", "disposition"),
-        "secondary_address": pick("secondary_address", "Secondary Address"),
-        "interview_completed": pick("interview_completed", "Interview Completed"),
-        "text2_hold": pick("text2", "text2_hold"),
-        "barcode": pick("barcode", "Barcode"),
-        "geom_x": geometry.get("x"),
-        "geom_y": geometry.get("y"),
     }
-    print(
-        "CIVIL_SERVES parsed fields | "
-        f"case_number={record.get('case_number')!r} | "
-        f"served_by={record.get('served_by')!r} | "
-        f"petitioner_or_plaintiff_name={record.get('petitioner_or_plaintiff_name')!r} | "
-        f"administrative_status={record.get('administrative_status')!r}"
-    )
 
     conn = get_conn()
     try:
@@ -1953,18 +1863,12 @@ def esri_webhook1():
             ensure_esri_webhook1_columns(cursor)
         except Exception as exc:
             print(f"WARNING: ensure_esri_webhook1_columns skipped: {exc}")
-        record_id = insert_search_record_civil_papers_webhook1(cursor, record)
+        insert_search_record_civil_papers_webhook1(cursor, record)
         conn.commit()
     finally:
         conn.close()
 
-    return jsonify({
-        "status": "ok",
-        "record_id": record_id,
-        "case_number": record.get("case_number"),
-        "administrative_status": record.get("administrative_status"),
-        "served_by": record.get("served_by"),
-    })
+    return jsonify({"status": "ok"})
 
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):
