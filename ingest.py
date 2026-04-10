@@ -928,22 +928,7 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
 
-    duplicate_record_id = _find_civil_duplicate_record_id(
-        cursor,
-        record.get("case_number"),
-        record.get("administrative_status"),
-        record.get("served_by"),
-    )
-    if duplicate_record_id:
-        cursor.execute(
-            """
-            UPDATE search.records
-            SET intake_date = COALESCE(intake_date, ?)
-            WHERE record_id = ?
-            """,
-            (record.get("intake_date"), duplicate_record_id),
-        )
-        return duplicate_record_id
+    
 
     payload = {
         "department": "Civil Papers",
