@@ -977,9 +977,11 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "type_of_child_support": record.get("type_of_child_support"),
         "request_for_service_type": record.get("request_for_service_type"),
         "court_issued_date": record.get("court_issued_date"),
+        "court_issue_date": record.get("court_issued_date"),
         "trial_date": record.get("trial_date"),
         "service_days": record.get("service_days"),
         "expiration_date": record.get("expiration_date"),
+        "expire_date": record.get("expiration_date"),
         "check_or_money_order_number": record.get("check_or_money_order_number"),
         "payment_amount": record.get("payment_amount"),
         "tenant_defendant_or_respondent": record.get("tenant_defendant_or_respondent"),
@@ -990,6 +992,7 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "petitioner_or_plaintiff_name": record.get("petitioner_or_plaintiff_name"),
         "petitioner_address": record.get("petitioner_address"),
         "administrative_status": record.get("administrative_status"),
+        "admin_status": record.get("admin_status"),
         "service_method": record.get("service_method"),
         "scheduled_date": record.get("scheduled_date"),
         "unable_to_serve_reason": record.get("unable_to_serve_reason"),
@@ -1010,7 +1013,23 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "due_date": record.get("due_date"),
         "date_time_served": record.get("date_time_served"),
         "globalid": record.get("globalid"),
+        "global_id": record.get("global_id"),
         "objectid": record.get("objectid"),
+<<<<<<< codex/fix-bad-request-error-on-line-breaks-mlz1z2
+        "type_of_rfs": record.get("type_of_rfs"),
+        "doc_address": record.get("doc_address"),
+        "unit": record.get("unit"),
+        "resp_name": record.get("resp_name"),
+        "member_reporting": record.get("member_reporting"),
+        "service_disp": record.get("service_disp"),
+        "secondary_address": record.get("secondary_address"),
+        "interview_completed": record.get("interview_completed"),
+        "text2_hold": record.get("text2_hold"),
+        "barcode": record.get("barcode"),
+        "geom_x": record.get("geom_x"),
+        "geom_y": record.get("geom_y"),
+=======
+>>>>>>> main
         # Backfill existing "Civil Papers" UI/search columns so serves data is visible
         # in current site views that still read legacy field names.
         "full_name": record.get("tenant_defendant_or_respondent"),

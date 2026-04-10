@@ -1778,6 +1778,7 @@ def esri_webhook():
 def esri_webhook1():
     data = request.get_json() or {}
     attributes = data.get("feature", {}).get("attributes", {})
+    geometry = data.get("feature", {}).get("geometry", {}) or {}
     print("ATTRIBUTES:", attributes)
 
     def normalize_key(value):
@@ -1833,14 +1834,9 @@ def esri_webhook1():
         "intake_date": to_dt(pick("Intake Date", "intake_date")),
         "case_number": pick("Case Number", "case_number"),
         "re_issue": pick("Re-Issue", "re_issue"),
-        "court_document_type": pick("Court Document Type", "court_document_type"),
+        "court_document_type": pick("Court Document Type", "court_doc_type", "court_document_type"),
         "type_of_child_support": pick("Child Support Type", "child_support_type"),
-        "request_for_service_type": pick(
-            "Request for Service Type",
-            "request_for_service_type",
-            "type_of_rfs_paper",
-            "request_for_service_other",
-        ),
+        "request_for_service_type": pick("Request for Service Type", "type_of_rfs_paper", "request_for_service_type"),
         "court_issued_date": to_dt(pick("Court Issued Date", "court_issued_date")),
         "trial_date": to_dt(pick("Trial Date", "trial_date", "court_of_trial_date")),
         "service_days": to_int(pick("Service Days", "service_days", "days_for_service")),
@@ -1873,27 +1869,25 @@ def esri_webhook1():
             "secondary_address",
             "unit",
         ),
-        "area_number": pick("Area Number", "area_number", "district_number"),
-        "post_number": pick("Post Number", "post_number", "service_area"),
+        "area_number": pick("Area Number", "area_number"),
+        "post_number": pick("Post Number", "post_number"),
         "petitioner_or_plaintiff_name": pick(
             "Petitioner or Plaintiff Name",
             "Petitioner or Plaintiff",
             "petitioner_or_plaintiff_name",
             "petitioner_name",
-            "petitioner_plaintiff_name",
         ),
-        "petitioner_address": pick("Petitioner Address", "petitioner_address", "petitioner_add2"),
+        "petitioner_address": pick("Petitioner Address", "petitioner_address"),
         "administrative_status": pick(
             "Administrative Status",
             "Admin Status",
             "Service Disp",
             "administrative_status",
-            "admin_status",
             "service_disp",
             "disposition",
         ),
         "service_method": pick("Service Method", "method of service", "service_method", "method_of_service"),
-        "scheduled_date": to_dt(pick("Scheduled Date", "scheduled_date", "date1")),
+        "scheduled_date": to_dt(pick("Scheduled Date", "scheduled_date")),
         "unable_to_serve_reason": pick("Unable to Serve Reason", "unable_to_serve_reason"),
         "relationship": pick("Relationship", "relationship"),
         "age": pick("Age", "age"),
@@ -1903,11 +1897,11 @@ def esri_webhook1():
         "weight": pick("Weight", "weight"),
         "served_by": pick(
             "Served By",
+            "served_by_name",
             "Member Reporting",
             "Serving or Attempting Deputy",
             "Assigned Deputy",
             "served_by",
-            "served_by_name",
             "member_reporting",
             "serving_or_attempting_deputy",
             "assigned_deputy",
@@ -1918,11 +1912,30 @@ def esri_webhook1():
         "notes": pick("Notes", "Comments", "Notes from Attempt", "notes", "notes_from_attempt"),
         "parcel_pin": pick("Parcel PIN", "parcel_pin"),
         "serving_or_attempting_deputy": pick("Serving or Attempting Deputy", "serving_or_attempting_deputy"),
-        "assigned_deputy": pick("Assigned Deputy", "assigned_deputy"),
-        "due_date": to_dt(pick("Due Date", "due_date")),
-        "date_time_served": to_dt(pick("Date and Time Served", "date_time_served", "dateTime_Served")),
+        "assigned_deputy": pick("Assigned Deputy", "Assigned_Deputy", "assigned_deputy"),
+        "due_date": to_dt(pick("Due Date", "Due_Date", "due_date")),
+        "date_time_served": to_dt(pick("Date and Time Served", "dateTime_Served", "date_time_served")),
         "globalid": pick("globalid", "global_id"),
+        "global_id": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
+        "admin_status": pick("admin_status", "Administrative Status", "administrative_status"),
+        "type_of_rfs": pick("type_of_rfs_paper", "Request for Service Type", "request_for_service_type"),
+        "doc_address": pick(
+            "tenant_address",
+            "Tenant, Defendant or Respondent Address",
+            "Tenant, Defendant, or Respondent Address",
+            "doc_address",
+        ),
+        "unit": pick("secondary_address", "Apartment, Unit or Secondary Address", "unit"),
+        "resp_name": pick("tenant_name", "Tenant, Defendant, or Respondent", "resp_name"),
+        "member_reporting": pick("served_by_name", "Served By", "member_reporting"),
+        "service_disp": pick("admin_status", "Administrative Status", "service_disp", "disposition"),
+        "secondary_address": pick("secondary_address", "Secondary Address"),
+        "interview_completed": pick("interview_completed", "Interview Completed"),
+        "text2_hold": pick("text2", "text2_hold"),
+        "barcode": pick("barcode", "Barcode"),
+        "geom_x": geometry.get("x"),
+        "geom_y": geometry.get("y"),
     }
     print(
         "CIVIL_SERVES parsed fields | "
