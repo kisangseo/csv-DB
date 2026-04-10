@@ -1024,8 +1024,12 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         record.get("served_by"),
     )
     if duplicate_record_id:
-        update_values = {k: v for k, v in filtered.items() if k not in ("department", "source_file", "case_number")}
-        update_parts = [f"{col} = COALESCE({col}, ?)" for col in update_values]
+        update_values = {
+            k: v for k, v in filtered.items()
+            if k not in ("department", "source_file", "case_number")
+            and v not in (None, "")
+        }
+        update_parts = [f"{col} = ?" for col in update_values]
         if update_parts:
             sql = f"""
             UPDATE search.records
