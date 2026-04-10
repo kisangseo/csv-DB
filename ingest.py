@@ -641,6 +641,101 @@ def insert_search_record_fsdw(cursor, record):
     return cursor.fetchone()[0]
 
 
+def insert_search_record_civil_papers_one_time(cursor, record):
+    columns = [
+        "department",
+        "source_file",
+        "objectid",
+        "global_id",
+        "globalid",
+        "intake_date",
+        "case_number",
+        "re_issue",
+        "court_document_type",
+        "type_of_child_support",
+        "request_for_service_type",
+        "issue_date",
+        "court_issued_date",
+        "trial_date",
+        "service_days",
+        "expiration_date",
+        "check_or_money_order_number",
+        "payment_amount",
+        "full_name",
+        "tenant_defendant_or_respondent",
+        "address",
+        "tenant_defendant_or_respondent_address",
+        "unit",
+        "apartment_unit_or_secondary_address",
+        "area_number",
+        "post_number",
+        "petitioner_name",
+        "petitioner_or_plaintiff_name",
+        "petitioner_address",
+        "secondary_address",
+        "disposition",
+        "administrative_status",
+        "unable_to_serve_reason",
+        "interview_completed",
+        "relationship",
+        "age",
+        "race",
+        "sex",
+        "height",
+        "weight",
+        "served_by",
+        "serving_or_attempting_deputy",
+        "attempt_1",
+        "attempt_2",
+        "attempt_3",
+        "notes",
+        "parcel_pin",
+        "service_method",
+        "scheduled_date",
+        "assigned_deputy",
+        "due_date",
+        "date_time_served",
+        "x",
+        "y",
+    ]
+
+    def clean(v):
+        return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
+
+    values = tuple(clean(record.get(col)) for col in columns)
+    value_by_col = dict(zip(columns, values))
+    global_id = value_by_col.get("global_id")
+
+    if global_id:
+        cursor.execute(
+            "SELECT TOP 1 record_id FROM search.records WHERE global_id = ?",
+            global_id,
+        )
+        existing = cursor.fetchone()
+        if existing:
+            record_id = existing[0]
+            update_columns = [col for col in columns if col != "global_id"]
+            assignments = ", ".join(f"{col} = ?" for col in update_columns)
+            update_values = [value_by_col[col] for col in update_columns] + [record_id]
+            cursor.execute(
+                f"UPDATE search.records SET {assignments} WHERE record_id = ?",
+                *update_values,
+            )
+            return record_id
+
+    placeholders = ", ".join(["?"] * len(columns))
+    column_list = ", ".join(columns)
+    cursor.execute(
+        f"""
+        INSERT INTO search.records ({column_list})
+        OUTPUT INSERTED.record_id
+        VALUES ({placeholders})
+        """,
+        *values,
+    )
+    return cursor.fetchone()[0]
+
+
 
 
 
@@ -1032,18 +1127,23 @@ def _print_civil_papers_insert_preview(cursor, source_file, sample_limit=5):
         """
         SELECT
             COUNT(*) AS total_rows,
-            SUM(CASE WHEN NULLIF(LTRIM(RTRIM(ISNULL(case_number, ''))), '') IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_case_number
+            SUM(CASE WHEN NULLIF(LTRIM(RTRIM(ISNULL(case_number, ''))), '') IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_case_number,
+            SUM(CASE WHEN NULLIF(LTRIM(RTRIM(ISNULL(global_id, ''))), '') IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_global_id,
+            SUM(CASE WHEN NULLIF(LTRIM(RTRIM(ISNULL(petitioner_name, ''))), '') IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_petitioner_name
         FROM search.records
         WHERE department = 'CIVIL PAPERS' AND source_file = ?
         """,
         source_file,
     )
-    total_rows, rows_with_case_number = cursor.fetchone()
+    total_rows, rows_with_case_number, rows_with_global_id, rows_with_petitioner_name = cursor.fetchone()
     rows_with_case_number = rows_with_case_number or 0
+    rows_with_global_id = rows_with_global_id or 0
+    rows_with_petitioner_name = rows_with_petitioner_name or 0
     print(
         "CIVIL PAPERS DB check "
         f"(department='CIVIL PAPERS', source_file='{source_file}'): "
-        f"rows={total_rows}, rows_with_case_number={rows_with_case_number}"
+        f"rows={total_rows}, rows_with_case_number={rows_with_case_number}, "
+        f"rows_with_global_id={rows_with_global_id}, rows_with_petitioner_name={rows_with_petitioner_name}"
     )
 
     cursor.execute(
@@ -1092,19 +1192,60 @@ def ingest_civil_papers_one_time(file_name="S123_e56eefee65cc474281ea615e46b0b89
             record = {
                 "department": "CIVIL PAPERS",
                 "source_file": source_file,
+                "objectid": safe_sql_int(_pick_row_value(row, "ObjectID")),
                 "global_id": _pick_row_value(row, "GlobalID"),
+                "globalid": _pick_row_value(row, "GlobalID"),
                 "intake_date": safe_sql_date(_pick_row_value(row, "Intake Date")),
                 "case_number": _pick_row_value(row, "Case Number"),
+                "re_issue": _pick_row_value(row, "Re-Issue"),
                 "court_document_type": _pick_row_value(row, "Court Document Type"),
+                "type_of_child_support": _pick_row_value(row, "Child Support Type"),
+                "request_for_service_type": _pick_row_value(row, "Request for Service Type"),
                 "issue_date": safe_sql_date(_pick_row_value(row, "Court Issued Date")),
+                "court_issued_date": safe_sql_date(_pick_row_value(row, "Court Issued Date")),
+                "trial_date": safe_sql_date(_pick_row_value(row, "Trial Date")),
+                "service_days": safe_sql_int(_pick_row_value(row, "Service Days")),
+                "expiration_date": safe_sql_date(_pick_row_value(row, "Expiration Date")),
+                "check_or_money_order_number": _pick_row_value(row, "Check or Money Order Number"),
+                "payment_amount": _pick_row_value(row, "Payment Amount"),
                 "full_name": _pick_row_value(row, "Tenant, Defendant, or Respondent Name"),
+                "tenant_defendant_or_respondent": _pick_row_value(row, "Tenant, Defendant, or Respondent Name"),
                 "address": _pick_row_value(row, "Tenant, Defendant or Respondent Address"),
+                "tenant_defendant_or_respondent_address": _pick_row_value(row, "Tenant, Defendant or Respondent Address"),
+                "unit": _pick_row_value(row, "Apartment, Unit or Secondary Address"),
+                "apartment_unit_or_secondary_address": _pick_row_value(row, "Apartment, Unit or Secondary Address"),
+                "area_number": _pick_row_value(row, "Area Number"),
+                "post_number": _pick_row_value(row, "Post Number"),
                 "petitioner_name": _pick_row_value(row, "Petitioner or Plaintiff Name"),
+                "petitioner_or_plaintiff_name": _pick_row_value(row, "Petitioner or Plaintiff Name"),
+                "petitioner_address": _pick_row_value(row, "Petitioner Address"),
+                "secondary_address": _pick_row_value(row, "Secondary Address"),
                 "disposition": _pick_row_value(row, "Administrative Status"),
+                "administrative_status": _pick_row_value(row, "Administrative Status"),
+                "unable_to_serve_reason": _pick_row_value(row, "Unable to Serve Reason"),
+                "interview_completed": _pick_row_value(row, "Interview Completed"),
+                "relationship": _pick_row_value(row, "Relationship"),
+                "age": safe_sql_int(_pick_row_value(row, "Age")),
+                "race": _pick_row_value(row, "Race"),
+                "sex": _pick_row_value(row, "Sex"),
+                "height": _pick_row_value(row, "Height"),
+                "weight": _pick_row_value(row, "Weight"),
                 "served_by": _pick_row_value(row, "Served By"),
+                "serving_or_attempting_deputy": _pick_row_value(row, "Serving or Attempting Deputy"),
+                "attempt_1": safe_sql_date(_pick_row_value(row, "Attempt #1")),
+                "attempt_2": safe_sql_date(_pick_row_value(row, "Attempt #2")),
+                "attempt_3": safe_sql_date(_pick_row_value(row, "Attempt #3")),
                 "notes": _pick_row_value(row, "Comments"),
+                "parcel_pin": _pick_row_value(row, "Parcel PIN"),
+                "service_method": _pick_row_value(row, "Service Method"),
+                "scheduled_date": safe_sql_date(_pick_row_value(row, "Scheduled Date")),
+                "assigned_deputy": _pick_row_value(row, "Assigned Deputy"),
+                "due_date": safe_sql_date(_pick_row_value(row, "Due Date")),
+                "date_time_served": safe_sql_date(_pick_row_value(row, "Date and Time Served")),
+                "x": _pick_row_value(row, "x"),
+                "y": _pick_row_value(row, "y"),
             }
-            record_id = insert_search_record_fsdw(cursor, record)
+            record_id = insert_search_record_civil_papers_one_time(cursor, record)
             insert_raw_record(cursor, record_id, source_file, row.to_dict())
             inserted += 1
 
@@ -1226,6 +1367,17 @@ def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
 def safe_sql_date(v):
     ts = pd.to_datetime(v, errors="coerce")
     return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
+
+def safe_sql_int(v):
+    if v is None:
+        return None
+    text = str(v).strip()
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_dedupe_text(value):

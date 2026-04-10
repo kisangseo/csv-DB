@@ -2218,7 +2218,14 @@ def delete_record(record_id):
         conn.close()
 
     return jsonify({"status": "success"})
-
+@app.route("/run-ingest", methods=["GET"])
+def run_ingest():
+    try:
+        from ingest import ingest_all_odyssey_civil_blobs
+        ingest_all_odyssey_civil_blobs()
+        return "OK", 200
+    except Exception as e:
+        return str(e), 500
 @app.route("/run-active-warrants", methods=["POST"])
 def run_active_warrants():
     
