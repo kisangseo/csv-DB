@@ -1163,12 +1163,7 @@ DV_PDF_CSV_BLOB_NAME = (
     or f"{EXPORTS_BLOB_PREFIX}/dv_pdf_records.csv"
 )
 ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
-CIVIL_PAPERS_FILES_CONTAINER = (
-    os.environ.get("CIVIL_PAPERS_FILES_CONTAINER", "civilpapers").strip() or "civilpapers"
-)
-CIVIL_PAPERS_FILES_PREFIX = (
-    os.environ.get("CIVIL_PAPERS_FILES_PREFIX", "civil_papers_files").strip().strip("/") or "civil_papers_files"
-)
+CIVIL_PAPERS_CONTAINER_NAME = "civilpapers"
 
 
 # Your actual containers:
@@ -1602,7 +1597,7 @@ def normalize_case_number_for_blob(case_number: str) -> str:
 def get_civil_files_container():
     if not CONNECTION_STRING:
         raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING env var.")
-    return ContainerClient.from_connection_string(CONNECTION_STRING, CIVIL_PAPERS_FILES_CONTAINER)
+    return ContainerClient.from_connection_string(CONNECTION_STRING, CIVIL_PAPERS_CONTAINER_NAME)
 
 
 @app.route("/civil-papers/files/upload", methods=["POST"])
@@ -1616,7 +1611,7 @@ def upload_civil_papers_file():
 
     safe_filename = secure_filename(uploaded.filename) or f"file-{uuid.uuid4().hex}"
     case_key = normalize_case_number_for_blob(case_number)
-    blob_name = f"{CIVIL_PAPERS_FILES_PREFIX}/{case_key}/{uuid.uuid4().hex}_{safe_filename}"
+    blob_name = f"{case_key}/{uuid.uuid4().hex}_{safe_filename}"
 
     try:
         container = get_civil_files_container()
@@ -1640,7 +1635,7 @@ def download_civil_papers_files():
         return jsonify({"error": "Missing case number"}), 400
 
     case_key = normalize_case_number_for_blob(case_number)
-    prefix = f"{CIVIL_PAPERS_FILES_PREFIX}/{case_key}/"
+    prefix = f"{case_key}/"
 
     try:
         container = get_civil_files_container()
