@@ -1032,14 +1032,10 @@ def ingest_civil_papers_one_time(file_name="S123_e56eefee65cc474281ea615e46b0b89
     One-time ingest for CIVIL PAPERS from a local CSV file located next to ingest.py.
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    candidate_paths = [
-        os.path.join(base_dir, file_name),
-        os.path.join(base_dir, "survey_0"),
-    ]
-    csv_path = next((p for p in candidate_paths if os.path.exists(p)), None)
-    if not csv_path:
+    csv_path = file_name if os.path.isabs(file_name) else os.path.join(base_dir, file_name)
+    if not os.path.exists(csv_path):
         raise FileNotFoundError(
-            f"Could not find '{file_name}' (or 'survey_0') in {base_dir}"
+            f"Could not find '{file_name}' in {base_dir}"
         )
 
     df = pd.read_csv(csv_path, low_memory=False)
@@ -2267,7 +2263,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                 "lka"
             ])
 
-            # IMPORTANT: Skip old/wrong-format files (like survey_0.csv with 46 columns)
+            # IMPORTANT: Skip legacy/wrong-format files with unexpected column counts.
             if df.shape[1] != 14:
                 print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob.name)
                 continue
