@@ -9,6 +9,7 @@ import tempfile
 import threading
 import uuid
 import io
+import zipfile
 import requests
 import time
 from difflib import SequenceMatcher
@@ -1161,6 +1162,12 @@ DV_PDF_CSV_BLOB_NAME = (
     or f"{EXPORTS_BLOB_PREFIX}/dv_pdf_records.csv"
 )
 ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
+CIVIL_PAPERS_FILES_CONTAINER = (
+    os.environ.get("CIVIL_PAPERS_FILES_CONTAINER", EXPORT_CONTAINER_NAME).strip() or EXPORT_CONTAINER_NAME
+)
+CIVIL_PAPERS_FILES_PREFIX = (
+    os.environ.get("CIVIL_PAPERS_FILES_PREFIX", "civil_papers_files").strip().strip("/") or "civil_papers_files"
+)
 
 
 # Your actual containers:
@@ -1577,6 +1584,103 @@ def get_dv_pdf_blob_client(blob_name):
 
     container = ContainerClient.from_connection_string(CONNECTION_STRING, DV_PDF_BLOB_CONTAINER)
     return container.get_blob_client(blob_name)
+
+
+def normalize_case_number_for_blob(case_number: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(case_number or "").strip())
+    cleaned = cleaned.strip("._-")
+    return cleaned or "unknown_case"
+
+
+def get_civil_files_container():
+    if not CONNECTION_STRING:
+        raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING env var.")
+    return ContainerClient.from_connection_string(CONNECTION_STRING, CIVIL_PAPERS_FILES_CONTAINER)
+
+
+@app.route("/civil-papers/files/upload", methods=["POST"])
+def upload_civil_papers_file():
+    uploaded = request.files.get("file")
+    case_number = (request.form.get("case_number") or "").strip()
+    if not case_number:
+        return jsonify({"error": "Missing case number"}), 400
+    if not uploaded or not uploaded.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    safe_filename = secure_filename(uploaded.filename) or f"file-{uuid.uuid4().hex}"
+    case_key = normalize_case_number_for_blob(case_number)
+    blob_name = f"{CIVIL_PAPERS_FILES_PREFIX}/{case_key}/{uuid.uuid4().hex}_{safe_filename}"
+
+    try:
+        container = get_civil_files_container()
+        blob_client = container.get_blob_client(blob_name)
+        blob_client.upload_blob(
+            uploaded.stream,
+            overwrite=False,
+            content_settings=ContentSettings(content_type=uploaded.mimetype or "application/octet-stream"),
+            metadata={"case_number": case_number[:128], "original_filename": safe_filename[:200]},
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Unable to upload file to blob storage: {exc}"}), 500
+
+    return jsonify({"ok": True, "blob_name": blob_name}), 201
+
+
+@app.route("/civil-papers/files/download")
+def download_civil_papers_files():
+    case_number = (request.args.get("case_number") or "").strip()
+    if not case_number:
+        return jsonify({"error": "Missing case number"}), 400
+
+    case_key = normalize_case_number_for_blob(case_number)
+    prefix = f"{CIVIL_PAPERS_FILES_PREFIX}/{case_key}/"
+
+    try:
+        container = get_civil_files_container()
+        blobs = [blob.name for blob in container.list_blobs(name_starts_with=prefix)]
+    except Exception as exc:
+        return jsonify({"error": f"Unable to list files from blob storage: {exc}"}), 500
+
+    if not blobs:
+        return jsonify({"error": "No files found for this case number"}), 404
+
+    if len(blobs) == 1:
+        blob_name = blobs[0]
+        try:
+            blob_client = container.get_blob_client(blob_name)
+            data = blob_client.download_blob().readall()
+            props = blob_client.get_blob_properties()
+        except Exception as exc:
+            return jsonify({"error": f"Unable to download file from blob storage: {exc}"}), 500
+
+        filename = (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
+        content_type = (props.content_settings.content_type if props.content_settings else None) or "application/octet-stream"
+        return send_file(
+            io.BytesIO(data),
+            mimetype=content_type,
+            as_attachment=True,
+            download_name=filename,
+        )
+
+    zip_buffer = io.BytesIO()
+    try:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for blob_name in blobs:
+                blob_client = container.get_blob_client(blob_name)
+                data = blob_client.download_blob().readall()
+                props = blob_client.get_blob_properties()
+                filename = (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
+                zf.writestr(filename, data)
+    except Exception as exc:
+        return jsonify({"error": f"Unable to create ZIP from blob files: {exc}"}), 500
+
+    zip_buffer.seek(0)
+    return send_file(
+        zip_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"civil_papers_{case_key}_files.zip",
+    )
 
 
 @app.route("/dv-pdf/file/<path:blob_name>")
