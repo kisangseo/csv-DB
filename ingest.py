@@ -1015,7 +1015,9 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "globalid": record.get("globalid"),
         "global_id": record.get("global_id"),
         "objectid": record.get("objectid"),
-<<<<<<< codex/fix-bad-request-error-on-line-breaks-mlz1z2
+        "type_of_rfs": record.get("type_of_rfs"),
+        "unit": record.get("unit"),
+        "member_reporting": record.get("member_reporting"),
         "type_of_rfs": record.get("type_of_rfs"),
         "doc_address": record.get("doc_address"),
         "unit": record.get("unit"),
@@ -1028,8 +1030,7 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "barcode": record.get("barcode"),
         "geom_x": record.get("geom_x"),
         "geom_y": record.get("geom_y"),
-=======
->>>>>>> main
+
         # Backfill existing "Civil Papers" UI/search columns so serves data is visible
         # in current site views that still read legacy field names.
         "full_name": record.get("tenant_defendant_or_respondent"),
