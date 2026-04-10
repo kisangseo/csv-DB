@@ -642,129 +642,97 @@ def insert_search_record_fsdw(cursor, record):
 
 
 def insert_search_record_civil_papers_one_time(cursor, record):
-    sql_prefix = """
-    INSERT INTO search.records (
-        department,
-        source_file,
-        objectid,
-        global_id,
-        globalid,
-        intake_date,
-        case_number,
-        re_issue,
-        court_document_type,
-        type_of_child_support,
-        request_for_service_type,
-        issue_date,
-        court_issued_date,
-        trial_date,
-        service_days,
-        expiration_date,
-        check_or_money_order_number,
-        payment_amount,
-        full_name,
-        tenant_defendant_or_respondent,
-        address,
-        tenant_defendant_or_respondent_address,
-        unit,
-        apartment_unit_or_secondary_address,
-        area_number,
-        post_number,
-        petitioner_name,
-        petitioner_or_plaintiff_name,
-        petitioner_address,
-        secondary_address,
-        disposition,
-        administrative_status,
-        unable_to_serve_reason,
-        interview_completed,
-        relationship,
-        age,
-        race,
-        sex,
-        height,
-        weight,
-        served_by,
-        serving_or_attempting_deputy,
-        attempt_1,
-        attempt_2,
-        attempt_3,
-        notes,
-        parcel_pin,
-        service_method,
-        scheduled_date,
-        assigned_deputy,
-        due_date,
-        date_time_served,
-        x,
-        y
-    )
-    OUTPUT INSERTED.record_id
-    """
+    columns = [
+        "department",
+        "source_file",
+        "objectid",
+        "global_id",
+        "globalid",
+        "intake_date",
+        "case_number",
+        "re_issue",
+        "court_document_type",
+        "type_of_child_support",
+        "request_for_service_type",
+        "issue_date",
+        "court_issued_date",
+        "trial_date",
+        "service_days",
+        "expiration_date",
+        "check_or_money_order_number",
+        "payment_amount",
+        "full_name",
+        "tenant_defendant_or_respondent",
+        "address",
+        "tenant_defendant_or_respondent_address",
+        "unit",
+        "apartment_unit_or_secondary_address",
+        "area_number",
+        "post_number",
+        "petitioner_name",
+        "petitioner_or_plaintiff_name",
+        "petitioner_address",
+        "secondary_address",
+        "disposition",
+        "administrative_status",
+        "unable_to_serve_reason",
+        "interview_completed",
+        "relationship",
+        "age",
+        "race",
+        "sex",
+        "height",
+        "weight",
+        "served_by",
+        "serving_or_attempting_deputy",
+        "attempt_1",
+        "attempt_2",
+        "attempt_3",
+        "notes",
+        "parcel_pin",
+        "service_method",
+        "scheduled_date",
+        "assigned_deputy",
+        "due_date",
+        "date_time_served",
+        "x",
+        "y",
+    ]
 
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
 
-    values = tuple(clean(v) for v in (
-        record.get("department"),
-        record.get("source_file"),
-        record.get("objectid"),
-        record.get("global_id"),
-        record.get("globalid"),
-        record.get("intake_date"),
-        record.get("case_number"),
-        record.get("re_issue"),
-        record.get("court_document_type"),
-        record.get("type_of_child_support"),
-        record.get("request_for_service_type"),
-        record.get("issue_date"),
-        record.get("court_issued_date"),
-        record.get("trial_date"),
-        record.get("service_days"),
-        record.get("expiration_date"),
-        record.get("check_or_money_order_number"),
-        record.get("payment_amount"),
-        record.get("full_name"),
-        record.get("tenant_defendant_or_respondent"),
-        record.get("address"),
-        record.get("tenant_defendant_or_respondent_address"),
-        record.get("unit"),
-        record.get("apartment_unit_or_secondary_address"),
-        record.get("area_number"),
-        record.get("post_number"),
-        record.get("petitioner_name"),
-        record.get("petitioner_or_plaintiff_name"),
-        record.get("petitioner_address"),
-        record.get("secondary_address"),
-        record.get("disposition"),
-        record.get("administrative_status"),
-        record.get("unable_to_serve_reason"),
-        record.get("interview_completed"),
-        record.get("relationship"),
-        record.get("age"),
-        record.get("race"),
-        record.get("sex"),
-        record.get("height"),
-        record.get("weight"),
-        record.get("served_by"),
-        record.get("serving_or_attempting_deputy"),
-        record.get("attempt_1"),
-        record.get("attempt_2"),
-        record.get("attempt_3"),
-        record.get("notes"),
-        record.get("parcel_pin"),
-        record.get("service_method"),
-        record.get("scheduled_date"),
-        record.get("assigned_deputy"),
-        record.get("due_date"),
-        record.get("date_time_served"),
-        record.get("x"),
-        record.get("y"),
-    ))
+    values = tuple(clean(record.get(col)) for col in columns)
+    value_by_col = dict(zip(columns, values))
+    global_id = value_by_col.get("global_id")
 
-    placeholders = ", ".join(["?"] * len(values))
-    sql = f"{sql_prefix}\n    VALUES ({placeholders})"
-    cursor.execute(sql, *values)
+    if global_id:
+        cursor.execute(
+            "SELECT TOP 1 record_id FROM search.records WHERE global_id = ?",
+            global_id,
+        )
+        existing = cursor.fetchone()
+        if existing:
+            record_id = existing[0]
+            update_columns = [col for col in columns if col != "global_id"]
+            assignments = ", ".join(f"{col} = ?" for col in update_columns)
+            update_values = [value_by_col[col] for col in update_columns] + [record_id]
+            cursor.execute(
+                f"UPDATE search.records SET {assignments} WHERE record_id = ?",
+                *update_values,
+            )
+            return record_id
+
+    placeholders = ", ".join(["?"] * len(columns))
+    column_list = ", ".join(columns)
+    cursor.execute(
+        f"""
+        INSERT INTO search.records ({column_list})
+        OUTPUT INSERTED.record_id
+        VALUES ({placeholders})
+        """,
+        *values,
+    )
     return cursor.fetchone()[0]
 
 
