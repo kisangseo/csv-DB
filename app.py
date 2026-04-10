@@ -1781,35 +1781,10 @@ def esri_webhook1():
     attributes = data.get("feature", {}).get("attributes", {})
     print("ATTRIBUTES:", attributes)
 
-    def normalize_key(value):
-        text = str(value or "").replace("\n", " ").replace("\r", " ").lower().strip()
-        for ch in (",", ":", ";", "#", "-", "/", "(", ")", "[", "]"):
-            text = text.replace(ch, " ")
-        return " ".join(text.split())
-
-    normalized_attributes = {
-        normalize_key(key): value
-        for key, value in attributes.items()
-    }
-
     def pick(*keys):
         for key in keys:
-            direct = attributes.get(key)
-            if direct not in (None, ""):
-                return direct
-
-            normalized = normalized_attributes.get(normalize_key(key))
-            if normalized not in (None, ""):
-                return normalized
-
-        candidate_normalized_keys = list(normalized_attributes.keys())
-        for key in keys:
-            target = normalize_key(key)
-            for attr_key in candidate_normalized_keys:
-                if target and (target in attr_key or attr_key in target):
-                    value = normalized_attributes.get(attr_key)
-                    if value not in (None, ""):
-                        return value
+            if key in attributes:
+                return attributes.get(key)
         return None
 
     def to_dt(ms):
@@ -1843,38 +1818,21 @@ def esri_webhook1():
         "expiration_date": to_dt(pick("Expiration Date", "expiration_date")),
         "check_or_money_order_number": pick("Check or Money Order Number", "check_or_money_order_number"),
         "payment_amount": to_decimal(pick("Payment Amount", "payment_amount")),
-        "tenant_defendant_or_respondent": pick(
-            "Tenant, Defendant, or Respondent",
-            "Tenant, Defendant, or Respondent Name",
-            "tenant_defendant_or_respondent",
-            "tenant_name",
-            "resp_name",
-        ),
+        "tenant_defendant_or_respondent": pick("Tenant, Defendant, or Respondent", "tenant_defendant_or_respondent"),
         "tenant_defendant_or_respondent_address": pick(
             "Tenant, Defendant or Respondent Address",
-            "Tenant, Defendant, or Respondent Address",
-            "Defendant Address",
             "tenant_defendant_or_respondent_address",
-            "tenant_address",
-            "doc_address",
         ),
         "apartment_unit_or_secondary_address": pick(
             "Apartment, Unit or Secondary Address",
-            "Secondary Address",
             "apartment_unit_or_secondary_address",
-            "secondary_address",
-            "unit",
         ),
         "area_number": pick("Area Number", "area_number"),
         "post_number": pick("Post Number", "post_number"),
-        "petitioner_or_plaintiff_name": pick(
-            "Petitioner or Plaintiff Name",
-            "petitioner_or_plaintiff_name",
-            "petitioner_name",
-        ),
+        "petitioner_or_plaintiff_name": pick("Petitioner or Plaintiff Name", "petitioner_or_plaintiff_name"),
         "petitioner_address": pick("Petitioner Address", "petitioner_address"),
         "administrative_status": pick("Administrative Status", "administrative_status"),
-        "service_method": pick("Service Method", "method of service", "service_method", "method_of_service"),
+        "service_method": pick("Service Method", "service_method"),
         "scheduled_date": to_dt(pick("Scheduled Date", "scheduled_date")),
         "unable_to_serve_reason": pick("Unable to Serve Reason", "unable_to_serve_reason"),
         "relationship": pick("Relationship", "relationship"),
@@ -1883,7 +1841,7 @@ def esri_webhook1():
         "sex": pick("Sex", "sex"),
         "height": pick("Height", "height"),
         "weight": pick("Weight", "weight"),
-        "served_by": pick("Served By", "Member Reporting", "served_by", "member_reporting"),
+        "served_by": pick("Served By", "served_by"),
         "attempt_1": to_dt(pick("Attempt #1", "attempt_1")),
         "attempt_2": to_dt(pick("Attempt #2", "attempt_2")),
         "attempt_3": to_dt(pick("Attempt #3", "attempt_3")),
@@ -1905,18 +1863,12 @@ def esri_webhook1():
             ensure_esri_webhook1_columns(cursor)
         except Exception as exc:
             print(f"WARNING: ensure_esri_webhook1_columns skipped: {exc}")
-        record_id = insert_search_record_civil_papers_webhook1(cursor, record)
+        insert_search_record_civil_papers_webhook1(cursor, record)
         conn.commit()
     finally:
         conn.close()
 
-    return jsonify({
-        "status": "ok",
-        "record_id": record_id,
-        "case_number": record.get("case_number"),
-        "administrative_status": record.get("administrative_status"),
-        "served_by": record.get("served_by"),
-    })
+    return jsonify({"status": "ok"})
 
 @app.route("/records/<int:record_id>", methods=["PATCH"])
 def update_record(record_id):
