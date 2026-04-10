@@ -1761,7 +1761,6 @@ def esri_webhook():
         "globalid": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
     }
-
     conn = get_conn()
     try:
         cursor = conn.cursor()
@@ -1839,10 +1838,14 @@ def esri_webhook1():
         "type_of_child_support": pick("Child Support Type", "child_support_type"),
         "request_for_service_type": pick("Request for Service Type", "type_of_rfs_paper", "request_for_service_type"),
         "court_issued_date": to_dt(pick("Court Issued Date", "court_issued_date")),
-        "trial_date": to_dt(pick("Trial Date", "trial_date")),
-        "service_days": to_int(pick("Service Days", "service_days")),
+        "trial_date": to_dt(pick("Trial Date", "trial_date", "court_of_trial_date")),
+        "service_days": to_int(pick("Service Days", "service_days", "days_for_service")),
         "expiration_date": to_dt(pick("Expiration Date", "expiration_date")),
-        "check_or_money_order_number": pick("Check or Money Order Number", "check_or_money_order_number"),
+        "check_or_money_order_number": pick(
+            "Check or Money Order Number",
+            "check_or_money_order_number",
+            "check_of_money_order_number",
+        ),
         "payment_amount": to_decimal(pick("Payment Amount", "payment_amount")),
         "tenant_defendant_or_respondent": pick(
             "Tenant, Defendant, or Respondent",
@@ -1934,6 +1937,13 @@ def esri_webhook1():
         "geom_x": geometry.get("x"),
         "geom_y": geometry.get("y"),
     }
+    print(
+        "CIVIL_SERVES parsed fields | "
+        f"case_number={record.get('case_number')!r} | "
+        f"served_by={record.get('served_by')!r} | "
+        f"petitioner_or_plaintiff_name={record.get('petitioner_or_plaintiff_name')!r} | "
+        f"administrative_status={record.get('administrative_status')!r}"
+    )
 
     conn = get_conn()
     try:
