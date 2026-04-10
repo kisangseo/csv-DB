@@ -642,7 +642,7 @@ def insert_search_record_fsdw(cursor, record):
 
 
 def insert_search_record_civil_papers_one_time(cursor, record):
-    sql = """
+    sql_prefix = """
     INSERT INTO search.records (
         department,
         source_file,
@@ -700,7 +700,6 @@ def insert_search_record_civil_papers_one_time(cursor, record):
         y
     )
     OUTPUT INSERTED.record_id
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     def clean(v):
@@ -763,6 +762,8 @@ def insert_search_record_civil_papers_one_time(cursor, record):
         record.get("y"),
     ))
 
+    placeholders = ", ".join(["?"] * len(values))
+    sql = f"{sql_prefix}\n    VALUES ({placeholders})"
     cursor.execute(sql, *values)
     return cursor.fetchone()[0]
 
