@@ -950,6 +950,23 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
 
+    def sync_display_columns(record_id):
+        cursor.execute(
+            """
+            UPDATE search.records
+            SET
+                full_name = COALESCE(NULLIF(full_name, ''), tenant_defendant_or_respondent, resp_name),
+                address = COALESCE(NULLIF(address, ''), tenant_defendant_or_respondent_address, doc_address),
+                petitioner_name = COALESCE(NULLIF(petitioner_name, ''), petitioner_or_plaintiff_name),
+                disposition = COALESCE(NULLIF(disposition, ''), administrative_status, service_disp),
+                served_by = COALESCE(NULLIF(served_by, ''), serving_or_attempting_deputy, member_reporting, return_deputy),
+                notes = COALESCE(NULLIF(notes, ''), notes_from_attempt),
+                date_time_attempted = COALESCE(date_time_attempted, date_time_served)
+            WHERE record_id = ?
+            """,
+            (record_id,),
+        )
+
     payload = {
         "department": "Civil Papers",
         "source_file": "civil-paper-serves",
@@ -1037,6 +1054,7 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
             WHERE record_id = ?
             """
             cursor.execute(sql, tuple(update_values[c] for c in update_values) + (duplicate_record_id,))
+        sync_display_columns(duplicate_record_id)
         return duplicate_record_id
 
     columns = list(filtered.keys())
@@ -1047,7 +1065,9 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     VALUES ({placeholders})
     """
     cursor.execute(sql, tuple(filtered[c] for c in columns))
-    return cursor.fetchone()[0]
+    new_record_id = cursor.fetchone()[0]
+    sync_display_columns(new_record_id)
+    return new_record_id
 
 
 def _pick_row_value(row, *candidates):
