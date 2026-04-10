@@ -1027,19 +1027,52 @@ def _normalize_postal_code(value):
     return m.group(1) if m else None
 
 
-def ingest_civil_papers_one_time(file_name="survey_0.csv"):
+def _print_civil_papers_insert_preview(cursor, source_file, sample_limit=5):
+    cursor.execute(
+        """
+        SELECT
+            COUNT(*) AS total_rows,
+            SUM(CASE WHEN NULLIF(LTRIM(RTRIM(ISNULL(case_number, ''))), '') IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_case_number
+        FROM search.records
+        WHERE department = 'CIVIL PAPERS' AND source_file = ?
+        """,
+        source_file,
+    )
+    total_rows, rows_with_case_number = cursor.fetchone()
+    rows_with_case_number = rows_with_case_number or 0
+    print(
+        "CIVIL PAPERS DB check "
+        f"(department='CIVIL PAPERS', source_file='{source_file}'): "
+        f"rows={total_rows}, rows_with_case_number={rows_with_case_number}"
+    )
+
+    cursor.execute(
+        """
+        SELECT TOP 5 case_number, full_name
+        FROM search.records
+        WHERE department = 'CIVIL PAPERS' AND source_file = ?
+        ORDER BY record_id DESC
+        """,
+        source_file,
+    )
+    sample_rows = cursor.fetchall()
+    if not sample_rows:
+        print("CIVIL PAPERS sample rows: none found.")
+        return
+    print("CIVIL PAPERS sample rows (latest):")
+    for case_number, full_name in sample_rows[:sample_limit]:
+        print(f"  case_number={case_number!r}, full_name={full_name!r}")
+
+
+def ingest_civil_papers_one_time(file_name="S123_e56eefee65cc474281ea615e46b0b89b_CSV (6).csv"):
     """
     One-time ingest for CIVIL PAPERS from a local CSV file located next to ingest.py.
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    candidate_paths = [
-        os.path.join(base_dir, file_name),
-        os.path.join(base_dir, "survey_0"),
-    ]
-    csv_path = next((p for p in candidate_paths if os.path.exists(p)), None)
-    if not csv_path:
+    csv_path = file_name if os.path.isabs(file_name) else os.path.join(base_dir, file_name)
+    if not os.path.exists(csv_path):
         raise FileNotFoundError(
-            f"Could not find '{file_name}' (or 'survey_0') in {base_dir}"
+            f"Could not find '{file_name}' in {base_dir}"
         )
 
     df = pd.read_csv(csv_path, low_memory=False)
@@ -1071,10 +1104,11 @@ def ingest_civil_papers_one_time(file_name="survey_0.csv"):
                 "served_by": _pick_row_value(row, "Served By"),
                 "notes": _pick_row_value(row, "Comments"),
             }
-            record_id = insert_search_record_civil_papers(cursor, record)
+            record_id = insert_search_record_fsdw(cursor, record)
             insert_raw_record(cursor, record_id, source_file, row.to_dict())
             inserted += 1
 
+        _print_civil_papers_insert_preview(cursor, source_file)
         conn.commit()
         print(f"CIVIL PAPERS one-time ingest complete. Inserted {inserted} rows from {source_file}.")
     finally:
@@ -2267,7 +2301,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                 "lka"
             ])
 
-            # IMPORTANT: Skip old/wrong-format files (like survey_0.csv with 46 columns)
+            # IMPORTANT: Skip legacy/wrong-format files with unexpected column counts.
             if df.shape[1] != 14:
                 print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob.name)
                 continue
