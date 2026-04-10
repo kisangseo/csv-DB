@@ -947,6 +947,78 @@
         resetLandlordTenantInlineEditState(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn);
       }
 
+      async function uploadCivilPaperFile(caseNumber, file, statusEl) {
+        if (!caseNumber) {
+          alert("Case number is missing for this record.");
+          return;
+        }
+        if (!file) return;
+
+        if (statusEl) statusEl.textContent = "Uploading...";
+
+        const formData = new FormData();
+        formData.append("case_number", caseNumber);
+        formData.append("file", file);
+
+        try {
+          const response = await fetch(`${window.location.origin}/civil-papers/files/upload`, {
+            method: "POST",
+            body: formData
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(data.error || "Upload failed.");
+          }
+          if (statusEl) statusEl.textContent = "Uploaded";
+        } catch (err) {
+          if (statusEl) statusEl.textContent = "Upload failed";
+          alert(err.message || "Upload failed.");
+        }
+      }
+
+      function appendCivilPaperFileActions(actionsTd, caseNumber) {
+        const uploadBtn = document.createElement("button");
+        uploadBtn.type = "button";
+        uploadBtn.textContent = "Upload File";
+        uploadBtn.className = "table-action-btn";
+
+        const downloadBtn = document.createElement("button");
+        downloadBtn.type = "button";
+        downloadBtn.textContent = "Download";
+        downloadBtn.className = "table-action-btn";
+
+        const fileInput = document.createElement("input");
+        fileInput.type = "file";
+        fileInput.style.display = "none";
+
+        const status = document.createElement("span");
+        status.className = "civil-file-action-status";
+        status.style.marginLeft = "6px";
+        status.style.fontSize = "12px";
+
+        uploadBtn.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", () => {
+          const selected = fileInput.files && fileInput.files[0];
+          uploadCivilPaperFile(caseNumber, selected, status);
+          fileInput.value = "";
+        });
+
+        downloadBtn.addEventListener("click", () => {
+          if (!caseNumber) {
+            alert("Case number is missing for this record.");
+            return;
+          }
+          const url = new URL(`${window.location.origin}/civil-papers/files/download`);
+          url.searchParams.set("case_number", caseNumber);
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
+        });
+
+        actionsTd.appendChild(uploadBtn);
+        actionsTd.appendChild(downloadBtn);
+        actionsTd.appendChild(fileInput);
+        actionsTd.appendChild(status);
+      }
+
       async function saveRecord() {
         if (!CAN_EDIT) {
           const status = document.getElementById("modalStatus");
@@ -1578,6 +1650,9 @@
                   });
                   actionsTd.appendChild(deleteBtn);
                 }
+                if (deptKey === "civil papers") {
+                  appendCivilPaperFileActions(actionsTd, row.case_number || "");
+                }
               } else {
                 actionsTd.textContent = "—";
               }
@@ -1625,6 +1700,9 @@
                       });
                     });
                     childActionsTd.appendChild(childEditBtn);
+                    if (dept.toLowerCase() === "civil papers") {
+                      appendCivilPaperFileActions(childActionsTd, child.case_number || "");
+                    }
                   } else {
                     childActionsTd.textContent = "—";
                   }
