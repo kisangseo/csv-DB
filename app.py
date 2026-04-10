@@ -1761,7 +1761,6 @@ def esri_webhook():
         "globalid": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
     }
-
     conn = get_conn()
     try:
         cursor = conn.cursor()
@@ -1913,6 +1912,13 @@ def esri_webhook1():
         "globalid": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
     }
+    print(
+        "CIVIL_SERVES parsed fields | "
+        f"case_number={record.get('case_number')!r} | "
+        f"served_by={record.get('served_by')!r} | "
+        f"petitioner_or_plaintiff_name={record.get('petitioner_or_plaintiff_name')!r} | "
+        f"administrative_status={record.get('administrative_status')!r}"
+    )
 
     conn = get_conn()
     try:
