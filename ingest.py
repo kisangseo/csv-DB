@@ -1015,6 +1015,7 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "globalid": record.get("globalid"),
         "global_id": record.get("global_id"),
         "objectid": record.get("objectid"),
+<<<<<<< codex/fix-bad-request-error-on-line-breaks-mlz1z2
         "type_of_rfs": record.get("type_of_rfs"),
         "doc_address": record.get("doc_address"),
         "unit": record.get("unit"),
@@ -1027,6 +1028,8 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "barcode": record.get("barcode"),
         "geom_x": record.get("geom_x"),
         "geom_y": record.get("geom_y"),
+=======
+>>>>>>> main
         # Backfill existing "Civil Papers" UI/search columns so serves data is visible
         # in current site views that still read legacy field names.
         "full_name": record.get("tenant_defendant_or_respondent"),
@@ -1049,6 +1052,40 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     """)
     available = {row[0] for row in cursor.fetchall()}
     filtered = {k: clean(v) for k, v in payload.items() if k in available}
+    expected_keys = ("petitioner_or_plaintiff_name", "administrative_status")
+    dropped_expected = [k for k in expected_keys if k not in filtered]
+    print(
+        "CIVIL_SERVES payload filter | "
+        f"record_case={record.get('case_number')!r} | "
+        f"raw_petitioner_or_plaintiff_name={record.get('petitioner_or_plaintiff_name')!r} | "
+        f"raw_administrative_status={record.get('administrative_status')!r} | "
+        f"filtered_petitioner_or_plaintiff_name={filtered.get('petitioner_or_plaintiff_name')!r} | "
+        f"filtered_administrative_status={filtered.get('administrative_status')!r} | "
+        f"dropped_expected_keys={dropped_expected}"
+    )
+
+    duplicate_record_id = _find_civil_duplicate_record_id(
+        cursor,
+        record.get("case_number"),
+        record.get("administrative_status"),
+        record.get("served_by"),
+    )
+    if duplicate_record_id:
+        update_values = {
+            k: v for k, v in filtered.items()
+            if k not in ("department", "source_file", "case_number")
+            and v not in (None, "")
+        }
+        update_parts = [f"{col} = ?" for col in update_values]
+        if update_parts:
+            sql = f"""
+            UPDATE search.records
+            SET {", ".join(update_parts)}
+            WHERE record_id = ?
+            """
+            cursor.execute(sql, tuple(update_values[c] for c in update_values) + (duplicate_record_id,))
+        sync_display_columns(duplicate_record_id)
+        return duplicate_record_id
 
     columns = list(filtered.keys())
     placeholders = ", ".join(["?"] * len(columns))
