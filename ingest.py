@@ -921,6 +921,28 @@ def ensure_esri_webhook1_columns(cursor):
             ALTER TABLE search.records ADD due_date DATETIME NULL;
         IF COL_LENGTH('search.records', 'date_time_served') IS NULL
             ALTER TABLE search.records ADD date_time_served DATETIME NULL;
+        IF COL_LENGTH('search.records', 'full_name') IS NULL
+            ALTER TABLE search.records ADD full_name NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'address') IS NULL
+            ALTER TABLE search.records ADD address NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'apt') IS NULL
+            ALTER TABLE search.records ADD apt NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'petitioner_name') IS NULL
+            ALTER TABLE search.records ADD petitioner_name NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'disposition') IS NULL
+            ALTER TABLE search.records ADD disposition NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'service_disp') IS NULL
+            ALTER TABLE search.records ADD service_disp NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'resp_name') IS NULL
+            ALTER TABLE search.records ADD resp_name NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'doc_address') IS NULL
+            ALTER TABLE search.records ADD doc_address NVARCHAR(500) NULL;
+        IF COL_LENGTH('search.records', 'method_of_service') IS NULL
+            ALTER TABLE search.records ADD method_of_service NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.records', 'date_time_attempted') IS NULL
+            ALTER TABLE search.records ADD date_time_attempted DATETIME NULL;
+        IF COL_LENGTH('search.records', 'notes_from_attempt') IS NULL
+            ALTER TABLE search.records ADD notes_from_attempt NVARCHAR(MAX) NULL;
     """)
 
 
@@ -928,22 +950,22 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     def clean(v):
         return None if v is None or (isinstance(v, float) and pd.isna(v)) else v
 
-    duplicate_record_id = _find_civil_duplicate_record_id(
-        cursor,
-        record.get("case_number"),
-        record.get("administrative_status"),
-        record.get("served_by"),
-    )
-    if duplicate_record_id:
+    def sync_display_columns(record_id):
         cursor.execute(
             """
             UPDATE search.records
-            SET intake_date = COALESCE(intake_date, ?)
+            SET
+                full_name = COALESCE(NULLIF(full_name, ''), tenant_defendant_or_respondent, resp_name),
+                address = COALESCE(NULLIF(address, ''), tenant_defendant_or_respondent_address, doc_address),
+                petitioner_name = COALESCE(NULLIF(petitioner_name, ''), petitioner_or_plaintiff_name),
+                disposition = COALESCE(NULLIF(disposition, ''), administrative_status, service_disp),
+                served_by = COALESCE(NULLIF(served_by, ''), serving_or_attempting_deputy, member_reporting, return_deputy),
+                notes = COALESCE(NULLIF(notes, ''), notes_from_attempt),
+                date_time_attempted = COALESCE(date_time_attempted, date_time_served)
             WHERE record_id = ?
             """,
-            (record.get("intake_date"), duplicate_record_id),
+            (record_id,),
         )
-        return duplicate_record_id
 
     payload = {
         "department": "Civil Papers",
@@ -955,9 +977,11 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "type_of_child_support": record.get("type_of_child_support"),
         "request_for_service_type": record.get("request_for_service_type"),
         "court_issued_date": record.get("court_issued_date"),
+        "court_issue_date": record.get("court_issued_date"),
         "trial_date": record.get("trial_date"),
         "service_days": record.get("service_days"),
         "expiration_date": record.get("expiration_date"),
+        "expire_date": record.get("expiration_date"),
         "check_or_money_order_number": record.get("check_or_money_order_number"),
         "payment_amount": record.get("payment_amount"),
         "tenant_defendant_or_respondent": record.get("tenant_defendant_or_respondent"),
@@ -968,6 +992,7 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "petitioner_or_plaintiff_name": record.get("petitioner_or_plaintiff_name"),
         "petitioner_address": record.get("petitioner_address"),
         "administrative_status": record.get("administrative_status"),
+        "admin_status": record.get("admin_status"),
         "service_method": record.get("service_method"),
         "scheduled_date": record.get("scheduled_date"),
         "unable_to_serve_reason": record.get("unable_to_serve_reason"),
@@ -988,7 +1013,30 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "due_date": record.get("due_date"),
         "date_time_served": record.get("date_time_served"),
         "globalid": record.get("globalid"),
+        "global_id": record.get("global_id"),
         "objectid": record.get("objectid"),
+        "type_of_rfs": record.get("type_of_rfs"),
+        "unit": record.get("unit"),
+        "member_reporting": record.get("member_reporting"),
+        "secondary_address": record.get("secondary_address"),
+        "interview_completed": record.get("interview_completed"),
+        "text2_hold": record.get("text2_hold"),
+        "barcode": record.get("barcode"),
+        "geom_x": record.get("geom_x"),
+        "geom_y": record.get("geom_y"),
+        # Backfill existing "Civil Papers" UI/search columns so serves data is visible
+        # in current site views that still read legacy field names.
+        "full_name": record.get("tenant_defendant_or_respondent"),
+        "address": record.get("tenant_defendant_or_respondent_address"),
+        "apt": record.get("apartment_unit_or_secondary_address"),
+        "petitioner_name": record.get("petitioner_or_plaintiff_name"),
+        "disposition": record.get("administrative_status"),
+        "service_disp": record.get("administrative_status"),
+        "resp_name": record.get("tenant_defendant_or_respondent"),
+        "doc_address": record.get("tenant_defendant_or_respondent_address"),
+        "method_of_service": record.get("service_method"),
+        "date_time_attempted": record.get("date_time_served"),
+        "notes_from_attempt": record.get("notes"),
     }
 
     cursor.execute("""
@@ -1007,7 +1055,9 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     VALUES ({placeholders})
     """
     cursor.execute(sql, tuple(filtered[c] for c in columns))
-    return cursor.fetchone()[0]
+    new_record_id = cursor.fetchone()[0]
+    sync_display_columns(new_record_id)
+    return new_record_id
 
 
 def _pick_row_value(row, *candidates):
