@@ -1065,28 +1065,49 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         f"dropped_expected_keys={dropped_expected}"
     )
 
-    duplicate_record_id = _find_civil_duplicate_record_id(
-        cursor,
-        record.get("case_number"),
-        record.get("administrative_status"),
-        record.get("served_by"),
-    )
-    if duplicate_record_id:
-        update_values = {
-            k: v for k, v in filtered.items()
-            if k not in ("department", "source_file", "case_number")
-            and v not in (None, "")
-        }
-        update_parts = [f"{col} = ?" for col in update_values]
-        if update_parts:
-            sql = f"""
-            UPDATE search.records
-            SET {", ".join(update_parts)}
-            WHERE record_id = ?
-            """
-            cursor.execute(sql, tuple(update_values[c] for c in update_values) + (duplicate_record_id,))
-        sync_display_columns(duplicate_record_id)
-        return duplicate_record_id
+    global_id = filtered.get("global_id") or filtered.get("globalid")
+
+    cursor.execute("""
+        SELECT TOP 1 *
+        FROM search.records
+        WHERE global_id = ?
+    """, global_id)
+
+    existing = cursor.fetchone()
+
+    def info_score(d):
+        return sum(1 for v in d.values() if v not in (None, "", " "))
+
+    if existing:
+        columns_existing = [col[0] for col in cursor.description]
+        existing_dict = dict(zip(columns_existing, existing))
+
+        if info_score(filtered) > info_score(existing_dict):
+            update_values = {
+                k: v for k, v in filtered.items()
+                if k not in ("department", "source_file", "case_number")
+                and v not in (None, "")
+            }
+
+            update_parts = [f"{col} = ?" for col in update_values]
+
+            if update_parts:
+                sql = f"""
+                UPDATE search.records
+                SET {", ".join(update_parts)}
+                WHERE global_id = ?
+                """
+                cursor.execute(
+                    sql,
+                    *[update_values[c] for c in update_values],
+                    global_id
+                )
+
+            record_id = existing_dict.get("record_id")
+            sync_display_columns(record_id)
+            return record_id
+
+        return existing_dict.get("record_id")
 
     columns = list(filtered.keys())
     placeholders = ", ".join(["?"] * len(columns))
