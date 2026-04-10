@@ -1224,7 +1224,7 @@ def ingest_civil_papers_one_time(file_name="S123_e56eefee65cc474281ea615e46b0b89
             record = {
                 "department": "CIVIL PAPERS",
                 "source_file": source_file,
-                "objectid": _pick_row_value(row, "ObjectID"),
+                "objectid": safe_sql_int(_pick_row_value(row, "ObjectID")),
                 "global_id": _pick_row_value(row, "GlobalID"),
                 "globalid": _pick_row_value(row, "GlobalID"),
                 "intake_date": safe_sql_date(_pick_row_value(row, "Intake Date")),
@@ -1236,7 +1236,7 @@ def ingest_civil_papers_one_time(file_name="S123_e56eefee65cc474281ea615e46b0b89
                 "issue_date": safe_sql_date(_pick_row_value(row, "Court Issued Date")),
                 "court_issued_date": safe_sql_date(_pick_row_value(row, "Court Issued Date")),
                 "trial_date": safe_sql_date(_pick_row_value(row, "Trial Date")),
-                "service_days": _pick_row_value(row, "Service Days"),
+                "service_days": safe_sql_int(_pick_row_value(row, "Service Days")),
                 "expiration_date": safe_sql_date(_pick_row_value(row, "Expiration Date")),
                 "check_or_money_order_number": _pick_row_value(row, "Check or Money Order Number"),
                 "payment_amount": _pick_row_value(row, "Payment Amount"),
@@ -1257,7 +1257,7 @@ def ingest_civil_papers_one_time(file_name="S123_e56eefee65cc474281ea615e46b0b89
                 "unable_to_serve_reason": _pick_row_value(row, "Unable to Serve Reason"),
                 "interview_completed": _pick_row_value(row, "Interview Completed"),
                 "relationship": _pick_row_value(row, "Relationship"),
-                "age": _pick_row_value(row, "Age"),
+                "age": safe_sql_int(_pick_row_value(row, "Age")),
                 "race": _pick_row_value(row, "Race"),
                 "sex": _pick_row_value(row, "Sex"),
                 "height": _pick_row_value(row, "Height"),
@@ -1399,6 +1399,17 @@ def insert_raw_record(cursor, record_id, source_file, raw_row_dict):
 def safe_sql_date(v):
     ts = pd.to_datetime(v, errors="coerce")
     return None if pd.isna(ts) else ts.strftime("%Y-%m-%d")
+
+def safe_sql_int(v):
+    if v is None:
+        return None
+    text = str(v).strip()
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_dedupe_text(value):
