@@ -989,10 +989,14 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
         "apartment_unit_or_secondary_address": record.get("apartment_unit_or_secondary_address"),
         "area_number": record.get("area_number"),
         "post_number": record.get("post_number"),
-        "petitioner_or_plaintiff_name": record.get("petitioner_or_plaintiff_name"),
-        "petitioner_address": record.get("petitioner_address"),
+        
+        "petitioner_or_plaintiff_name": (
+            record.get("petitioner_or_plaintiff_name")
+            or record.get("petitioner_plaintiff_name")
+            or record.get("Petitioner or Plaintiff Name")
+        ),
         "administrative_status": record.get("administrative_status"),
-        "admin_status": record.get("admin_status"),
+        
         "service_method": record.get("service_method"),
         "scheduled_date": record.get("scheduled_date"),
         "unable_to_serve_reason": record.get("unable_to_serve_reason"),
