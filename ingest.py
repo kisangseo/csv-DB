@@ -1033,6 +1033,17 @@ def insert_search_record_civil_papers_webhook1(cursor, record):
     """)
     available = {row[0] for row in cursor.fetchall()}
     filtered = {k: clean(v) for k, v in payload.items() if k in available}
+    expected_keys = ("petitioner_or_plaintiff_name", "administrative_status")
+    dropped_expected = [k for k in expected_keys if k not in filtered]
+    print(
+        "CIVIL_SERVES payload filter | "
+        f"record_case={record.get('case_number')!r} | "
+        f"raw_petitioner_or_plaintiff_name={record.get('petitioner_or_plaintiff_name')!r} | "
+        f"raw_administrative_status={record.get('administrative_status')!r} | "
+        f"filtered_petitioner_or_plaintiff_name={filtered.get('petitioner_or_plaintiff_name')!r} | "
+        f"filtered_administrative_status={filtered.get('administrative_status')!r} | "
+        f"dropped_expected_keys={dropped_expected}"
+    )
 
     duplicate_record_id = _find_civil_duplicate_record_id(
         cursor,

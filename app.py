@@ -1761,7 +1761,6 @@ def esri_webhook():
         "globalid": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
     }
-
     conn = get_conn()
     try:
         cursor = conn.cursor()
@@ -1836,12 +1835,21 @@ def esri_webhook1():
         "re_issue": pick("Re-Issue", "re_issue"),
         "court_document_type": pick("Court Document Type", "court_document_type"),
         "type_of_child_support": pick("Child Support Type", "child_support_type"),
-        "request_for_service_type": pick("Request for Service Type", "request_for_service_type"),
+        "request_for_service_type": pick(
+            "Request for Service Type",
+            "request_for_service_type",
+            "type_of_rfs_paper",
+            "request_for_service_other",
+        ),
         "court_issued_date": to_dt(pick("Court Issued Date", "court_issued_date")),
-        "trial_date": to_dt(pick("Trial Date", "trial_date")),
-        "service_days": to_int(pick("Service Days", "service_days")),
+        "trial_date": to_dt(pick("Trial Date", "trial_date", "court_of_trial_date")),
+        "service_days": to_int(pick("Service Days", "service_days", "days_for_service")),
         "expiration_date": to_dt(pick("Expiration Date", "expiration_date")),
-        "check_or_money_order_number": pick("Check or Money Order Number", "check_or_money_order_number"),
+        "check_or_money_order_number": pick(
+            "Check or Money Order Number",
+            "check_or_money_order_number",
+            "check_of_money_order_number",
+        ),
         "payment_amount": to_decimal(pick("Payment Amount", "payment_amount")),
         "tenant_defendant_or_respondent": pick(
             "Tenant, Defendant, or Respondent",
@@ -1865,25 +1873,27 @@ def esri_webhook1():
             "secondary_address",
             "unit",
         ),
-        "area_number": pick("Area Number", "area_number"),
-        "post_number": pick("Post Number", "post_number"),
+        "area_number": pick("Area Number", "area_number", "district_number"),
+        "post_number": pick("Post Number", "post_number", "service_area"),
         "petitioner_or_plaintiff_name": pick(
             "Petitioner or Plaintiff Name",
             "Petitioner or Plaintiff",
             "petitioner_or_plaintiff_name",
             "petitioner_name",
+            "petitioner_plaintiff_name",
         ),
-        "petitioner_address": pick("Petitioner Address", "petitioner_address"),
+        "petitioner_address": pick("Petitioner Address", "petitioner_address", "petitioner_add2"),
         "administrative_status": pick(
             "Administrative Status",
             "Admin Status",
             "Service Disp",
             "administrative_status",
+            "admin_status",
             "service_disp",
             "disposition",
         ),
         "service_method": pick("Service Method", "method of service", "service_method", "method_of_service"),
-        "scheduled_date": to_dt(pick("Scheduled Date", "scheduled_date")),
+        "scheduled_date": to_dt(pick("Scheduled Date", "scheduled_date", "date1")),
         "unable_to_serve_reason": pick("Unable to Serve Reason", "unable_to_serve_reason"),
         "relationship": pick("Relationship", "relationship"),
         "age": pick("Age", "age"),
@@ -1897,6 +1907,7 @@ def esri_webhook1():
             "Serving or Attempting Deputy",
             "Assigned Deputy",
             "served_by",
+            "served_by_name",
             "member_reporting",
             "serving_or_attempting_deputy",
             "assigned_deputy",
@@ -1909,10 +1920,17 @@ def esri_webhook1():
         "serving_or_attempting_deputy": pick("Serving or Attempting Deputy", "serving_or_attempting_deputy"),
         "assigned_deputy": pick("Assigned Deputy", "assigned_deputy"),
         "due_date": to_dt(pick("Due Date", "due_date")),
-        "date_time_served": to_dt(pick("Date and Time Served", "date_time_served")),
+        "date_time_served": to_dt(pick("Date and Time Served", "date_time_served", "dateTime_Served")),
         "globalid": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
     }
+    print(
+        "CIVIL_SERVES parsed fields | "
+        f"case_number={record.get('case_number')!r} | "
+        f"served_by={record.get('served_by')!r} | "
+        f"petitioner_or_plaintiff_name={record.get('petitioner_or_plaintiff_name')!r} | "
+        f"administrative_status={record.get('administrative_status')!r}"
+    )
 
     conn = get_conn()
     try:
