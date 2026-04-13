@@ -12,6 +12,8 @@ import io
 import zipfile
 import requests
 import time
+import subprocess
+import sys
 from difflib import SequenceMatcher
 import pandas as pd
 import chardet
@@ -2222,8 +2224,29 @@ def delete_record(record_id):
 def run_ingest():
     try:
         from ingest import ingest_all_odyssey_civil_blobs
+
+        # 1) Ingest odyssey civil blobs in-process
         ingest_all_odyssey_civil_blobs()
-        return "OK", 200
+
+        # 2) Run extraction/ingest scripts in order as subprocesses
+        commands = [
+            [sys.executable, "extract_doc_pop.py"],
+            [sys.executable, "extract_jail_pop.py"],
+            [sys.executable, "ingest_jail_csv.py"],
+            [sys.executable, "ingest_doc_csv.py"],
+        ]
+
+        for cmd in commands:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                return jsonify({
+                    "status": "error",
+                    "failed_command": " ".join(cmd),
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                }), 500
+
+        return jsonify({"status": "ok"}), 200
     except Exception as e:
         return str(e), 500
 @app.route("/run-active-warrants", methods=["POST"])
