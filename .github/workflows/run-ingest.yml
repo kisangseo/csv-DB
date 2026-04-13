@@ -1,0 +1,43 @@
+name: run-ingest
+
+on:
+  schedule:
+    - cron: "0 * * * *" # every hour
+  workflow_dispatch:
+
+concurrency:
+  group: run-ingest-main
+  cancel-in-progress: false
+
+jobs:
+  run-ingest:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger ingest pipeline endpoint
+        run: |
+          response="$(curl --fail --show-error --silent "https://bcso-service-case-docs-e7hfcmdva0gpgphd.centralus-01.azurewebsites.net/run-ingest")"
+          echo "Raw endpoint response:"
+          echo "$response"
+          RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+          import sys
+
+          raw = os.environ.get("RESPONSE", "")
+          normalized = raw.strip().lower()
+          if normalized in {"ok", "started"}:
+            print(f"Endpoint returned plain '{normalized}' (accepted).")
+            sys.exit(0)
+
+          try:
+            data = json.loads(raw)
+          except Exception:
+            print("Endpoint did not return valid JSON.")
+            sys.exit(1)
+
+          if data.get("status") != "ok":
+            print("Endpoint returned non-ok status:", data)
+            sys.exit(1)
+          PY
