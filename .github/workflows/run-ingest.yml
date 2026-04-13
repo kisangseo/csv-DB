@@ -47,7 +47,8 @@ jobs:
               print(f"HTTP status was {http_status}. Failing.")
             sys.exit(1)
 
-          if data.get("status") != "ok":
+          state = (data.get("status") or "").lower()
+          if state not in {"ok", "started", "running"}:
             print("Endpoint returned non-ok status:", data)
             sys.exit(1)
 
