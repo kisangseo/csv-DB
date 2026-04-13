@@ -1,0 +1,23 @@
+name: run-ingest
+
+on:
+  schedule:
+    - cron: "0 * * * *" # every hour
+  workflow_dispatch:
+
+concurrency:
+  group: run-ingest-main
+  cancel-in-progress: false
+
+jobs:
+  run-ingest:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      ENDPOINT_URL: https://bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/run-ingest
+
+    steps:
+      - name: Trigger ingest pipeline endpoint
+        run: |
+          echo "Calling: $ENDPOINT_URL"
+          curl --show-error --silent --location "$ENDPOINT_URL"
