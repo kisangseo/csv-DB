@@ -13,11 +13,14 @@ jobs:
   run-ingest:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      ENDPOINT_URL: https://bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/run-ingest
 
     steps:
       - name: Trigger ingest pipeline endpoint
         run: |
-          response="$(curl --fail --show-error --silent "bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/run-ingest")"
+          echo "Calling: $ENDPOINT_URL"
+          response="$(curl --fail --show-error --silent "$ENDPOINT_URL")"
           echo "Raw endpoint response:"
           echo "$response"
           RESPONSE="$response" python - <<'PY'
