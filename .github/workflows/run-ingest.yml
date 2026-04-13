@@ -17,4 +17,21 @@ jobs:
     steps:
       - name: Trigger ingest pipeline endpoint
         run: |
-          curl --fail --show-error --silent "https://bcso-service-case-docs-e7hfcmdva0gpgphd.centralus-01.azurewebsites.net/run-ingest"
+          response="$(curl --fail --show-error --silent "https://bcso-service-case-docs-e7hfcmdva0gpgphd.centralus-01.azurewebsites.net/run-ingest")"
+          echo "$response"
+          RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+          import sys
+
+          raw = os.environ.get("RESPONSE", "")
+          try:
+            data = json.loads(raw)
+          except Exception:
+            print("Endpoint did not return valid JSON.")
+            sys.exit(1)
+
+          if data.get("status") != "ok":
+            print("Endpoint returned non-ok status:", data)
+            sys.exit(1)
+          PY

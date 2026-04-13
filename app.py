@@ -2224,9 +2224,12 @@ def delete_record(record_id):
 def run_ingest():
     try:
         from ingest import ingest_all_odyssey_civil_blobs
+        started_at = datetime.now(UTC).isoformat()
+        steps = []
 
         # 1) Ingest odyssey civil blobs in-process
         ingest_all_odyssey_civil_blobs()
+        steps.append({"step": "ingest_all_odyssey_civil_blobs", "status": "ok"})
 
         # 2) Run extraction/ingest scripts in order as subprocesses
         commands = [
@@ -2241,12 +2244,23 @@ def run_ingest():
             if result.returncode != 0:
                 return jsonify({
                     "status": "error",
+                    "started_at": started_at,
                     "failed_command": " ".join(cmd),
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                 }), 500
+            steps.append({
+                "step": " ".join(cmd),
+                "status": "ok",
+                "stdout_tail": (result.stdout or "")[-500:],
+            })
 
-        return jsonify({"status": "ok"}), 200
+        return jsonify({
+            "status": "ok",
+            "started_at": started_at,
+            "finished_at": datetime.now(UTC).isoformat(),
+            "steps": steps,
+        }), 200
     except Exception as e:
         return str(e), 500
 @app.route("/run-active-warrants", methods=["POST"])
