@@ -1,0 +1,56 @@
+name: run-ingest
+
+on:
+  schedule:
+    - cron: "0 * * * *" # every hour
+  workflow_dispatch:
+
+concurrency:
+  group: run-ingest-main
+  cancel-in-progress: false
+
+jobs:
+  run-ingest:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      ENDPOINT_URL: https://bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/run-ingest
+
+    steps:
+      - name: Trigger ingest pipeline endpoint
+        run: |
+          echo "Calling: $ENDPOINT_URL"
+          raw_response="$(curl --show-error --silent --location --write-out $'\nHTTP_STATUS:%{http_code}' "$ENDPOINT_URL" || true)"
+          http_status="$(printf '%s' "$raw_response" | sed -n 's/^HTTP_STATUS://p' | tail -n 1)"
+          response="$(printf '%s' "$raw_response" | sed '$d')"
+          echo "HTTP status: ${http_status:-unknown}"
+          echo "Raw endpoint response:"
+          echo "$response"
+          RESPONSE="$response" HTTP_STATUS="$http_status" python - <<'PY'
+          import json
+          import os
+          import sys
+
+          raw = os.environ.get("RESPONSE", "")
+          http_status = os.environ.get("HTTP_STATUS", "")
+          normalized = raw.strip().lower()
+          if normalized in {"ok", "started"}:
+            print(f"Endpoint returned plain '{normalized}' (accepted).")
+            sys.exit(0)
+
+          try:
+            data = json.loads(raw)
+          except Exception:
+            print("Endpoint did not return valid JSON.")
+            if http_status and http_status.startswith(("4", "5")):
+              print(f"HTTP status was {http_status}. Failing.")
+            sys.exit(1)
+
+          if data.get("status") != "ok":
+            print("Endpoint returned non-ok status:", data)
+            sys.exit(1)
+
+          if http_status and http_status.startswith(("4", "5")):
+            print(f"Endpoint status payload is ok but HTTP status was {http_status}.")
+            sys.exit(1)
+          PY
