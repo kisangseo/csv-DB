@@ -26,8 +26,9 @@ jobs:
           import sys
 
           raw = os.environ.get("RESPONSE", "")
-          if raw.strip().upper() == "OK":
-            print("Endpoint returned plain OK (accepted).")
+          normalized = raw.strip().lower()
+          if normalized in {"ok", "started"}:
+            print(f"Endpoint returned plain '{normalized}' (accepted).")
             sys.exit(0)
 
           try:
