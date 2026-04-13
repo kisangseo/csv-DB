@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Trigger ingest pipeline endpoint
         run: |
-          response="$(curl --fail --show-error --silent "https://bcso-service-case-docs-e7hfcmdva0gpgphd.centralus-01.azurewebsites.net/run-ingest")"
+          response="$(curl --fail --show-error --silent "bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/run-ingest")"
           echo "Raw endpoint response:"
           echo "$response"
           RESPONSE="$response" python - <<'PY'
