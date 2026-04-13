@@ -2222,16 +2222,55 @@ def delete_record(record_id):
     return jsonify({"status": "success"})
 @app.route("/run-ingest", methods=["GET"])
 def run_ingest():
+    with INGEST_RUN_LOCK:
+        if INGEST_RUN_STATE.get("status") == "running":
+            return jsonify({
+                "status": "running",
+                "started_at": INGEST_RUN_STATE.get("started_at"),
+                "message": "Ingest pipeline is already running",
+            }), 202
+
+        INGEST_RUN_STATE.update({
+            "status": "running",
+            "started_at": datetime.now(UTC).isoformat(),
+            "finished_at": None,
+            "steps": [],
+            "error": None,
+        })
+
+    worker = threading.Thread(target=_run_ingest_pipeline_background, daemon=True)
+    worker.start()
+
+    return jsonify({
+        "status": "started",
+        "started_at": INGEST_RUN_STATE.get("started_at"),
+    }), 202
+
+
+@app.route("/run-ingest/status", methods=["GET"])
+def run_ingest_status():
+    with INGEST_RUN_LOCK:
+        return jsonify(INGEST_RUN_STATE), 200
+
+
+INGEST_RUN_LOCK = threading.Lock()
+INGEST_RUN_STATE = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "steps": [],
+    "error": None,
+}
+
+
+def _run_ingest_pipeline_background():
     try:
         from ingest import ingest_all_odyssey_civil_blobs
-        started_at = datetime.now(UTC).isoformat()
-        steps = []
 
-        # 1) Ingest odyssey civil blobs in-process
+        steps = []
         ingest_all_odyssey_civil_blobs()
         steps.append({"step": "ingest_all_odyssey_civil_blobs", "status": "ok"})
 
-        # 2) Run extraction/ingest scripts in order as subprocesses
         commands = [
             [sys.executable, "extract_doc_pop.py"],
             [sys.executable, "extract_jail_pop.py"],
@@ -2242,30 +2281,39 @@ def run_ingest():
         for cmd in commands:
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
-                return jsonify({
-                    "status": "error",
-                    "started_at": started_at,
-                    "failed_command": " ".join(cmd),
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                }), 500
+                with INGEST_RUN_LOCK:
+                    INGEST_RUN_STATE.update({
+                        "status": "failed",
+                        "finished_at": datetime.now(UTC).isoformat(),
+                        "error": {
+                            "failed_command": " ".join(cmd),
+                            "stdout": result.stdout,
+                            "stderr": result.stderr,
+                        },
+                        "steps": steps,
+                    })
+                return
+
             steps.append({
                 "step": " ".join(cmd),
                 "status": "ok",
                 "stdout_tail": (result.stdout or "")[-500:],
             })
 
-        return jsonify({
-            "status": "ok",
-            "started_at": started_at,
-            "finished_at": datetime.now(UTC).isoformat(),
-            "steps": steps,
-        }), 200
+        with INGEST_RUN_LOCK:
+            INGEST_RUN_STATE.update({
+                "status": "completed",
+                "finished_at": datetime.now(UTC).isoformat(),
+                "steps": steps,
+                "error": None,
+            })
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "error": str(e),
-        }), 500
+        with INGEST_RUN_LOCK:
+            INGEST_RUN_STATE.update({
+                "status": "failed",
+                "finished_at": datetime.now(UTC).isoformat(),
+                "error": str(e),
+            })
 @app.route("/run-active-warrants", methods=["POST"])
 def run_active_warrants():
     
