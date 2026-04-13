@@ -1,0 +1,46 @@
+name: run-ingest
+
+on:
+  schedule:
+    - cron: "0 * * * *" # every hour
+  workflow_dispatch:
+
+concurrency:
+  group: run-ingest-main
+  cancel-in-progress: false
+
+jobs:
+  run-ingest:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ingest odyssey civil blobs
+        run: python -c "from ingest import ingest_all_odyssey_civil_blobs; ingest_all_odyssey_civil_blobs()"
+
+      - name: Extract DOC population
+        run: python extract_doc_pop.py
+
+      - name: Extract jail population
+        run: python extract_jail_pop.py
+
+      - name: Ingest jail CSV
+        run: python ingest_jail_csv.py
+
+      - name: Ingest DOC CSV
+        run: python ingest_doc_csv.py
