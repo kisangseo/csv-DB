@@ -18,6 +18,7 @@ jobs:
       - name: Trigger ingest pipeline endpoint
         run: |
           response="$(curl --fail --show-error --silent "https://bcso-service-case-docs-e7hfcmdva0gpgphd.centralus-01.azurewebsites.net/run-ingest")"
+          echo "Raw endpoint response:"
           echo "$response"
           RESPONSE="$response" python - <<'PY'
           import json
@@ -25,6 +26,10 @@ jobs:
           import sys
 
           raw = os.environ.get("RESPONSE", "")
+          if raw.strip().upper() == "OK":
+            print("Endpoint returned plain OK (accepted).")
+            sys.exit(0)
+
           try:
             data = json.loads(raw)
           except Exception:

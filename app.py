@@ -2262,7 +2262,10 @@ def run_ingest():
             "steps": steps,
         }), 200
     except Exception as e:
-        return str(e), 500
+        return jsonify({
+            "status": "error",
+            "error": str(e),
+        }), 500
 @app.route("/run-active-warrants", methods=["POST"])
 def run_active_warrants():
     
