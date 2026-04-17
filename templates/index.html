@@ -1190,7 +1190,10 @@
           saveCallback({savedTableName, savedFields});
           return;
         }
-        await search({ preventDefault: () => {} });
+        const currentFilters = getCurrentSearchFilters();
+        if (hasAnySearchFilter(currentFilters)) {
+          await search({ preventDefault: () => {} });
+        }
       }
 
 
@@ -1206,6 +1209,10 @@
           sid: document.getElementById("sid").value,
           dob: document.getElementById("dob").value
         };
+      }
+
+      function hasAnySearchFilter(filters = {}) {
+        return Object.values(filters).some(value => String(value ?? "").trim() !== "");
       }
 
       async function startCsvExport(statusEl, linkEl) {
