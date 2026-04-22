@@ -861,13 +861,45 @@ def extract_dv_pdf_data(pdf_path):
 def filter_dv_pdf_records(records, filters):
     query = (filters.get("query") or "").strip().lower()
     case_number = (filters.get("case_number") or "").strip().lower()
+    date_start = (filters.get("date_start") or "").strip()
+    date_end = (filters.get("date_end") or "").strip()
+    last_x_days = (filters.get("last_x_days") or "").strip()
+
+    def parse_date_value(value):
+        if not value:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        for fmt in ("%m/%d/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    start_date = parse_date_value(date_start)
+    end_date = parse_date_value(date_end)
+    last_x_cutoff = None
+    if last_x_days:
+        try:
+            last_x_cutoff = (datetime.now().date() - timedelta(days=int(last_x_days)))
+        except ValueError:
+            last_x_cutoff = None
+
     filtered = []
     for row in records:
         row_case = (row.get("case_number") or "").lower()
         row_name = (row.get("respondent_name") or "").lower()
+        issue_date = parse_date_value(row.get("issue_date"))
         if case_number and case_number not in row_case:
             continue
         if query and query not in row_name:
+            continue
+        if start_date and end_date:
+            if not issue_date or issue_date < start_date or issue_date > end_date:
+                continue
+        if last_x_cutoff and (not issue_date or issue_date < last_x_cutoff):
             continue
         filtered.append(row)
     return filtered
