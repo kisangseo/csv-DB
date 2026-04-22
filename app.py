@@ -54,6 +54,75 @@ _apt_backfill_attempted = False
 # permanently disabled: apt backfill should not run during search requests
 ENABLE_APT_BACKFILL_ON_SEARCH = False
 
+COURT_DOC_TYPE_CANONICAL_TO_VALUES = {
+    "BA - Body Attachment": ["BA - Body Attachment"],
+    "BOL - Breach of Lease": ["BOL - Breach of Lease", "Breach of Lease"],
+    "C - Civil": ["C - Civil"],
+    "CD - Court Door Posting": ["CD- Court Door Posting", "CD - Court Door Posting"],
+    "CJ - Confessed Judgement": ["CJ - Confessed Judgement"],
+    "CRS - Criminal Summons": ["CRS - Criminal Summons"],
+    "CS - Child Support": ["CS - Child Support"],
+    "CSS - Child Support Subpoena": ["CSS - Child Support Subpoena"],
+    "D - Divorce": ["D - Divorce"],
+    "DBA - District Body Attachment": ["DBA - District Body Attachment"],
+    "Failure to Pay Rent": ["Failure to Pay Rent"],
+    "FTP - Failure to Pay": ["FTP - Failure to Pay"],
+    "GP - Garnishment of Property": ["GP - Garnishment of Property"],
+    "GW - Garnishment of Wages": ["GW - Garnishment of Wages"],
+    "JD - Jury Duty": ["JD - Jury Duty"],
+    "JPO - Juvenile Peace Order": ["JPO - Juvenile Peace Order"],
+    "JS - Juvenile Summons": ["JS - Juvenile Summons"],
+    "JSC - Juvenile Show Cause": ["JSC - Juvenile Show Cause"],
+    "JSP - Juvenile Subpoena": ["JSP - Juvenile Supeona", "JSP - Juvenile Subpoena"],
+    "JV - Juvenile": ["JV - Juvenile"],
+    "OE - Oral Exam": ["OE - Oral Exam"],
+    "OOS - Out of State": ["OOS - Out of State"],
+    "P - Posting": ["P - Posting"],
+    "PO - Peace Order": ["PO - Peace Order"],
+    "PS - Paternity Summons": ["PS - Paternity Summons"],
+    "RFS - BOL": ["RFS - BOL"],
+    "RFS - Request for Service": ["RFS - Request for Service"],
+    "RFS - WD": ["RFS - WD"],
+    "RFS - THO": ["RFS -THO", "RFS - THO"],
+    "RP - Replevin": ["RP - Replevin"],
+    "RS - Receivership": ["RS - Receivership"],
+    "S - Subpoena": ["S - Subpoena"],
+    "SC - Show Cause": ["SC- Show Cause", "SC - Show Cause"],
+    "SJR - Summons Juvenile Remote H": ["SJR - Summons Juvenile Remote H"],
+    "SM - Summons": ["SM - Summons", "SM-Summons"],
+    "SP - Subpoena": ["SP - Subpoena"],
+    "SP - Subpoena Paternity": ["SP - Subpoena Paternity"],
+    "ST - Summons for Trial": ["ST - Summons for Trial"],
+    "Tenant Holding Over": ["Tenant Holding Over"],
+    "THO - Tenant Holdover": ["THO - Tenant Holdover"],
+    "WD - Wrongful Detainer": ["WD - Wrongful Detainer"],
+    "WHC - Writ of Habeas Corpus": ["WHC - Writ of Habeas Corpus", "WHC- Habeas Corpus"],
+    "WOE - Writ of Execution": ["WOE - Writ of Execution"],
+    "WOP - Writ of Possession": [
+        "WOP - Writ of Possesion",
+        "WOP - Writ of Possession",
+        "Writ of Possession",
+    ],
+    "WOPG - Writ of Possession - GRE": [
+        "WOPG - Writ of Posession - GRE",
+        "WOPG - Writ of Possession - GRE",
+    ],
+    "WOS - Writ of Summons": ["WOS - Writ of Summons"],
+    "WOSC - Writ of Summons Child Su": ["WOSC - Writ of Summons Child Su"],
+    "WOSP - Writ of Summons Paternit": ["WOSP - Writ of Summons Paternit"],
+    "Wrongful Detainer-Grantor in Possession": ["Wrongful Detainer-Grantor in Possession"],
+}
+COURT_DOC_TYPE_OPTIONS = list(COURT_DOC_TYPE_CANONICAL_TO_VALUES.keys())
+
+
+def get_court_doc_type_values(selected_value):
+    selected = (selected_value or "").strip()
+    if not selected:
+        return None
+    if selected in COURT_DOC_TYPE_CANONICAL_TO_VALUES:
+        return COURT_DOC_TYPE_CANONICAL_TO_VALUES[selected]
+    return [selected]
+
 
 def parse_request_json_lenient(req):
     """
@@ -861,13 +930,48 @@ def extract_dv_pdf_data(pdf_path):
 def filter_dv_pdf_records(records, filters):
     query = (filters.get("query") or "").strip().lower()
     case_number = (filters.get("case_number") or "").strip().lower()
+    date_start = (filters.get("date_start") or "").strip()
+    date_end = (filters.get("date_end") or "").strip()
+    last_x_days = (filters.get("last_x_days") or "").strip()
+    court_doc_type = (filters.get("court_document_type") or "").strip()
+    if court_doc_type:
+        return []
+
+    def parse_date_value(value):
+        if not value:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        for fmt in ("%m/%d/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    start_date = parse_date_value(date_start)
+    end_date = parse_date_value(date_end)
+    last_x_cutoff = None
+    if last_x_days:
+        try:
+            last_x_cutoff = (datetime.now().date() - timedelta(days=int(last_x_days)))
+        except ValueError:
+            last_x_cutoff = None
+
     filtered = []
     for row in records:
         row_case = (row.get("case_number") or "").lower()
         row_name = (row.get("respondent_name") or "").lower()
+        issue_date = parse_date_value(row.get("issue_date"))
         if case_number and case_number not in row_case:
             continue
         if query and query not in row_name:
+            continue
+        if start_date and end_date:
+            if not issue_date or issue_date < start_date or issue_date > end_date:
+                continue
+        if last_x_cutoff and (not issue_date or issue_date < last_x_cutoff):
             continue
         filtered.append(row)
     return filtered
@@ -882,6 +986,7 @@ def home():
         "index.html",
         user_permission=get_current_permission(),
         latest_lt_file_date=get_latest_landlord_tenant_file_date_label(),
+        court_doc_type_options=COURT_DOC_TYPE_OPTIONS,
     )
 @app.route("/change-password", methods=["GET","POST"])
 def change_password():
@@ -2352,6 +2457,7 @@ def parse_search_filters(source):
     issuing_county = source.get("issuing_county", "").strip()
     sid = source.get("sid", "").strip()
     dob = source.get("dob", "").strip()
+    court_document_type = source.get("court_document_type", "").strip()
 
     return {
         "query": query,
@@ -2364,6 +2470,8 @@ def parse_search_filters(source):
         "issuing_county": issuing_county or None,
         "sid": sid or None,
         "dob": dob or None,
+        "court_document_type": court_document_type or None,
+        "court_document_type_values": get_court_doc_type_values(court_document_type),
     }
 
 
@@ -2445,6 +2553,7 @@ def _iter_export_rows(cursor, filters):
         issuing_county=filters["issuing_county"],
         last_x_days=filters["last_x_days"],
         sid=filters["sid"],
+        court_doc_types=filters["court_document_type_values"],
         extra_where=["LOWER(LTRIM(RTRIM(r.department))) = 'field services department'"],
     )
     cursor.execute(sql, params)
@@ -2652,6 +2761,7 @@ def search_all():
             race=filters["race"],
             issuing_county=filters["issuing_county"],
             last_x_days=filters["last_x_days"],
+            court_doc_types=filters["court_document_type_values"],
             limit=None
         )
     finally:

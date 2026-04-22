@@ -12,6 +12,7 @@ def _build_filters_sql(
     issuing_county: Optional[str] = None,
     last_x_days: Optional[str] = None,
     sid: Optional[str] = None,
+    court_doc_types: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
     name_tokens = [t for t in (name_query or "").strip().split() if t]
     where_clauses = ["1=1"]
@@ -87,6 +88,22 @@ def _build_filters_sql(
         where_clauses.append("date_of_birth = CAST(? AS date)")
         params.append(dob)
 
+    if court_doc_types:
+        normalized_values = []
+        seen = set()
+        for value in court_doc_types:
+            text = str(value or "").strip().lower()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized_values.append(text)
+        if normalized_values:
+            placeholders = ", ".join("?" for _ in normalized_values)
+            where_clauses.append(
+                f"LOWER(LTRIM(RTRIM(court_document_type))) IN ({placeholders})"
+            )
+            params.extend(normalized_values)
+
     return "\n    AND ".join(where_clauses), params
 
 
@@ -103,6 +120,7 @@ def build_search_sql(
     issuing_county: Optional[str] = None,
     last_x_days: Optional[str] = None,
     sid: Optional[str] = None,
+    court_doc_types: Optional[List[str]] = None,
     order_by: str = "created_at DESC",
     extra_where: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
@@ -117,6 +135,7 @@ def build_search_sql(
         issuing_county=issuing_county,
         last_x_days=last_x_days,
         sid=sid,
+        court_doc_types=court_doc_types,
     )
 
     if extra_where:
@@ -132,7 +151,7 @@ def build_search_sql(
     return sql, params
 
 
-def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, limit=100):
+def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, limit=100):
     cursor = conn.cursor()
 
     select_sql = """
@@ -195,6 +214,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         issuing_county=issuing_county,
         last_x_days=last_x_days,
         sid=sid,
+        court_doc_types=court_doc_types,
     )
 
     cursor.execute(sql, params)

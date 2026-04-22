@@ -18,6 +18,12 @@
       <div class="search-top-row">
         <input type="text" id="name" name="name" placeholder="Name">
         <input type="text" id="case_number" name="case_number" placeholder="Case Number">
+        <select id="court_document_type" name="court_document_type">
+          <option value="">Court Doc Type (Any)</option>
+          {% for option in court_doc_type_options %}
+          <option value="{{ option }}">{{ option }}</option>
+          {% endfor %}
+        </select>
         <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
         <input type="hidden" id="intake_date_hidden" name="intake_date">
         <input type="file" id="dvPdfFile" accept="application/pdf" style="display:none;">
@@ -1201,6 +1207,7 @@
         return {
           name: document.getElementById("name").value,
           case_number: document.getElementById("case_number").value,
+          court_document_type: document.getElementById("court_document_type").value,
           intake_date: document.getElementById("intake_date_hidden").value,
           last_x_days: document.getElementById("last_x_days").value,
           sex: document.getElementById("sex").value,
