@@ -71,6 +71,31 @@ form {
   background: white;
 }
 
+#searchForm .search-top-row select {
+  width: 220px;
+  height: 40px;
+  padding: 10px 36px 10px 14px;
+  border: 1px solid #cbd3e1;
+  border-radius: 6px;
+  font-size: 15px;
+  color: #222;
+  outline: none;
+  background-color: #fafbff;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+#searchForm .search-top-row select:focus {
+  border-color: #222;
+  background-color: white;
+}
+
 
 input[type="text"],
 input[type="date"] {
