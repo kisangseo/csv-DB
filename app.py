@@ -1044,20 +1044,35 @@ def ingest_dv_email_payloads_for_run():
             messages.sort(key=lambda m: m.get("receivedDateTime") or "")
             print(f"[DV EMAIL] Inbox DV Order candidates found: {len(messages)}")
 
-            folders_resp = requests.get(
-            f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders?$select=id,displayName",
-            headers=headers,
-            timeout=30,
+            folder_candidates = []
+            root_folders_resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders?$select=id,displayName,parentFolderId",
+                headers=headers,
+                timeout=30,
             )
-            if folders_resp.status_code >= 400:
-                print(f"[DV EMAIL] Folder query failed status={folders_resp.status_code} body={folders_resp.text[:800]}")
-            folders_resp.raise_for_status()
+            if root_folders_resp.status_code >= 400:
+                print(f"[DV EMAIL] Root folder query failed status={root_folders_resp.status_code} body={root_folders_resp.text[:800]}")
+            root_folders_resp.raise_for_status()
+            folder_candidates.extend(root_folders_resp.json().get("value", []))
+
+            inbox_children_resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/childFolders?$select=id,displayName,parentFolderId",
+                headers=headers,
+                timeout=30,
+            )
+            if inbox_children_resp.status_code >= 400:
+                print(f"[DV EMAIL] Inbox child folder query failed status={inbox_children_resp.status_code} body={inbox_children_resp.text[:800]}")
+            inbox_children_resp.raise_for_status()
+            folder_candidates.extend(inbox_children_resp.json().get("value", []))
+
             folder_id = None
-            for f in folders_resp.json().get("value", []):
+            for f in folder_candidates:
                 if (f.get("displayName") or "").strip().lower() == processed_folder.lower():
                     folder_id = f.get("id")
                     break
             if not folder_id:
+                names = sorted({(f.get("displayName") or "").strip() for f in folder_candidates if f.get("displayName")})
+                print(f"[DV EMAIL] Available folder names sample: {names[:30]}")
                 raise RuntimeError(f"Processed folder '{processed_folder}' not found in mailbox {mailbox}.")
 
             ingested = 0
