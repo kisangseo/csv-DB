@@ -927,6 +927,254 @@ def extract_dv_pdf_data(pdf_path):
     }
 
 
+def _normalize_dv_csv_column_name(label):
+    text = re.sub(r"[^a-z0-9]+", "_", (label or "").strip().lower()).strip("_")
+    if not text:
+        return ""
+    return f"csv_{text}"
+
+
+def _resolve_existing_dv_columns(cur, column_names):
+    existing = []
+    for name in column_names:
+        if name and _dv_pdf_column_exists(cur, name):
+            existing.append(name)
+    return existing
+
+
+def build_dv_email_record(payload):
+    entry_details = payload.get("entry_details") or {}
+    subject = str(payload.get("subject") or "").strip()
+
+    record = {
+        "case_number": str(entry_details.get("Case Number") or entry_details.get("Warrant Case Number") or "").strip(),
+        "respondent_name": str(entry_details.get("Respondent Name") or "").strip(),
+        "issue_date": str(entry_details.get("Date Order Was Issued") or "").strip(),
+        "order_type": str(entry_details.get("Order Type") or "").strip(),
+        "order_status": str(entry_details.get("Order Status") or "").strip(),
+        "blob_name": str(payload.get("blob_name") or "").strip(),
+        "pdf_download": str(payload.get("pdf_download") or "").strip(),
+        "uploaded_at": datetime.now(UTC),
+        "is_reissue": 1 if "reissue" in subject.lower() else 0,
+        "source_row_json": json.dumps(payload, ensure_ascii=False),
+        "source_csv_name": "email_dv_order",
+    }
+
+    csv_fields = {}
+    for key, value in entry_details.items():
+        col = _normalize_dv_csv_column_name(key)
+        if col:
+            csv_fields[col] = "" if value is None else str(value).strip()
+
+    return record, csv_fields
+
+
+def insert_dv_email_record_in_sql(payload):
+    record, csv_fields = build_dv_email_record(payload)
+    if not record.get("case_number") or not record.get("respondent_name"):
+        raise RuntimeError("Missing required DV email fields: case_number/respondent_name")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if not _dv_pdf_table_exists(cur):
+            raise RuntimeError("SQL table search.dv_pdf_records does not exist.")
+        _ensure_dv_pdf_optional_columns(cur)
+
+        base_columns = [
+            "case_number", "respondent_name", "issue_date", "order_type", "order_status",
+            "blob_name", "pdf_download", "uploaded_at", "is_reissue", "source_row_json", "source_csv_name",
+        ]
+        dynamic_columns = _resolve_existing_dv_columns(cur, sorted(csv_fields.keys()))
+        all_columns = base_columns + dynamic_columns
+        placeholders = ", ".join(["?"] * len(all_columns))
+        sql = f"INSERT INTO search.dv_pdf_records ({', '.join(all_columns)}) VALUES ({placeholders})"
+
+        values = [record.get(col) for col in base_columns] + [csv_fields.get(col) for col in dynamic_columns]
+        cur.execute(sql, *values)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ingest_dv_email_payloads_for_run():
+    tenant_id = (os.getenv("MS_GRAPH_TENANT_ID") or "").strip()
+    client_id = (os.getenv("MS_GRAPH_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("MS_GRAPH_CLIENT_SECRET") or "").strip()
+    mailbox = (os.getenv("DV_EMAIL_MAILBOX") or "sheriff.records@baltimorecitysheriff.gov").strip()
+    processed_folder = (os.getenv("DV_EMAIL_PROCESSED_FOLDER") or "processed").strip()
+
+    print(
+        f"[DV EMAIL] Starting ingest. mailbox={mailbox}, processed_folder={processed_folder}, "
+        f"graph_configured={bool(tenant_id and client_id and client_secret)}"
+    )
+
+    if tenant_id and client_id and client_secret:
+        print("[DV EMAIL] Using Microsoft Graph mailbox mode.")
+        try:
+            token_resp = requests.post(
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": "https://graph.microsoft.com/.default",
+                "grant_type": "client_credentials",
+            },
+            timeout=30,
+            )
+            if token_resp.status_code >= 400:
+                print(f"[DV EMAIL] Token request failed status={token_resp.status_code} body={token_resp.text[:800]}")
+            token_resp.raise_for_status()
+            access_token = token_resp.json().get("access_token")
+            if not access_token:
+                raise RuntimeError("Failed to obtain Graph API access token.")
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            messages_url = (
+            f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
+            "?$top=50"
+            "&$select=id,subject,body,receivedDateTime,from,conversationId"
+            "&$filter=startsWith(subject,'DV Order')"
+            )
+            msg_resp = requests.get(messages_url, headers=headers, timeout=30)
+            if msg_resp.status_code >= 400:
+                print(f"[DV EMAIL] Message query failed status={msg_resp.status_code} body={msg_resp.text[:800]}")
+            msg_resp.raise_for_status()
+            messages = msg_resp.json().get("value", [])
+            messages.sort(key=lambda m: m.get("receivedDateTime") or "")
+            print(f"[DV EMAIL] Inbox DV Order candidates found: {len(messages)}")
+
+            folder_candidates = []
+            root_folders_resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders?$select=id,displayName,parentFolderId",
+                headers=headers,
+                timeout=30,
+            )
+            if root_folders_resp.status_code >= 400:
+                print(f"[DV EMAIL] Root folder query failed status={root_folders_resp.status_code} body={root_folders_resp.text[:800]}")
+            root_folders_resp.raise_for_status()
+            folder_candidates.extend(root_folders_resp.json().get("value", []))
+
+            inbox_children_resp = requests.get(
+                f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/childFolders?$select=id,displayName,parentFolderId",
+                headers=headers,
+                timeout=30,
+            )
+            if inbox_children_resp.status_code >= 400:
+                print(f"[DV EMAIL] Inbox child folder query failed status={inbox_children_resp.status_code} body={inbox_children_resp.text[:800]}")
+            inbox_children_resp.raise_for_status()
+            folder_candidates.extend(inbox_children_resp.json().get("value", []))
+
+            folder_id = None
+            for f in folder_candidates:
+                if (f.get("displayName") or "").strip().lower() == processed_folder.lower():
+                    folder_id = f.get("id")
+                    break
+            if not folder_id:
+                names = sorted({(f.get("displayName") or "").strip() for f in folder_candidates if f.get("displayName")})
+                print(f"[DV EMAIL] Available folder names sample: {names[:30]}")
+                raise RuntimeError(f"Processed folder '{processed_folder}' not found in mailbox {mailbox}.")
+
+            ingested = 0
+            moved = 0
+            skipped_no_fields = 0
+            failed = 0
+            errors = []
+            for message in messages:
+                message_id = message.get("id")
+                subject = message.get("subject") or ""
+                print(f"[DV EMAIL] Processing message id={message_id} subject={subject!r}")
+                body_content = (message.get("body") or {}).get("content") or ""
+                rows = re.findall(
+                    r"<tr[^>]*>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*</tr>",
+                    body_content,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+                entry_details = {}
+                for k, v in rows:
+                    key = re.sub(r"<[^>]+>", "", k or "").strip()
+                    val = re.sub(r"<[^>]+>", "", v or "").strip()
+                    if key:
+                        entry_details[key] = val
+
+                payload = {
+                    "subject": subject,
+                    "entry_details": entry_details,
+                    "source_message_id": message_id,
+                }
+                if not entry_details:
+                    skipped_no_fields += 1
+                    print(f"[DV EMAIL] Skipped message id={message_id}: no entry_details parsed from HTML body.")
+                    continue
+                try:
+                    insert_dv_email_record_in_sql(payload)
+                    ingested += 1
+                    move_resp = requests.post(
+                        f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
+                        headers={**headers, "Content-Type": "application/json"},
+                        json={"destinationId": folder_id},
+                        timeout=30,
+                    )
+                    move_resp.raise_for_status()
+                    moved += 1
+                    print(f"[DV EMAIL] Ingested and moved message id={message_id}.")
+                except Exception as msg_exc:
+                    failed += 1
+                    error_text = f"id={message_id}: {msg_exc}"
+                    errors.append(error_text)
+                    print(f"[DV EMAIL] Failed message {error_text}")
+
+            summary = {
+                "status": "ok",
+                "source": "graph",
+                "candidates": len(messages),
+                "ingested": ingested,
+                "moved_to_processed": moved,
+                "skipped_no_fields": skipped_no_fields,
+                "failed": failed,
+                "errors": errors[:10],
+            }
+            print(f"[DV EMAIL] Summary: {summary}")
+            return summary
+        except Exception as graph_exc:
+            error_text = str(graph_exc)
+            print(f"[DV EMAIL] Graph ingest failed: {error_text}")
+            return {"status": "failed", "source": "graph", "ingested": 0, "error": error_text}
+
+    payloads_path = (os.getenv("DV_EMAIL_PAYLOADS_PATH") or "").strip()
+    if not payloads_path:
+        print("[DV EMAIL] Graph not configured and DV_EMAIL_PAYLOADS_PATH missing; skipping.")
+        return {"status": "skipped", "reason": "DV_EMAIL_PAYLOADS_PATH not configured", "ingested": 0}
+    if not os.path.exists(payloads_path):
+        print(f"[DV EMAIL] Payload file not found at path={payloads_path}; skipping.")
+        return {"status": "skipped", "reason": f"Payload file not found: {payloads_path}", "ingested": 0}
+
+    with open(payloads_path, "r", encoding="utf-8") as f:
+        payloads = json.load(f)
+
+    if isinstance(payloads, dict):
+        payloads = [payloads]
+    if not isinstance(payloads, list):
+        raise RuntimeError("DV email payload file must contain a JSON object or array of objects.")
+
+    ingested = 0
+    for payload in payloads:
+        insert_dv_email_record_in_sql(payload or {})
+        ingested += 1
+    print(f"[DV EMAIL] File mode ingest complete. ingested={ingested} path={payloads_path}")
+    return {"status": "ok", "source": "file", "ingested": ingested, "path": payloads_path}
+
+
+@app.route("/ingest-dv-email", methods=["POST"])
+def ingest_dv_email():
+    payload = parse_request_json_lenient(request)
+    try:
+        insert_dv_email_record_in_sql(payload)
+    except Exception as exc:
+        return jsonify({"status": "error", "error": str(exc)}), 400
+    return jsonify({"status": "ok"}), 200
+
+
 def filter_dv_pdf_records(records, filters):
     query = (filters.get("query") or "").strip().lower()
     case_number = (filters.get("case_number") or "").strip().lower()
@@ -2375,6 +2623,8 @@ def _run_ingest_pipeline_background():
         steps = []
         ingest_all_odyssey_civil_blobs()
         steps.append({"step": "ingest_all_odyssey_civil_blobs", "status": "ok"})
+        dv_result = ingest_dv_email_payloads_for_run()
+        steps.append({"step": "ingest_dv_email_payloads_for_run", **dv_result})
 
         commands = [
             [sys.executable, "extract_doc_pop.py"],
