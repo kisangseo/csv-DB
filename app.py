@@ -1129,6 +1129,25 @@ def ingest_dv_email_payloads_for_run():
                     print(f"[DV EMAIL] Skipped message id={message_id}: no entry_details parsed from HTML body.")
                     continue
                 try:
+                    duplicate = find_duplicate_dv_pdf_record(
+                        str(entry_details.get("CASE NUMBER") or entry_details.get("Case Number") or "").strip(),
+                        str(entry_details.get("RESPONDENT NAME") or entry_details.get("Respondent Name") or "").strip(),
+                    )
+                    if duplicate:
+                        print(
+                            f"[DV EMAIL] Duplicate found for message id={message_id}; "
+                            "moving to processed without insert."
+                        )
+                        move_resp = requests.post(
+                            f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
+                            headers={**headers, "Content-Type": "application/json"},
+                            json={"destinationId": folder_id},
+                            timeout=30,
+                        )
+                        move_resp.raise_for_status()
+                        moved += 1
+                        continue
+
                     insert_dv_email_record_in_sql(payload)
                     ingested += 1
                     move_resp = requests.post(
@@ -2597,7 +2616,33 @@ def delete_record(record_id):
     return jsonify({"status": "success"})
 @app.route("/run-ingest", methods=["GET"])
 def run_ingest():
+    force = (request.args.get("force") or "").strip().lower() in {"1", "true", "yes"}
+    stale_after_minutes = int(os.getenv("INGEST_STALE_MINUTES", "30"))
     with INGEST_RUN_LOCK:
+        current_status = INGEST_RUN_STATE.get("status")
+        started_at_raw = INGEST_RUN_STATE.get("started_at")
+        is_stale = False
+        if current_status == "running" and started_at_raw:
+            try:
+                started_at_dt = datetime.fromisoformat(started_at_raw.replace("Z", "+00:00"))
+                is_stale = (datetime.now(UTC) - started_at_dt).total_seconds() > (stale_after_minutes * 60)
+            except Exception:
+                is_stale = False
+
+        if INGEST_RUN_STATE.get("status") == "running":
+            if force or is_stale:
+                INGEST_RUN_STATE.update({
+                    "status": "idle",
+                    "finished_at": datetime.now(UTC).isoformat(),
+                    "error": f"Previous run reset (force={force}, stale={is_stale})",
+                })
+            else:
+                return jsonify({
+                    "status": "running",
+                    "started_at": INGEST_RUN_STATE.get("started_at"),
+                    "message": "Ingest pipeline is already running",
+                }), 202
+
         if INGEST_RUN_STATE.get("status") == "running":
             return jsonify({
                 "status": "running",
