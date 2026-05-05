@@ -960,11 +960,18 @@ def build_dv_email_record(payload):
         "source_csv_name": "email_dv_order",
     }
 
+    alias_columns = {
+        "disposition of order": "csv_order_disposition",
+        "order disposition": "csv_order_disposition",
+    }
     csv_fields = {}
     for key, value in entry_details.items():
         col = _normalize_dv_csv_column_name(key)
         if col:
             csv_fields[col] = "" if value is None else str(value).strip()
+        alias_col = alias_columns.get((key or "").strip().lower())
+        if alias_col:
+            csv_fields[alias_col] = "" if value is None else str(value).strip()
 
     return record, csv_fields
 
@@ -1030,17 +1037,21 @@ def ingest_dv_email_payloads_for_run():
                 raise RuntimeError("Failed to obtain Graph API access token.")
 
             headers = {"Authorization": f"Bearer {access_token}"}
+            messages = []
             messages_url = (
-            f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
-            "?$top=50"
-            "&$select=id,subject,body,receivedDateTime,from,conversationId"
-            "&$filter=startsWith(subject,'DV Order')"
+                f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
+                "?$top=200"
+                "&$select=id,subject,body,receivedDateTime,from,conversationId"
+                "&$filter=startsWith(subject,'DV Order')"
             )
-            msg_resp = requests.get(messages_url, headers=headers, timeout=30)
-            if msg_resp.status_code >= 400:
-                print(f"[DV EMAIL] Message query failed status={msg_resp.status_code} body={msg_resp.text[:800]}")
-            msg_resp.raise_for_status()
-            messages = msg_resp.json().get("value", [])
+            while messages_url:
+                msg_resp = requests.get(messages_url, headers=headers, timeout=30)
+                if msg_resp.status_code >= 400:
+                    print(f"[DV EMAIL] Message query failed status={msg_resp.status_code} body={msg_resp.text[:800]}")
+                msg_resp.raise_for_status()
+                payload = msg_resp.json()
+                messages.extend(payload.get("value", []))
+                messages_url = payload.get("@odata.nextLink")
             messages.sort(key=lambda m: m.get("receivedDateTime") or "")
             print(f"[DV EMAIL] Inbox DV Order candidates found: {len(messages)}")
 
@@ -1096,6 +1107,17 @@ def ingest_dv_email_payloads_for_run():
                     val = re.sub(r"<[^>]+>", "", v or "").strip()
                     if key:
                         entry_details[key] = val
+                if not entry_details:
+                    body_text = re.sub(r"<[^>]+>", "\n", body_content or "")
+                    for line in body_text.splitlines():
+                        text_line = re.sub(r"\s+", " ", line or "").strip()
+                        if not text_line or ":" not in text_line:
+                            continue
+                        left, right = text_line.split(":", 1)
+                        k = left.strip()
+                        v = right.strip()
+                        if k and v:
+                            entry_details[k] = v
 
                 payload = {
                     "subject": subject,
