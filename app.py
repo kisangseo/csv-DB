@@ -1034,14 +1034,14 @@ def ingest_dv_email_payloads_for_run():
             f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
             "?$top=50"
             "&$select=id,subject,body,receivedDateTime,from,conversationId"
-            "&$filter=contains(subject,'DV Order')"
-            "&$orderby=receivedDateTime asc"
+            "&$filter=startsWith(subject,'DV Order')"
             )
             msg_resp = requests.get(messages_url, headers=headers, timeout=30)
             if msg_resp.status_code >= 400:
                 print(f"[DV EMAIL] Message query failed status={msg_resp.status_code} body={msg_resp.text[:800]}")
             msg_resp.raise_for_status()
             messages = msg_resp.json().get("value", [])
+            messages.sort(key=lambda m: m.get("receivedDateTime") or "")
             print(f"[DV EMAIL] Inbox DV Order candidates found: {len(messages)}")
 
             folders_resp = requests.get(
