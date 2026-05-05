@@ -1004,7 +1004,13 @@ def ingest_dv_email_payloads_for_run():
     mailbox = (os.getenv("DV_EMAIL_MAILBOX") or "sheriff.records@baltimorecitysheriff.gov").strip()
     processed_folder = (os.getenv("DV_EMAIL_PROCESSED_FOLDER") or "processed").strip()
 
+    print(
+        f"[DV EMAIL] Starting ingest. mailbox={mailbox}, processed_folder={processed_folder}, "
+        f"graph_configured={bool(tenant_id and client_id and client_secret)}"
+    )
+
     if tenant_id and client_id and client_secret:
+        print("[DV EMAIL] Using Microsoft Graph mailbox mode.")
         token_resp = requests.post(
             f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
             data={
@@ -1031,6 +1037,7 @@ def ingest_dv_email_payloads_for_run():
         msg_resp = requests.get(messages_url, headers=headers, timeout=30)
         msg_resp.raise_for_status()
         messages = msg_resp.json().get("value", [])
+        print(f"[DV EMAIL] Inbox DV Order candidates found: {len(messages)}")
 
         folders_resp = requests.get(
             f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders?$select=id,displayName",
@@ -1048,7 +1055,13 @@ def ingest_dv_email_payloads_for_run():
 
         ingested = 0
         moved = 0
+        skipped_no_fields = 0
+        failed = 0
+        errors = []
         for message in messages:
+            message_id = message.get("id")
+            subject = message.get("subject") or ""
+            print(f"[DV EMAIL] Processing message id={message_id} subject={subject!r}")
             body_content = (message.get("body") or {}).get("content") or ""
             rows = re.findall(
                 r"<tr[^>]*>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*</tr>",
@@ -1063,28 +1076,51 @@ def ingest_dv_email_payloads_for_run():
                     entry_details[key] = val
 
             payload = {
-                "subject": message.get("subject"),
+                "subject": subject,
                 "entry_details": entry_details,
-                "source_message_id": message.get("id"),
+                "source_message_id": message_id,
             }
-            if entry_details:
+            if not entry_details:
+                skipped_no_fields += 1
+                print(f"[DV EMAIL] Skipped message id={message_id}: no entry_details parsed from HTML body.")
+                continue
+            try:
                 insert_dv_email_record_in_sql(payload)
                 ingested += 1
                 move_resp = requests.post(
-                    f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message.get('id')}/move",
+                    f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
                     headers={**headers, "Content-Type": "application/json"},
                     json={"destinationId": folder_id},
                     timeout=30,
                 )
                 move_resp.raise_for_status()
                 moved += 1
+                print(f"[DV EMAIL] Ingested and moved message id={message_id}.")
+            except Exception as msg_exc:
+                failed += 1
+                error_text = f"id={message_id}: {msg_exc}"
+                errors.append(error_text)
+                print(f"[DV EMAIL] Failed message {error_text}")
 
-        return {"status": "ok", "ingested": ingested, "moved_to_processed": moved, "source": "graph"}
+        summary = {
+            "status": "ok",
+            "source": "graph",
+            "candidates": len(messages),
+            "ingested": ingested,
+            "moved_to_processed": moved,
+            "skipped_no_fields": skipped_no_fields,
+            "failed": failed,
+            "errors": errors[:10],
+        }
+        print(f"[DV EMAIL] Summary: {summary}")
+        return summary
 
     payloads_path = (os.getenv("DV_EMAIL_PAYLOADS_PATH") or "").strip()
     if not payloads_path:
+        print("[DV EMAIL] Graph not configured and DV_EMAIL_PAYLOADS_PATH missing; skipping.")
         return {"status": "skipped", "reason": "DV_EMAIL_PAYLOADS_PATH not configured", "ingested": 0}
     if not os.path.exists(payloads_path):
+        print(f"[DV EMAIL] Payload file not found at path={payloads_path}; skipping.")
         return {"status": "skipped", "reason": f"Payload file not found: {payloads_path}", "ingested": 0}
 
     with open(payloads_path, "r", encoding="utf-8") as f:
@@ -1099,7 +1135,8 @@ def ingest_dv_email_payloads_for_run():
     for payload in payloads:
         insert_dv_email_record_in_sql(payload or {})
         ingested += 1
-    return {"status": "ok", "ingested": ingested}
+    print(f"[DV EMAIL] File mode ingest complete. ingested={ingested} path={payloads_path}")
+    return {"status": "ok", "source": "file", "ingested": ingested, "path": payloads_path}
 
 
 @app.route("/ingest-dv-email", methods=["POST"])
