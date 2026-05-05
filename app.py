@@ -997,6 +997,28 @@ def insert_dv_email_record_in_sql(payload):
         conn.close()
 
 
+def ingest_dv_email_payloads_for_run():
+    payloads_path = (os.getenv("DV_EMAIL_PAYLOADS_PATH") or "").strip()
+    if not payloads_path:
+        return {"status": "skipped", "reason": "DV_EMAIL_PAYLOADS_PATH not configured", "ingested": 0}
+    if not os.path.exists(payloads_path):
+        return {"status": "skipped", "reason": f"Payload file not found: {payloads_path}", "ingested": 0}
+
+    with open(payloads_path, "r", encoding="utf-8") as f:
+        payloads = json.load(f)
+
+    if isinstance(payloads, dict):
+        payloads = [payloads]
+    if not isinstance(payloads, list):
+        raise RuntimeError("DV email payload file must contain a JSON object or array of objects.")
+
+    ingested = 0
+    for payload in payloads:
+        insert_dv_email_record_in_sql(payload or {})
+        ingested += 1
+    return {"status": "ok", "ingested": ingested}
+
+
 @app.route("/ingest-dv-email", methods=["POST"])
 def ingest_dv_email():
     payload = parse_request_json_lenient(request)
@@ -2455,6 +2477,8 @@ def _run_ingest_pipeline_background():
         steps = []
         ingest_all_odyssey_civil_blobs()
         steps.append({"step": "ingest_all_odyssey_civil_blobs", "status": "ok"})
+        dv_result = ingest_dv_email_payloads_for_run()
+        steps.append({"step": "ingest_dv_email_payloads_for_run", **dv_result})
 
         commands = [
             [sys.executable, "extract_doc_pop.py"],
