@@ -2769,7 +2769,7 @@ def ingest_wor(payload=None):
                     "issue_date": safe_sql_date_epoch(row[2]),
 
                     "court_document_type": row[4],
-                    "disposition": row[10],
+                    "disposition": row[11] if df.shape[1] > 11 else row[10],
 
                     "address": row[7],
                     "notes": row[12],
@@ -2783,6 +2783,7 @@ def ingest_wor(payload=None):
                 if inserted % 1000 == 0:
                     print(f"Inserted {inserted} records...")
 
+        backfill_wor_disposition_from_raw(cursor)
         conn.commit()
         print(f"Done. Inserted {inserted} Warrant of Restitution records.")
         return {
@@ -2794,6 +2795,33 @@ def ingest_wor(payload=None):
 
     finally:
         conn.close()
+
+def backfill_wor_disposition_from_raw(cursor):
+    cursor.execute("""
+        SELECT r.record_id, r.disposition, rr.raw_json
+        FROM search.records r
+        LEFT JOIN search.raw_records rr ON rr.record_id = r.record_id
+        WHERE r.department = 'Warrant of Restitution'
+    """)
+    rows = cursor.fetchall()
+    updated = 0
+    for record_id, disposition, raw_json in rows:
+        current = str(disposition or "").strip()
+        if not raw_json:
+            continue
+        try:
+            raw = json.loads(raw_json)
+        except Exception:
+            continue
+        mapped = str(raw.get("11") or raw.get(11) or "").strip()
+        if not mapped:
+            continue
+        looks_wrong = bool(re.fullmatch(r"\d{5}", current) or re.fullmatch(r"[A-Za-z]{2}", current))
+        if current == "" or looks_wrong:
+            cursor.execute("UPDATE search.records SET disposition = ? WHERE record_id = ?", (mapped, record_id))
+            updated += 1
+    if updated:
+        print(f"Backfilled WOR disposition for {updated} existing records.")
 
 def ingest_baltimore_jail_population():
     ingest_population_from_table(

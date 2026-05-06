@@ -1560,6 +1560,8 @@ DV_PDF_CSV_BLOB_NAME = (
 )
 ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
 CIVIL_PAPERS_CONTAINER_NAME = "civilpapers"
+WOR_FILES_CONTAINER_NAME = "warrantscsv"
+WOR_FILES_PREFIX = "wor_files"
 
 
 # Your actual containers:
@@ -1994,6 +1996,77 @@ def get_civil_files_container():
     if not CONNECTION_STRING:
         raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING env var.")
     return ContainerClient.from_connection_string(CONNECTION_STRING, CIVIL_PAPERS_CONTAINER_NAME)
+
+
+def get_wor_files_container():
+    if not CONNECTION_STRING:
+        raise RuntimeError("Missing AZURE_STORAGE_CONNECTION_STRING env var.")
+    return ContainerClient.from_connection_string(CONNECTION_STRING, WOR_FILES_CONTAINER_NAME)
+
+
+@app.route("/wor/files/upload", methods=["POST"])
+def upload_wor_file():
+    uploaded = request.files.get("file")
+    case_number = (request.form.get("case_number") or "").strip()
+    record_id = (request.form.get("record_id") or "").strip()
+    if not case_number or not record_id:
+        return jsonify({"error": "Missing case number or record ID"}), 400
+    if not uploaded or not uploaded.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    safe_filename = secure_filename(uploaded.filename) or f"file-{uuid.uuid4().hex}"
+    case_key = normalize_case_number_for_blob(case_number)
+    blob_name = f"{WOR_FILES_PREFIX}/{case_key}/{uuid.uuid4().hex}_{safe_filename}"
+    try:
+        container = get_wor_files_container()
+        blob_client = container.get_blob_client(blob_name)
+        blob_client.upload_blob(
+            uploaded.stream,
+            overwrite=False,
+            content_settings=ContentSettings(content_type=uploaded.mimetype or "application/octet-stream"),
+            metadata={"case_number": case_number[:128], "original_filename": safe_filename[:200], "record_id": record_id[:32]},
+        )
+    except Exception as exc:
+        return jsonify({"error": f"Unable to upload file to blob storage: {exc}"}), 500
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE search.records SET blob_name = ? WHERE record_id = ?", (blob_name, int(record_id)))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"ok": True, "blob_name": blob_name}), 201
+
+
+@app.route("/wor/files/download")
+def download_wor_file():
+    record_id = (request.args.get("record_id") or "").strip()
+    if not record_id:
+        return jsonify({"error": "Missing record ID"}), 400
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT blob_name FROM search.records WHERE record_id = ?", (int(record_id),))
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    blob_name = (row[0] if row else "") or ""
+    if not blob_name:
+        return jsonify({"error": "No file found for this record"}), 404
+
+    try:
+        container = get_wor_files_container()
+        blob_client = container.get_blob_client(blob_name)
+        data = blob_client.download_blob().readall()
+        props = blob_client.get_blob_properties()
+    except Exception as exc:
+        return jsonify({"error": f"Unable to download file from blob storage: {exc}"}), 500
+
+    filename = (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
+    content_type = (props.content_settings.content_type if props.content_settings else None) or "application/octet-stream"
+    return send_file(io.BytesIO(data), mimetype=content_type, as_attachment=True, download_name=filename)
 
 
 @app.route("/civil-papers/files/upload", methods=["POST"])
