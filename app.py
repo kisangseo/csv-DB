@@ -2751,8 +2751,9 @@ def run_warrant_of_restitution():
 from ingest import ingest_wor
 @app.route("/ingest-wor", methods=["POST"])
 def ingest_wor_route():
-    ingest_wor()
-    return {"status": "success"}
+    payload = request.get_json(silent=True) or {}
+    result = ingest_wor(payload)
+    return jsonify(result)
 
 
 def parse_search_filters(source):
