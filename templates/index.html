@@ -1253,7 +1253,7 @@
         const savedTableName = tableName;
         const savedFields = {...fields};
         closeModal();
-        if (isEdit && tableName === "BCSO Active Warrants" && typeof saveCallback === "function") {
+        if (isEdit && typeof saveCallback === "function") {
           saveCallback({savedTableName, savedFields});
           return;
         }
