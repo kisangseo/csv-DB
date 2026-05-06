@@ -2548,7 +2548,8 @@ def update_record(record_id):
         if not existing:
             return jsonify({"error": "Record not found"}), 404
         department_norm = normalize_department_name(existing[0])
-        if department_norm not in EDITABLE_DEPARTMENTS:
+        is_wor_department = department_norm.startswith("warrant of restitution")
+        if department_norm not in EDITABLE_DEPARTMENTS and not is_wor_department:
             return jsonify({"error": "Editing is not allowed for this department"}), 403
 
         set_parts = []
