@@ -2682,13 +2682,18 @@ def ingest_new_warrant_csv():
     finally:
         conn.close()
 
-def ingest_wor(_=None):
+def ingest_wor(payload=None):
     from azure.storage.blob import BlobServiceClient
     import os
     import pandas as pd
     import io
+    from azure.core.exceptions import ResourceNotFoundError
 
     container_name = "warrantscsv"
+    payload = payload or {}
+    requested_blob = str(payload.get("blob_name") or "").strip()
+    run_full_scan = bool(payload.get("run_full_scan") is True)
+    mode = "single_blob" if requested_blob else "full_scan"
 
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -2710,22 +2715,36 @@ def ingest_wor(_=None):
 
         inserted = 0
 
+        if not requested_blob and not run_full_scan:
+            return {
+                "status": "skipped",
+                "reason": "blob_name_missing_and_full_scan_not_enabled",
+                "mode": mode,
+                "inserted": 0,
+            }
+
+        blobs_to_process = [requested_blob] if requested_blob else [blob.name for blob in container_client.list_blobs()]
+
         # 2) Loop through blobs
-        for blob in container_client.list_blobs():
-            if not blob.name.endswith(".csv"):
+        for blob_name in blobs_to_process:
+            if not blob_name.endswith(".csv"):
                 continue
 
-            if blob.name in already_ingested:
-                print("SKIPPING (already ingested):", blob.name)
+            if blob_name in already_ingested:
+                print("SKIPPING (already ingested):", blob_name)
                 continue
 
-            print("INGESTING:", blob.name)
+            print("INGESTING:", blob_name)
 
-            blob_client = container_client.get_blob_client(blob.name)
-            data = blob_client.download_blob().readall()
+            blob_client = container_client.get_blob_client(blob_name)
+            try:
+                data = blob_client.download_blob().readall()
+            except ResourceNotFoundError:
+                print("SKIPPING (blob not found):", blob_name)
+                continue
 
             if not data.strip():
-                print("SKIPPING (empty file):", blob.name)
+                print("SKIPPING (empty file):", blob_name)
                 continue
 
             # 3) Headerless CSV from MAKE
@@ -2733,7 +2752,7 @@ def ingest_wor(_=None):
 
             # Expecting 13 columns based on your MAKE order
             if df.shape[1] < 13:
-                print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob.name)
+                print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob_name)
                 continue
 
             for _, row in df.iterrows():
@@ -2741,7 +2760,7 @@ def ingest_wor(_=None):
 
                 record = {
                     "department": "Warrant of Restitution",
-                    "source_file": blob.name,
+                    "source_file": blob_name,
 
                     "full_name": row[6],
                     "case_number": row[3],
@@ -2757,7 +2776,7 @@ def ingest_wor(_=None):
                 }
 
                 record_id = insert_search_record_fsdw(cursor, record)
-                insert_raw_record(cursor, record_id, blob.name, row.to_dict())
+                insert_raw_record(cursor, record_id, blob_name, row.to_dict())
 
                 inserted += 1
 
@@ -2766,6 +2785,12 @@ def ingest_wor(_=None):
 
         conn.commit()
         print(f"Done. Inserted {inserted} Warrant of Restitution records.")
+        return {
+            "status": "success",
+            "mode": mode,
+            "inserted": inserted,
+            "processed_blob_name": requested_blob or None,
+        }
 
     finally:
         conn.close()
