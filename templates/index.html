@@ -345,11 +345,19 @@
         "field services department": "Field Services Department",
         "field services department - civil intake": "Field Services Department",
         "field services department - civil survey": "Field Services Department",
-        "field services department - warrants": "Field Services Department"
+        "field services department - warrants": "Field Services Department",
+        "warrant of restitution": "Warrant of Restitution - MDEC"
         ,"civil papers": "Civil Papers"
       };
 
-      const ACTIONABLE_DEPARTMENTS = new Set(["active warrants", "bcso active warrants", "field services department", "civil papers"]);
+      const ACTIONABLE_DEPARTMENTS = new Set([
+        "active warrants",
+        "bcso active warrants",
+        "field services department",
+        "civil papers",
+        "warrant of restitution",
+        "warrant of restitution - mdec"
+      ]);
       const LANDLORD_TENANT_DEPARTMENTS = new Set([
         "field services department",
         "field services department - civil intake",
@@ -1097,6 +1105,59 @@
         actionsTd.appendChild(status);
       }
 
+      async function uploadWorFile(recordId, caseNumber, file, statusEl, downloadBtn) {
+        if (!recordId || !caseNumber || !file) return;
+        if (statusEl) statusEl.textContent = "Uploading...";
+        const formData = new FormData();
+        formData.append("record_id", String(recordId));
+        formData.append("case_number", caseNumber);
+        formData.append("file", file);
+        try {
+          const response = await fetch(`${window.location.origin}/wor/files/upload`, { method: "POST", body: formData });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.error || "Upload failed.");
+          if (statusEl) statusEl.textContent = "Uploaded";
+          if (downloadBtn) downloadBtn.disabled = false;
+        } catch (err) {
+          if (statusEl) statusEl.textContent = "Upload failed";
+          alert(err.message || "Upload failed.");
+        }
+      }
+
+      function appendWorFileActions(actionsTd, row) {
+        const uploadBtn = document.createElement("button");
+        uploadBtn.type = "button";
+        uploadBtn.textContent = "Upload";
+        uploadBtn.className = "table-action-btn";
+        const downloadBtn = document.createElement("button");
+        downloadBtn.type = "button";
+        downloadBtn.textContent = "Download";
+        downloadBtn.className = "table-action-btn";
+        downloadBtn.disabled = !row.blob_name;
+        const fileInput = document.createElement("input");
+        fileInput.type = "file";
+        fileInput.style.display = "none";
+        const status = document.createElement("span");
+        status.className = "civil-file-action-status";
+        status.style.marginLeft = "6px";
+        status.style.fontSize = "12px";
+        uploadBtn.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", () => {
+          const selected = fileInput.files && fileInput.files[0];
+          uploadWorFile(row.record_id, row.case_number || "", selected, status, downloadBtn);
+          fileInput.value = "";
+        });
+        downloadBtn.addEventListener("click", () => {
+          const url = new URL(`${window.location.origin}/wor/files/download`);
+          url.searchParams.set("record_id", String(row.record_id || ""));
+          window.open(url.toString(), "_blank", "noopener,noreferrer");
+        });
+        actionsTd.appendChild(uploadBtn);
+        actionsTd.appendChild(downloadBtn);
+        actionsTd.appendChild(fileInput);
+        actionsTd.appendChild(status);
+      }
+
       async function saveRecord() {
         if (!CAN_EDIT) {
           const status = document.getElementById("modalStatus");
@@ -1192,7 +1253,7 @@
         const savedTableName = tableName;
         const savedFields = {...fields};
         closeModal();
-        if (isEdit && tableName === "BCSO Active Warrants" && typeof saveCallback === "function") {
+        if (isEdit && typeof saveCallback === "function") {
           saveCallback({savedTableName, savedFields});
           return;
         }
@@ -1739,6 +1800,8 @@
                 }
                 if (deptKey === "civil papers") {
                   appendCivilPaperFileActions(actionsTd, row.case_number || "");
+                } else if (deptKey === "warrant of restitution") {
+                  appendWorFileActions(actionsTd, row);
                 }
               } else {
                 actionsTd.textContent = "—";

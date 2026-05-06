@@ -2682,13 +2682,18 @@ def ingest_new_warrant_csv():
     finally:
         conn.close()
 
-def ingest_wor(_=None):
+def ingest_wor(payload=None):
     from azure.storage.blob import BlobServiceClient
     import os
     import pandas as pd
     import io
+    from azure.core.exceptions import ResourceNotFoundError
 
     container_name = "warrantscsv"
+    payload = payload or {}
+    requested_blob = str(payload.get("blob_name") or "").strip()
+    run_full_scan = bool(payload.get("run_full_scan") is True)
+    mode = "single_blob" if requested_blob else "full_scan"
 
     blob_service_client = BlobServiceClient.from_connection_string(
         os.getenv("AZURE_STORAGE_CONNECTION_STRING")
@@ -2710,22 +2715,36 @@ def ingest_wor(_=None):
 
         inserted = 0
 
+        if not requested_blob and not run_full_scan:
+            return {
+                "status": "skipped",
+                "reason": "blob_name_missing_and_full_scan_not_enabled",
+                "mode": mode,
+                "inserted": 0,
+            }
+
+        blobs_to_process = [requested_blob] if requested_blob else [blob.name for blob in container_client.list_blobs()]
+
         # 2) Loop through blobs
-        for blob in container_client.list_blobs():
-            if not blob.name.endswith(".csv"):
+        for blob_name in blobs_to_process:
+            if not blob_name.endswith(".csv"):
                 continue
 
-            if blob.name in already_ingested:
-                print("SKIPPING (already ingested):", blob.name)
+            if blob_name in already_ingested:
+                print("SKIPPING (already ingested):", blob_name)
                 continue
 
-            print("INGESTING:", blob.name)
+            print("INGESTING:", blob_name)
 
-            blob_client = container_client.get_blob_client(blob.name)
-            data = blob_client.download_blob().readall()
+            blob_client = container_client.get_blob_client(blob_name)
+            try:
+                data = blob_client.download_blob().readall()
+            except ResourceNotFoundError:
+                print("SKIPPING (blob not found):", blob_name)
+                continue
 
             if not data.strip():
-                print("SKIPPING (empty file):", blob.name)
+                print("SKIPPING (empty file):", blob_name)
                 continue
 
             # 3) Headerless CSV from MAKE
@@ -2733,7 +2752,7 @@ def ingest_wor(_=None):
 
             # Expecting 13 columns based on your MAKE order
             if df.shape[1] < 13:
-                print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob.name)
+                print(f"SKIPPING (unexpected column count {df.shape[1]}):", blob_name)
                 continue
 
             for _, row in df.iterrows():
@@ -2741,7 +2760,7 @@ def ingest_wor(_=None):
 
                 record = {
                     "department": "Warrant of Restitution",
-                    "source_file": blob.name,
+                    "source_file": blob_name,
 
                     "full_name": row[6],
                     "case_number": row[3],
@@ -2750,25 +2769,59 @@ def ingest_wor(_=None):
                     "issue_date": safe_sql_date_epoch(row[2]),
 
                     "court_document_type": row[4],
-                    "disposition": row[10],
+                    "disposition": row[11] if df.shape[1] > 11 else row[10],
 
                     "address": row[7],
                     "notes": row[12],
                 }
 
                 record_id = insert_search_record_fsdw(cursor, record)
-                insert_raw_record(cursor, record_id, blob.name, row.to_dict())
+                insert_raw_record(cursor, record_id, blob_name, row.to_dict())
 
                 inserted += 1
 
                 if inserted % 1000 == 0:
                     print(f"Inserted {inserted} records...")
 
+        backfill_wor_disposition_from_raw(cursor)
         conn.commit()
         print(f"Done. Inserted {inserted} Warrant of Restitution records.")
+        return {
+            "status": "success",
+            "mode": mode,
+            "inserted": inserted,
+            "processed_blob_name": requested_blob or None,
+        }
 
     finally:
         conn.close()
+
+def backfill_wor_disposition_from_raw(cursor):
+    cursor.execute("""
+        SELECT r.record_id, r.disposition, rr.raw_json
+        FROM search.records r
+        LEFT JOIN search.raw_records rr ON rr.record_id = r.record_id
+        WHERE r.department = 'Warrant of Restitution'
+    """)
+    rows = cursor.fetchall()
+    updated = 0
+    for record_id, disposition, raw_json in rows:
+        current = str(disposition or "").strip()
+        if not raw_json:
+            continue
+        try:
+            raw = json.loads(raw_json)
+        except Exception:
+            continue
+        mapped = str(raw.get("11") or raw.get(11) or "").strip()
+        if not mapped:
+            continue
+        looks_wrong = bool(re.fullmatch(r"\d{5}", current) or re.fullmatch(r"[A-Za-z]{2}", current))
+        if current == "" or looks_wrong:
+            cursor.execute("UPDATE search.records SET disposition = ? WHERE record_id = ?", (mapped, record_id))
+            updated += 1
+    if updated:
+        print(f"Backfilled WOR disposition for {updated} existing records.")
 
 def ingest_baltimore_jail_population():
     ingest_population_from_table(
