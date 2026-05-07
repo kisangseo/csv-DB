@@ -2712,25 +2712,30 @@ def ingest_wor(payload=None):
                     return None
                 t = str(v).strip()
                 return t or None
+            def _pick(*keys):
+                for key in keys:
+                    if key in payload and payload.get(key) not in (None, ""):
+                        return payload.get(key)
+                return None
 
             record = {
                 "department": "Warrant of Restitution",
                 "source_file": _s(payload.get("source_file")) or "make-webhook",
-                "globalid": _s(payload.get("globalid")),
-                "intake_date": safe_sql_date_epoch(payload.get("generated_date")),
-                "expiration_date": safe_sql_date_epoch(payload.get("expiration_date")),
-                "case_number": _s(payload.get("case_number")),
-                "court_document_type": _s(payload.get("document_type")),
-                "full_name": _s(payload.get("respondent_name")),
-                "respondent_name": _s(payload.get("respondent_name")),
-                "address": _s(payload.get("respondent_address")),
-                "apartment_unit_or_secondary_address": _s(payload.get("apartment_unit")),
-                "unit": _s(payload.get("apartment_unit")),
-                "payment_amount": payload.get("ftp_balance"),
-                "administrative_status": _s(payload.get("administrative_status")),
-                "issue_date": safe_sql_date_epoch(payload.get("eviction_date_posting_date")),
-                "disposition": _s(payload.get("service_disposition")),
-                "notes": _s(payload.get("service_disposition")),
+                "globalid": _s(_pick("globalid", "global_id", "GlobalID", "GlobalId")),
+                "intake_date": safe_sql_date_epoch(_pick("generated_date", "intake_date", "Intake Date")),
+                "expiration_date": safe_sql_date_epoch(_pick("expiration_date", "Expiration Date")),
+                "case_number": _s(_pick("case_number", "case number", "Case Number", "caseNo")),
+                "court_document_type": _s(_pick("document_type", "court_document_type", "Court Document Type")),
+                "full_name": _s(_pick("respondent_name", "tenant_defendant_or_respondent", "Tenant, Defendant, or Respondent Name")),
+                "respondent_name": _s(_pick("respondent_name", "tenant_defendant_or_respondent", "Tenant, Defendant, or Respondent Name")),
+                "address": _s(_pick("respondent_address", "tenant_defendant_or_respondent_address", "Tenant, Defendant or Respondent Address")),
+                "apartment_unit_or_secondary_address": _s(_pick("apartment_unit", "Apartment, Unit or Secondary Address")),
+                "unit": _s(_pick("apartment_unit", "Apartment, Unit or Secondary Address")),
+                "payment_amount": _pick("ftp_balance", "FTP Balance"),
+                "administrative_status": _s(_pick("administrative_status", "Administrative Status")),
+                "issue_date": safe_sql_date_epoch(_pick("eviction_date_posting_date", "Eviction Date/Posting Date")),
+                "disposition": _s(_pick("service_disposition", "Service Disposition")),
+                "notes": _s(_pick("service_disposition", "Service Disposition")),
             }
 
             cursor.execute(
