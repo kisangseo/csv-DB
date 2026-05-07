@@ -2691,6 +2691,7 @@ def ingest_wor(payload=None):
 
     container_name = "warrantscsv"
     payload = payload or {}
+    is_direct_record = bool(payload.get("globalid") or payload.get("case_number") or payload.get("respondent_name"))
     requested_blob = str(payload.get("blob_name") or "").strip()
     run_full_scan = bool(payload.get("run_full_scan") is True)
     mode = "single_blob" if requested_blob else "full_scan"
@@ -2704,6 +2705,93 @@ def ingest_wor(payload=None):
 
     try:
         cursor = conn.cursor()
+
+        if is_direct_record:
+            def _s(v):
+                if v is None:
+                    return None
+                t = str(v).strip()
+                return t or None
+
+            record = {
+                "department": "Warrant of Restitution",
+                "source_file": _s(payload.get("source_file")) or "make-webhook",
+                "globalid": _s(payload.get("globalid")),
+                "intake_date": safe_sql_date_epoch(payload.get("generated_date")),
+                "expiration_date": safe_sql_date_epoch(payload.get("expiration_date")),
+                "case_number": _s(payload.get("case_number")),
+                "court_document_type": _s(payload.get("document_type")),
+                "full_name": _s(payload.get("respondent_name")),
+                "respondent_name": _s(payload.get("respondent_name")),
+                "address": _s(payload.get("respondent_address")),
+                "apartment_unit_or_secondary_address": _s(payload.get("apartment_unit")),
+                "unit": _s(payload.get("apartment_unit")),
+                "payment_amount": payload.get("ftp_balance"),
+                "administrative_status": _s(payload.get("administrative_status")),
+                "issue_date": safe_sql_date_epoch(payload.get("eviction_date_posting_date")),
+                "disposition": _s(payload.get("service_disposition")),
+                "notes": _s(payload.get("service_disposition")),
+            }
+
+            cursor.execute(
+                """
+                SELECT TOP 1 record_id
+                FROM search.records
+                WHERE department = 'Warrant of Restitution'
+                  AND globalid = ?
+                ORDER BY record_id DESC
+                """,
+                record["globalid"],
+            )
+            existing = cursor.fetchone() if record["globalid"] else None
+
+            if existing:
+                record_id = existing[0]
+                cursor.execute(
+                    """
+                    UPDATE search.records SET
+                        source_file = ?,
+                        intake_date = ?,
+                        expiration_date = ?,
+                        case_number = ?,
+                        court_document_type = ?,
+                        full_name = ?,
+                        respondent_name = ?,
+                        address = ?,
+                        apartment_unit_or_secondary_address = ?,
+                        unit = ?,
+                        payment_amount = ?,
+                        administrative_status = ?,
+                        issue_date = ?,
+                        disposition = ?,
+                        notes = ?
+                    WHERE record_id = ?
+                    """,
+                    record["source_file"],
+                    record["intake_date"],
+                    record["expiration_date"],
+                    record["case_number"],
+                    record["court_document_type"],
+                    record["full_name"],
+                    record["respondent_name"],
+                    record["address"],
+                    record["apartment_unit_or_secondary_address"],
+                    record["unit"],
+                    record["payment_amount"],
+                    record["administrative_status"],
+                    record["issue_date"],
+                    record["disposition"],
+                    record["notes"],
+                    record_id,
+                )
+                action = "updated"
+            else:
+                record_id = insert_search_record_civil_papers_one_time(cursor, record)
+                action = "inserted"
+
+            insert_raw_record(cursor, record_id, record["source_file"], payload)
+            conn.commit()
+            return {"status": "success", "mode": "direct_payload", "action": action, "record_id": record_id}
 
         # 1) Get already ingested files
         cursor.execute("""
