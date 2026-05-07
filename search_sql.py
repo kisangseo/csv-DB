@@ -162,7 +162,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         facility AS facility,
         case_number AS case_number,
         COALESCE(address, tenant_defendant_or_respondent_address, doc_address, location_of_prior_attempt) AS address,
-        apt AS apt,
+        COALESCE(apt, unit, apartment_unit_or_secondary_address) AS apt,
         city AS city,
         postal_code AS postal_code,
         COALESCE(petitioner_name, petitioner_or_plaintiff_name) AS petitioner_name,
