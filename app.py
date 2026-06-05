@@ -1603,7 +1603,10 @@ def fetch_record_edits(cur, record_id):
         SELECT
             edit_id,
             record_id,
-            FORMAT(edited_at_utc, 'yyyy-MM-dd HH:mm:ss') AS edited_at_utc,
+            FORMAT(
+                edited_at_utc AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time',
+                'yyyy-MM-dd hh:mm tt'
+            ) AS edited_at_est,
             edited_by_email,
             field_name,
             field_label,

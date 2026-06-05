@@ -860,7 +860,8 @@
           summary.textContent = edit.change_summary || `${edit.edited_by_email || "Unknown user"} changed ${edit.field_label || edit.field_name || "a field"}.`;
           const meta = document.createElement("div");
           meta.className = "bcso-edit-history-meta";
-          meta.textContent = edit.edited_at_utc ? `${edit.edited_at_utc} UTC` : "";
+          const editedAt = edit.edited_at_est || edit.edited_at_utc || "";
+          meta.textContent = editedAt ? `${editedAt} EST` : "";
           item.appendChild(summary);
           if (meta.textContent) item.appendChild(meta);
           list.appendChild(item);
