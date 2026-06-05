@@ -1541,6 +1541,84 @@ def upsert_set_value(set_parts, values, column_name, db_value):
         set_parts.append(token)
         values.append(db_value)
 
+
+BCSO_EDIT_FIELD_LABELS = {
+    "issuing_county": "Issuing County",
+    "case_number": "Case Number",
+    "warrant_id_number": "Warrant ID Number",
+    "warrant_type": "Warrant Type",
+    "issue_date": "Issue Date",
+    "warrant_status": "Warrant Status",
+    "full_name": "Name",
+    "sid": "SID",
+    "date_of_birth": "Date of Birth",
+    "race": "Race",
+    "sex": "Sex",
+    "address": "Address",
+    "x": "X",
+    "y": "Y",
+    "notes": "Notes",
+}
+
+
+def get_current_user_email(cur):
+    user_id = session.get("user_id")
+    if not user_id:
+        return "unknown user"
+
+    cur.execute("SELECT email FROM search.users WHERE user_id = ?", user_id)
+    row = cur.fetchone()
+    if row and row[0]:
+        return str(row[0]).strip()
+    return f"user_id:{user_id}"
+
+
+def format_edit_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        if value.hour == 0 and value.minute == 0 and value.second == 0 and value.microsecond == 0:
+            return value.strftime("%Y-%m-%d")
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if hasattr(value, "isoformat") and not isinstance(value, str):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return str(value).strip()
+
+
+def normalize_edit_value(value):
+    return format_edit_value(value).strip()
+
+
+def describe_edit_value(value):
+    display = format_edit_value(value)
+    return display if display else "empty"
+
+
+def fetch_record_edits(cur, record_id):
+    cur.execute(
+        """
+        SELECT
+            edit_id,
+            record_id,
+            FORMAT(edited_at_utc, 'yyyy-MM-dd HH:mm:ss') AS edited_at_utc,
+            edited_by_email,
+            field_name,
+            field_label,
+            old_value,
+            new_value,
+            change_summary
+        FROM search.record_edits
+        WHERE record_id = ?
+        ORDER BY edited_at_utc DESC, edit_id DESC
+        """,
+        record_id,
+    )
+    columns = [col[0] for col in cur.description]
+    return [dict(zip(columns, row)) for row in cur.fetchall()]
+
 CORS(app)
 
 CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
@@ -2541,19 +2619,25 @@ def update_record(record_id):
     updates = payload.get("fields") or {}
 
     conn = get_conn()
+    edits = []
     try:
         cur = conn.cursor()
-        cur.execute("SELECT department FROM search.records WHERE record_id = ?", record_id)
+        cur.execute("SELECT * FROM search.records WHERE record_id = ?", record_id)
         existing = cur.fetchone()
         if not existing:
             return jsonify({"error": "Record not found"}), 404
-        department_norm = normalize_department_name(existing[0])
+
+        existing_columns = [col[0] for col in cur.description]
+        existing_record = dict(zip(existing_columns, existing))
+        department_norm = normalize_department_name(existing_record.get("department"))
+        is_bcso_active_warrants = department_norm == "bcso active warrants"
         is_wor_department = department_norm.startswith("warrant of restitution")
         if department_norm not in EDITABLE_DEPARTMENTS and not is_wor_department:
             return jsonify({"error": "Editing is not allowed for this department"}), 403
 
         set_parts = []
         values = []
+        changed_fields = []
 
         for column, value in updates.items():
             if column not in ALL_EDITABLE_COLUMNS:
@@ -2574,10 +2658,15 @@ def update_record(record_id):
             set_parts.append(f"{column} = ?")
             values.append(db_value)
 
+            if is_bcso_active_warrants:
+                old_value = existing_record.get(column)
+                if normalize_edit_value(old_value) != normalize_edit_value(db_value):
+                    changed_fields.append((column, old_value, db_value))
+
         if not set_parts:
             return jsonify({"error": "No valid fields provided"}), 400
 
-        if department_norm == "bcso active warrants" and "address" in updates and records_has_xy_columns(cur):
+        if is_bcso_active_warrants and "address" in updates and records_has_xy_columns(cur):
             updated_address = ("" if updates.get("address") is None else str(updates.get("address"))).strip()
             if updated_address:
                 x, y = geocode_address(updated_address)
@@ -2592,11 +2681,65 @@ def update_record(record_id):
             f"UPDATE search.records SET {', '.join(set_parts)} WHERE record_id = ?",
             tuple(values)
         )
+
+        if is_bcso_active_warrants and changed_fields:
+            edited_by_email = get_current_user_email(cur)
+            for column, old_value, new_value in changed_fields:
+                field_label = BCSO_EDIT_FIELD_LABELS.get(column, column)
+                change_summary = (
+                    f"{edited_by_email} changed {field_label} "
+                    f"from {describe_edit_value(old_value)} to {describe_edit_value(new_value)}"
+                )
+                cur.execute(
+                    """
+                    INSERT INTO search.record_edits (
+                        record_id, edited_by_email, field_name, field_label,
+                        old_value, new_value, change_summary
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record_id,
+                        edited_by_email,
+                        column,
+                        field_label,
+                        format_edit_value(old_value),
+                        format_edit_value(new_value),
+                        change_summary,
+                    ),
+                )
+
+        if is_bcso_active_warrants:
+            edits = fetch_record_edits(cur, record_id)
+
         conn.commit()
     finally:
         conn.close()
 
-    return jsonify({"status": "success"})
+    return jsonify({"status": "success", "edits": edits})
+
+
+@app.route("/records/<int:record_id>/edits")
+def get_record_edits(record_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT department FROM search.records WHERE record_id = ?", record_id)
+        existing = cur.fetchone()
+        if not existing:
+            return jsonify({"error": "Record not found"}), 404
+
+        if normalize_department_name(existing[0]) != "bcso active warrants":
+            return jsonify({"error": "Edit history is only available for BCSO Active Warrants"}), 403
+
+        edits = fetch_record_edits(cur, record_id)
+    finally:
+        conn.close()
+
+    return jsonify({"edits": edits})
 
 
 @app.route("/dv-pdf/records/<int:record_id>", methods=["PATCH"])
