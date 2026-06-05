@@ -259,12 +259,12 @@ tr.bcso-warrant-status-active > td {
 
 tr.bcso-warrant-status-served,
 tr.bcso-warrant-status-served > td {
-  background-color: #e8f3ff;
+  background-color: #fde2e2;
 }
 
 tr.bcso-warrant-status-detainer,
 tr.bcso-warrant-status-detainer > td {
-  background-color: #fde2e2;
+  background-color: #e8f3ff;
 }
 
 tr.bcso-warrant-status-quashed,
@@ -279,12 +279,12 @@ tr.bcso-warrant-status-active:hover > td {
 
 tr.bcso-warrant-status-served:hover,
 tr.bcso-warrant-status-served:hover > td {
-  background-color: #d8ebff;
+  background-color: #fbd3d3;
 }
 
 tr.bcso-warrant-status-detainer:hover,
 tr.bcso-warrant-status-detainer:hover > td {
-  background-color: #fbd3d3;
+  background-color: #d8ebff;
 }
 
 tr.bcso-warrant-status-quashed:hover,
