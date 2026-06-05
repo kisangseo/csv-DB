@@ -321,7 +321,7 @@
           "Outside of Maryland"
         ],
         warrant_status: ["Active", "Served", "Detainer", "Quashed"],
-        warrant_type: ["Arrest Warrant VOP", "Arrest Warrant FTA", "Civil", "Juvenile", "Body Attachment", "Other"],
+        warrant_type: ["Arrest Warrant VOP", "Arrest Warrant FTA", "Civil", "Juvenile", "Body Attachment", "Grand Jury Indictment", "Petition to Rescind", "Other"],
         sex: ["Male", "Female", "Other"],
         race: ["Black", "White", "Asian/Pacific Islander", "Multi-Race", "Indian or Alaskan Native", "Unknown"],
         court_type: ["Circuit", "District"],
@@ -773,7 +773,33 @@
         return String(value).trim();
       }
 
+      function getBcsoWarrantStatusClass(status) {
+        const normalized = String(status || "").trim().toLowerCase();
+        if (normalized === "active") return "bcso-warrant-status-active";
+        if (normalized === "served") return "bcso-warrant-status-served";
+        if (normalized === "detainer") return "bcso-warrant-status-detainer";
+        if (normalized === "quashed" || normalized === "squashed") return "bcso-warrant-status-quashed";
+        return "";
+      }
+
+      function applyBcsoWarrantStatusRowColor(tr, row, dept) {
+        if ((dept || "").toLowerCase() !== "bcso active warrants") return;
+
+        tr.classList.remove(
+          "bcso-warrant-status-active",
+          "bcso-warrant-status-served",
+          "bcso-warrant-status-detainer",
+          "bcso-warrant-status-quashed"
+        );
+
+        const statusClass = getBcsoWarrantStatusClass(row?.warrant_status);
+        if (statusClass) {
+          tr.classList.add(statusClass);
+        }
+      }
+
       function updateRenderedRowCells(tr, row, dataHeaders, dept) {
+        applyBcsoWarrantStatusRowColor(tr, row, dept);
         dataHeaders.forEach((headerLabel, index) => {
           const td = tr.children[index];
           if (!td) return;
@@ -1579,6 +1605,7 @@
               : rows;
             rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
+              applyBcsoWarrantStatusRowColor(tr, row, dept);
               const dataHeaders = headers.slice(0, -1);
               const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
 
