@@ -321,7 +321,7 @@
           "Outside of Maryland"
         ],
         warrant_status: ["Active", "Served", "Detainer", "Quashed"],
-        warrant_type: ["Arrest Warrant VOP", "Arrest Warrant FTA", "Civil", "Juvenile", "Body Attachment", "Other"],
+        warrant_type: ["Arrest Warrant VOP", "Arrest Warrant FTA", "Civil", "Juvenile", "Body Attachment", "Grand Jury Indictment", "Petition to Rescind", "Other"],
         sex: ["Male", "Female", "Other"],
         race: ["Black", "White", "Asian/Pacific Islander", "Multi-Race", "Indian or Alaskan Native", "Unknown"],
         court_type: ["Circuit", "District"],
@@ -773,7 +773,33 @@
         return String(value).trim();
       }
 
+      function getBcsoWarrantStatusClass(status) {
+        const normalized = String(status || "").trim().toLowerCase();
+        if (normalized === "active") return "bcso-warrant-status-active";
+        if (normalized === "served") return "bcso-warrant-status-served";
+        if (normalized === "detainer") return "bcso-warrant-status-detainer";
+        if (normalized === "quashed" || normalized === "squashed") return "bcso-warrant-status-quashed";
+        return "";
+      }
+
+      function applyBcsoWarrantStatusRowColor(tr, row, dept) {
+        if ((dept || "").toLowerCase() !== "bcso active warrants") return;
+
+        tr.classList.remove(
+          "bcso-warrant-status-active",
+          "bcso-warrant-status-served",
+          "bcso-warrant-status-detainer",
+          "bcso-warrant-status-quashed"
+        );
+
+        const statusClass = getBcsoWarrantStatusClass(row?.warrant_status);
+        if (statusClass) {
+          tr.classList.add(statusClass);
+        }
+      }
+
       function updateRenderedRowCells(tr, row, dataHeaders, dept) {
+        applyBcsoWarrantStatusRowColor(tr, row, dept);
         dataHeaders.forEach((headerLabel, index) => {
           const td = tr.children[index];
           if (!td) return;
@@ -790,6 +816,105 @@
             td.textContent = toCellText(val);
           }
         });
+      }
+
+      function isInteractiveRowClickTarget(target) {
+        return Boolean(target.closest("button, a, input, select, textarea, label"));
+      }
+
+      function renderBcsoEditHistoryCell(td, edits, errorText = "") {
+        td.innerHTML = "";
+
+        const wrap = document.createElement("div");
+        wrap.className = "bcso-edit-history-panel";
+
+        const title = document.createElement("div");
+        title.className = "bcso-edit-history-title";
+        title.textContent = "Edit History";
+        wrap.appendChild(title);
+
+        if (errorText) {
+          const message = document.createElement("div");
+          message.className = "bcso-edit-history-empty";
+          message.textContent = errorText;
+          wrap.appendChild(message);
+          td.appendChild(wrap);
+          return;
+        }
+
+        if (!edits || edits.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "bcso-edit-history-empty";
+          empty.textContent = "No edits recorded for this warrant yet.";
+          wrap.appendChild(empty);
+          td.appendChild(wrap);
+          return;
+        }
+
+        const list = document.createElement("ul");
+        list.className = "bcso-edit-history-list";
+        edits.forEach((edit) => {
+          const item = document.createElement("li");
+          const summary = document.createElement("div");
+          summary.className = "bcso-edit-history-summary";
+          summary.textContent = edit.change_summary || `${edit.edited_by_email || "Unknown user"} changed ${edit.field_label || edit.field_name || "a field"}.`;
+          const meta = document.createElement("div");
+          meta.className = "bcso-edit-history-meta";
+          meta.textContent = edit.edited_at_utc ? `${edit.edited_at_utc} UTC` : "";
+          item.appendChild(summary);
+          if (meta.textContent) item.appendChild(meta);
+          list.appendChild(item);
+        });
+        wrap.appendChild(list);
+        td.appendChild(wrap);
+      }
+
+      async function toggleBcsoEditHistoryRow(tr, row, colspan) {
+        const existingDetailRow = tr.nextElementSibling;
+        if (existingDetailRow?.classList.contains("bcso-edit-history-row")) {
+          existingDetailRow.remove();
+          tr.classList.remove("bcso-edit-history-open");
+          return;
+        }
+
+        const detailTr = document.createElement("tr");
+        detailTr.className = "bcso-edit-history-row";
+        const detailTd = document.createElement("td");
+        detailTd.colSpan = colspan;
+        detailTd.textContent = "Loading edit history...";
+        detailTr.appendChild(detailTd);
+        tr.insertAdjacentElement("afterend", detailTr);
+        tr.classList.add("bcso-edit-history-open");
+
+        if (Array.isArray(row.edits)) {
+          renderBcsoEditHistoryCell(detailTd, row.edits);
+          return;
+        }
+
+        try {
+          const response = await fetch(`${window.location.origin}/records/${row.record_id}/edits`);
+          if (!response.ok) {
+            let errText = "Unable to load edit history.";
+            try {
+              const err = await response.json();
+              errText = err.error || errText;
+            } catch (_) {}
+            renderBcsoEditHistoryCell(detailTd, [], errText);
+            return;
+          }
+          const data = await response.json();
+          row.edits = data.edits || [];
+          renderBcsoEditHistoryCell(detailTd, row.edits);
+        } catch (err) {
+          renderBcsoEditHistoryCell(detailTd, [], err?.message || "Unable to load edit history.");
+        }
+      }
+
+      function refreshOpenBcsoEditHistoryRow(tr, row) {
+        const detailRow = tr.nextElementSibling;
+        if (!detailRow?.classList.contains("bcso-edit-history-row")) return;
+        const detailTd = detailRow.querySelector("td");
+        if (detailTd) renderBcsoEditHistoryCell(detailTd, row.edits || []);
       }
 
       function getCivilRowDateValue(row) {
@@ -1248,13 +1373,18 @@
           return;
         }
 
+        let responseData = {};
+        try {
+          responseData = await response.json();
+        } catch (_) {}
+
         status.textContent = "Saved successfully.";
         const saveCallback = activeEditContext?.onSave;
         const savedTableName = tableName;
         const savedFields = {...fields};
         closeModal();
         if (isEdit && typeof saveCallback === "function") {
-          saveCallback({savedTableName, savedFields});
+          saveCallback({savedTableName, savedFields, responseData});
           return;
         }
         const currentFilters = getCurrentSearchFilters();
@@ -1579,6 +1709,7 @@
               : rows;
             rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
+              applyBcsoWarrantStatusRowColor(tr, row, dept);
               const dataHeaders = headers.slice(0, -1);
               const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
 
@@ -1709,9 +1840,13 @@
                       values: out,
                       recordId: row.record_id,
                       onSave: isBcsoActiveWarrants
-                        ? ({savedFields, savedTableName}) => {
+                        ? ({savedFields, savedTableName, responseData}) => {
                             mergeEditedFieldsIntoRow(savedTableName, row, savedFields);
+                            if (Array.isArray(responseData?.edits)) {
+                              row.edits = responseData.edits;
+                            }
                             updateRenderedRowCells(tr, row, dataHeaders, dept);
+                            refreshOpenBcsoEditHistoryRow(tr, row);
                           }
                         : null
                     });
@@ -1784,6 +1919,10 @@
                       return;
                     }
 
+                    const detailRow = tr.nextElementSibling;
+                    if (detailRow?.classList.contains("bcso-edit-history-row")) {
+                      detailRow.remove();
+                    }
                     tr.remove();
                   });
                   actionsTd.appendChild(deleteBtn);
@@ -1808,6 +1947,15 @@
               }
 
               tr.appendChild(actionsTd);
+
+              if (deptKey === "bcso active warrants") {
+                tr.classList.add("bcso-edit-history-parent");
+                tr.title = "Click to show edit history";
+                tr.addEventListener("click", (event) => {
+                  if (isInteractiveRowClickTarget(event.target)) return;
+                  toggleBcsoEditHistoryRow(tr, row, headers.length);
+                });
+              }
 
               tbody.appendChild(tr);
 

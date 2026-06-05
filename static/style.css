@@ -251,6 +251,97 @@ tr.civil-child-row td {
   background-color: #f7f7ff;
 }
 
+/* BCSO Active Warrants status row colors */
+tr.bcso-warrant-status-active,
+tr.bcso-warrant-status-active > td {
+  background-color: #fde2e2;
+}
+
+tr.bcso-warrant-status-served,
+tr.bcso-warrant-status-served > td {
+  background-color: #d7f5e1;
+}
+
+tr.bcso-warrant-status-detainer,
+tr.bcso-warrant-status-detainer > td {
+  background-color: #fff7bf;
+}
+
+tr.bcso-warrant-status-quashed,
+tr.bcso-warrant-status-quashed > td {
+  background-color: #e8f3ff;
+}
+
+tr.bcso-warrant-status-active:hover,
+tr.bcso-warrant-status-active:hover > td {
+  background-color: #fbd3d3;
+}
+
+tr.bcso-warrant-status-served:hover,
+tr.bcso-warrant-status-served:hover > td {
+  background-color: #c8efd5;
+}
+
+tr.bcso-warrant-status-detainer:hover,
+tr.bcso-warrant-status-detainer:hover > td {
+  background-color: #fff2a3;
+}
+
+tr.bcso-warrant-status-quashed:hover,
+tr.bcso-warrant-status-quashed:hover > td {
+  background-color: #d8ebff;
+}
+
+tr.bcso-edit-history-parent {
+  cursor: pointer;
+}
+
+tr.bcso-edit-history-open > td {
+  box-shadow: inset 0 -2px 0 #64748b;
+}
+
+tr.bcso-edit-history-row,
+tr.bcso-edit-history-row:hover,
+tr.bcso-edit-history-row > td,
+tr.bcso-edit-history-row:hover > td {
+  background-color: #fff;
+}
+
+.bcso-edit-history-panel {
+  padding: 10px 12px;
+  border-left: 4px solid #64748b;
+  background: #f8fafc;
+}
+
+.bcso-edit-history-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.bcso-edit-history-empty {
+  color: #64748b;
+  font-style: italic;
+}
+
+.bcso-edit-history-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.bcso-edit-history-list li {
+  margin: 6px 0;
+}
+
+.bcso-edit-history-summary {
+  color: #1f2937;
+}
+
+.bcso-edit-history-meta {
+  color: #64748b;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .civil-papers-table th,
 .civil-papers-table td {
   line-height: 1.25;
