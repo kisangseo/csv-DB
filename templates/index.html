@@ -940,21 +940,52 @@
         return `${deputy} at ${attemptedAt}`;
       }
 
-      function isCivilServedRecord(row) {
-        const statusText = String(
-          row.disposition || row.administrative_status || row.service_disp || row.order_disposition || ""
-        ).toLowerCase();
-        const servedByText = getCivilServedByValue(row).toLowerCase();
-        const sourceFile = String(row.source_file || "").toLowerCase();
+      function getCivilActionStatus(row) {
+        return normalizeCivilText(
+          row.service_disp || row.administrative_status || row.disposition || row.order_disposition || ""
+        );
+      }
 
-        const hasServedStatus = statusText.includes("served") || sourceFile === "civil-paper-serves" || sourceFile === "survey123-webhook1";
-        const hasNotServedMarker = statusText.includes("non est")
-          || statusText.includes("not served")
-          || statusText.includes("unserved")
-          || statusText.includes("attempt");
+      function getCivilActionPriority(row) {
+        const status = getCivilActionStatus(row);
+        const sourceFile = normalizeCivilText(row.source_file);
+        const isNonEst = status.includes("non est")
+          || status.includes("not served")
+          || status.includes("unserved");
 
-        if (hasNotServedMarker) return false;
-        return hasServedStatus || servedByText.length > 0;
+        if (status.includes("served") && !isNonEst) return 0;
+        if (isNonEst) return 1;
+        if (status.includes("attempt") || sourceFile === "civil-paper-attempts") return 2;
+        if (status.includes("received")) return 3;
+        return 4;
+      }
+
+      function getCivilActionDateValue(row) {
+        return row.date_time_served_iso
+          || row.date_time_attempted_iso
+          || row.date_time_served
+          || row.date_time_attempted
+          || row.prior_attempt_date
+          || row.date_received
+          || row.intake_date
+          || row.issue_date
+          || row.record_date
+          || "";
+      }
+
+      function compareCivilRowsByAction(a, b) {
+        const priorityDifference = getCivilActionPriority(a) - getCivilActionPriority(b);
+        if (priorityDifference !== 0) return priorityDifference;
+
+        const aDate = getCivilActionDateValue(a);
+        const bDate = getCivilActionDateValue(b);
+        if (aDate !== bDate) {
+          if (!aDate) return 1;
+          if (!bDate) return -1;
+          return bDate.localeCompare(aDate);
+        }
+
+        return Number(b.record_id || 0) - Number(a.record_id || 0);
       }
 
       function normalizeCivilCaseKey(caseNumber) {
@@ -1029,16 +1060,12 @@
             }
           });
 
-          const sorted = [...fingerprintedRows.values()].sort(compareCivilRowsAsc);
+          const sorted = [...fingerprintedRows.values()].sort(compareCivilRowsByAction);
           sorted.forEach((r) => {
             r.served_by_display = getCivilServedByValue(r);
           });
 
-          const servedRows = sorted.filter((r) => isCivilServedRecord(r));
-          const parent = servedRows.length > 0
-            ? servedRows.sort((a, b) => compareCivilRowsAsc(b, a))[0]
-            : [...sorted].sort((a, b) => compareCivilRowsAsc(b, a))[0];
-
+          const parent = sorted[0];
           if (!parent) return;
 
           if (!parent.served_by_display) {
