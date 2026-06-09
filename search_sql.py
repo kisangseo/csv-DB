@@ -19,8 +19,19 @@ def _build_filters_sql(
     params: List[object] = []
 
     for token in name_tokens:
-        where_clauses.append("full_name LIKE ?")
-        params.append(f"%{token}%")
+        where_clauses.append(
+            """
+            (
+                full_name LIKE ?
+                OR tenant_defendant_or_respondent LIKE ?
+                OR resp_name LIKE ?
+                OR petitioner_name LIKE ?
+                OR petitioner_or_plaintiff_name LIKE ?
+            )
+            """.strip()
+        )
+        like_token = f"%{token}%"
+        params.extend([like_token, like_token, like_token, like_token, like_token])
 
     if case_number:
         normalized_case_number = "".join(
