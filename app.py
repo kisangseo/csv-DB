@@ -124,6 +124,34 @@ def get_court_doc_type_values(selected_value):
     return [selected]
 
 
+def parse_civil_papers_datetime(value):
+    """Parse Survey123/Make date values supplied as epoch milliseconds or text."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    try:
+        return datetime.fromtimestamp(int(text) / 1000, UTC).replace(tzinfo=None)
+    except (TypeError, ValueError, OverflowError):
+        pass
+
+    for date_format in ("%m/%d/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, date_format)
+        except ValueError:
+            continue
+
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def parse_request_json_lenient(req):
     """
     Parse request JSON with a fallback that tolerates raw control characters
@@ -2384,12 +2412,6 @@ def esri_webhook():
                 return attrs.get(key)
         return None
 
-    def to_dt(ms):
-        try:
-            return datetime.utcfromtimestamp(int(ms) / 1000) if ms else None
-        except:
-            return None
-
     record = {
         "Doc": pick("Doc", "doc"),
         "type": pick("type", "Type"),
@@ -2405,10 +2427,10 @@ def esri_webhook():
         "return Sequence": pick("return Sequence", "return_sequence"),
         "return email": pick("return email", "return_email"),
         "Member Reporting": pick("Member Reporting", "member_reporting"),
-        "Date and Time Attempted": to_dt(pick("Date and Time Attempted", "date_and_time_attempted")),
+        "Date and Time Attempted": parse_civil_papers_datetime(pick("Date and Time Attempted", "date_and_time_attempted")),
         "Service Disp": pick("Service Disp", "service_disp"),
-        "Prior Attempt Date - Admin": to_dt(pick("Prior Attempt Date - Admin", "prior_attempt_date_admin")),
-        "Prior Attempt Date": to_dt(pick("Prior Attempt Date", "prior_attempt_date")),
+        "Prior Attempt Date - Admin": parse_civil_papers_datetime(pick("Prior Attempt Date - Admin", "prior_attempt_date_admin")),
+        "Prior Attempt Date": parse_civil_papers_datetime(pick("Prior Attempt Date", "prior_attempt_date")),
         "Location of Prior Attempt": pick("Location of Prior Attempt", "location_of_prior_attempt"),
         "method of service": pick("method of service", "method_of_service"),
         "Two prior": pick("Two prior", "two_prior"),
@@ -2417,7 +2439,7 @@ def esri_webhook():
         "Reason for Non Est": pick("Reason for Non Est", "reason_for_non_est"),
         "Notes from Attempt": pick("Notes from Attempt", "notes_from_attempt"),
         "Parent Document": pick("Parent Document", "parent_document"),
-        "Date Received": to_dt(pick("Date Received", "date_received")),
+        "Date Received": parse_civil_papers_datetime(pick("Date Received", "date_received")),
         "globalid": pick("globalid", "global_id"),
         "objectid": pick("objectid", "object_id"),
     }
