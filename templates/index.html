@@ -971,6 +971,36 @@
           .toLowerCase();
       }
 
+      const CIVIL_RELATIONSHIP_CUTOFF = new Date("2026-06-01T00:00:00");
+
+      function normalizeCivilDocumentId(value) {
+        return normalizeCivilText(value).replace(/[{}]/g, "");
+      }
+
+      function getCivilGroupKey(row) {
+        const createdAt = row.created_at ? new Date(row.created_at) : null;
+        const usesDocumentRelationship = createdAt
+          && !Number.isNaN(createdAt.getTime())
+          && createdAt >= CIVIL_RELATIONSHIP_CUTOFF;
+
+        if (!usesDocumentRelationship) {
+          const caseKey = normalizeCivilCaseKey(row.case_number);
+          return caseKey ? `legacy-case:${caseKey}` : "";
+        }
+
+        const sourceFile = normalizeCivilText(row.source_file);
+        if (sourceFile === "civil-paper-attempts") {
+          const parentDocument = normalizeCivilDocumentId(row.parent_document);
+          return parentDocument ? `document:${parentDocument}` : `record:${row.record_id}`;
+        }
+        if (sourceFile === "civil-paper-serves") {
+          const globalId = normalizeCivilDocumentId(row.globalid || row.global_id);
+          return globalId ? `document:${globalId}` : `record:${row.record_id}`;
+        }
+
+        return `record:${row.record_id}`;
+      }
+
       function getCivilDuplicateFingerprint(row) {
         const caseKey = normalizeCivilCaseKey(row.case_number);
         const deputy = normalizeCivilText(row.served_by || row.serving_or_attempting_deputy || row.member_reporting || row.return_deputy || "");
@@ -982,10 +1012,10 @@
       function buildCivilDisplayRows(rows) {
         const groups = new Map();
         rows.forEach((row) => {
-          const caseKey = normalizeCivilCaseKey(row.case_number);
-          if (!caseKey) return;
-          if (!groups.has(caseKey)) groups.set(caseKey, []);
-          groups.get(caseKey).push({...row});
+          const groupKey = getCivilGroupKey(row);
+          if (!groupKey) return;
+          if (!groups.has(groupKey)) groups.set(groupKey, []);
+          groups.get(groupKey).push({...row});
         });
 
         const parents = [];
