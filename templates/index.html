@@ -763,6 +763,9 @@
           if (headerLabel === "Order Type") return row.order_type || row.type || "";
           if (headerLabel === "Order Disposition") return row.order_disposition || "";
         }
+        if (dept.toLowerCase() === "daily logs" && headerLabel === "Name") {
+          return row.event_name || row.name || "";
+        }
         if (headerLabel === "Address") {
           if (dept.toLowerCase() === "daily logs") {
             const cityState = [row.city, row.state].filter(Boolean).join(", ");
