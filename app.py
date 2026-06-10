@@ -25,6 +25,7 @@ from azure.storage.blob import (
     generate_blob_sas,
 )
 from db_connect import get_conn
+from daily_logs import search_daily_logs
 from search_sql import search_by_name, build_search_sql
 from datetime import timedelta, datetime, UTC
 from werkzeug.utils import secure_filename
@@ -3324,6 +3325,7 @@ def search_all():
             court_doc_types=filters["court_document_type_values"],
             limit=None
         )
+        daily_logs = search_daily_logs(conn, filters)
     finally:
         conn.close()
     
@@ -3356,6 +3358,10 @@ def search_all():
     response["DV PDF"] = {
         "count": len(dv_records),
         "records": dv_records,
+    }
+    response["Daily Logs"] = {
+        "count": len(daily_logs),
+        "records": daily_logs,
     }
 
     return jsonify(response)
