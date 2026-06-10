@@ -36,7 +36,8 @@ def search_daily_logs(conn, filters, limit=2000):
             e.state,
             e.postal_code,
             e.additional_report,
-            e.[name] AS name
+            e.[name] AS name,
+            e.radio_id
         FROM dbo.esri_events AS e
         WHERE {' AND '.join(where_clauses)}
         ORDER BY e.received_at DESC, e.id DESC
@@ -55,5 +56,6 @@ def search_daily_logs(conn, filters, limit=2000):
         "postal_code",
         "additional_report",
         "name",
+        "radio_id",
     ]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
