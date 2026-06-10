@@ -1,24 +1,10 @@
-NAME_SQL = """
-COALESCE(
-    NULLIF(LTRIM(RTRIM(e.[name])), ''),
-    CASE
-        WHEN ISJSON(e.raw_payload) = 1
-            THEN COALESCE(
-                NULLIF(LTRIM(RTRIM(JSON_VALUE(e.raw_payload, '$.Name'))), ''),
-                NULLIF(LTRIM(RTRIM(JSON_VALUE(e.raw_payload, '$.name'))), '')
-            )
-    END
-)
-""".strip()
-
-
 def search_daily_logs(conn, filters, limit=2000):
     """Return Daily Logs records from dbo.esri_events using applicable search filters."""
     where_clauses = ["1 = 1"]
     params = []
 
     if filters["query"]:
-        where_clauses.append(f"LOWER(COALESCE({NAME_SQL}, '')) LIKE ?")
+        where_clauses.append("LOWER(COALESCE(e.[name], '')) LIKE ?")
         params.append(f"%{filters['query'].lower()}%")
 
     if filters["case_number"]:
@@ -50,7 +36,7 @@ def search_daily_logs(conn, filters, limit=2000):
             e.state,
             e.postal_code,
             e.additional_report,
-            {NAME_SQL} AS event_name
+            e.[name] AS name
         FROM dbo.esri_events AS e
         WHERE {' AND '.join(where_clauses)}
         ORDER BY e.received_at DESC, e.id DESC
@@ -68,6 +54,6 @@ def search_daily_logs(conn, filters, limit=2000):
         "state",
         "postal_code",
         "additional_report",
-        "event_name",
+        "name",
     ]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]

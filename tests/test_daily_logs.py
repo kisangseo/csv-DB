@@ -16,7 +16,7 @@ class FakeCursor:
             ("state",),
             ("postal_code",),
             ("additional_report",),
-            ("event_name",),
+            ("name",),
         ]
         self.sql = None
         self.params = None
@@ -67,10 +67,10 @@ class SearchDailyLogsTests(unittest.TestCase):
         self.assertEqual(records[0]["event_number"], "E-123")
         self.assertEqual(records[0]["received_at"], "2026-06-10T08:30:00")
         self.assertEqual(records[0]["postal_code"], "21201")
-        self.assertEqual(records[0]["event_name"], "Example Name")
+        self.assertEqual(records[0]["name"], "Example Name")
         self.assertIn("e.[name]", connection.cursor_instance.sql)
-        self.assertIn("JSON_VALUE(e.raw_payload, '$.Name')", connection.cursor_instance.sql)
-        self.assertIn("AS event_name", connection.cursor_instance.sql)
+        self.assertNotIn("JSON_VALUE", connection.cursor_instance.sql)
+        self.assertIn("e.[name] AS name", connection.cursor_instance.sql)
         self.assertIn("FROM dbo.esri_events AS e", connection.cursor_instance.sql)
         self.assertIn("ORDER BY e.received_at DESC, e.id DESC", connection.cursor_instance.sql)
 
@@ -88,8 +88,7 @@ class SearchDailyLogsTests(unittest.TestCase):
 
         search_daily_logs(connection, filters)
 
-        self.assertIn("LOWER(COALESCE(", connection.cursor_instance.sql)
-        self.assertIn("e.[name]", connection.cursor_instance.sql)
+        self.assertIn("LOWER(COALESCE(e.[name], '')) LIKE ?", connection.cursor_instance.sql)
         self.assertIn("LOWER(COALESCE(e.event_number, '')) LIKE ?", connection.cursor_instance.sql)
         self.assertIn("CAST(e.received_at AS date) BETWEEN", connection.cursor_instance.sql)
         self.assertEqual(

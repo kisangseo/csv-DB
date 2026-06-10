@@ -511,7 +511,7 @@
           const header = document.createElement("div");
           header.className = "department-header";
           const title = document.createElement("h2");
-          title.textContent = `▶ ${label}`;
+          title.textContent = `▶ ${label} — 0 records`;
           const headerActions = document.createElement("div");
           headerActions.className = "department-header-actions";
           addSectionHeaderActions(headerActions, label);
@@ -1628,11 +1628,6 @@
         const filterPayload = getCurrentSearchFilters();
         lastSearchFilters = {...filterPayload};
         const params = new URLSearchParams(filterPayload);
-        const hasActiveSearchFilters = Object.values(filterPayload).some(value => {
-          if (value === null || value === undefined) return false;
-          return String(value).trim() !== "";
-        });
-
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
           const data = await response.json();
@@ -1665,9 +1660,6 @@
           for (const [dept, info] of orderedEntries) {
             const rows = info.records;
             const count = info.count;
-            if (hasActiveSearchFilters && count === 0) {
-              continue;
-            }
             const div = document.createElement("div");
             div.className = "department";
 
@@ -1681,7 +1673,10 @@
               "civil papers": "Civil Papers",
             };
             const baseTitle = DISPLAY_NAMES[dept.toLowerCase()] || dept;
-            title.textContent = baseTitle;
+            const civilDisplayRows = dept.toLowerCase() === "civil papers" ? buildCivilDisplayRows(rows) : [];
+            const displayedCount = dept.toLowerCase() === "civil papers" ? civilDisplayRows.length : count;
+            const recordLabel = `${displayedCount} record${displayedCount !== 1 ? "s" : ""}`;
+            title.textContent = `▶ ${baseTitle} — ${recordLabel}`;
 
             const header = document.createElement("div");
             header.className = "department-header";
@@ -1724,19 +1719,12 @@
             }
 
             const content = document.createElement("div");
-            content.className = "department-content";
-            const civilDisplayRows = dept.toLowerCase() === "civil papers" ? buildCivilDisplayRows(rows) : [];
-            const countText = document.createElement("div");
-            countText.className = "count";
-            const displayedCount = dept.toLowerCase() === "civil papers" ? civilDisplayRows.length : count;
-            countText.textContent = `Results: ${displayedCount} record${displayedCount !== 1 ? "s" : ""}`;
-            content.appendChild(countText);
+            content.className = "department-content collapsed";
 
             title.style.cursor = "pointer";
-            title.textContent = `▼ ${baseTitle}`;
             title.addEventListener("click", () => {
               const collapsed = content.classList.toggle("collapsed");
-              title.textContent = `${collapsed ? "▶" : "▼"} ${baseTitle}`;
+              title.textContent = `${collapsed ? "▶" : "▼"} ${baseTitle} — ${recordLabel}`;
             });
 
             const table = document.createElement("table");
@@ -1785,7 +1773,7 @@
             rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
               applyBcsoWarrantStatusRowColor(tr, row, dept);
-              const dataHeaders = headers.slice(0, -1);
+              const dataHeaders = showActions ? headers.slice(0, -1) : headers;
               const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
 
               cells.forEach((val, index) => {
