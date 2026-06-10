@@ -16,7 +16,7 @@ class FakeCursor:
             ("state",),
             ("postal_code",),
             ("additional_report",),
-            ("name",),
+            ("event_name",),
         ]
         self.sql = None
         self.params = None
@@ -67,8 +67,12 @@ class SearchDailyLogsTests(unittest.TestCase):
         self.assertEqual(records[0]["event_number"], "E-123")
         self.assertEqual(records[0]["received_at"], "2026-06-10T08:30:00")
         self.assertEqual(records[0]["postal_code"], "21201")
-        self.assertIn("FROM dbo.esri_events", connection.cursor_instance.sql)
-        self.assertIn("ORDER BY received_at DESC, id DESC", connection.cursor_instance.sql)
+        self.assertEqual(records[0]["event_name"], "Example Name")
+        self.assertIn("e.[name]", connection.cursor_instance.sql)
+        self.assertIn("JSON_VALUE(e.raw_payload, '$.Name')", connection.cursor_instance.sql)
+        self.assertIn("AS event_name", connection.cursor_instance.sql)
+        self.assertIn("FROM dbo.esri_events AS e", connection.cursor_instance.sql)
+        self.assertIn("ORDER BY e.received_at DESC, e.id DESC", connection.cursor_instance.sql)
 
     def test_applies_name_event_number_and_date_range_filters(self):
         filters = self.base_filters()
@@ -84,9 +88,10 @@ class SearchDailyLogsTests(unittest.TestCase):
 
         search_daily_logs(connection, filters)
 
-        self.assertIn("LOWER(COALESCE(name, '')) LIKE ?", connection.cursor_instance.sql)
-        self.assertIn("LOWER(COALESCE(event_number, '')) LIKE ?", connection.cursor_instance.sql)
-        self.assertIn("CAST(received_at AS date) BETWEEN", connection.cursor_instance.sql)
+        self.assertIn("LOWER(COALESCE(", connection.cursor_instance.sql)
+        self.assertIn("e.[name]", connection.cursor_instance.sql)
+        self.assertIn("LOWER(COALESCE(e.event_number, '')) LIKE ?", connection.cursor_instance.sql)
+        self.assertIn("CAST(e.received_at AS date) BETWEEN", connection.cursor_instance.sql)
         self.assertEqual(
             connection.cursor_instance.params,
             ["%smith%", "%event-9%", "2026-06-01", "2026-06-10"],
@@ -99,7 +104,7 @@ class SearchDailyLogsTests(unittest.TestCase):
 
         search_daily_logs(connection, filters)
 
-        self.assertIn("received_at >= DATEADD(day, -?", connection.cursor_instance.sql)
+        self.assertIn("e.received_at >= DATEADD(day, -?", connection.cursor_instance.sql)
         self.assertEqual(connection.cursor_instance.params, [7])
 
 
