@@ -252,6 +252,11 @@
         ,"Tenant, Defendant, or Respondent Name": "name"
         ,"Tenant, Defendant or Respondent Address": "address"
         ,"Comments": "notes"
+        ,"Event Number": "event_number"
+        ,"Received At": "received_at"
+        ,"Event Status": "event_status"
+        ,"Activity Type": "activity_type"
+        ,"Additional Report": "additional_report"
       };
 
       const FIELD_LABELS = {
@@ -442,7 +447,8 @@
         "Landlord Tenant",
         "Warrant Of Restitution",
         "Warrant of Restitution - Status",
-        "DV PDF"
+        "DV PDF",
+        "Daily Logs"
       ];
 
       function getFieldLabelForTable(tableName, field) {
@@ -505,7 +511,7 @@
           const header = document.createElement("div");
           header.className = "department-header";
           const title = document.createElement("h2");
-          title.textContent = `▶ ${label}`;
+          title.textContent = `▶ ${label} — 0 records`;
           const headerActions = document.createElement("div");
           headerActions.className = "department-header-actions";
           addSectionHeaderActions(headerActions, label);
@@ -758,6 +764,11 @@
           if (headerLabel === "Order Disposition") return row.order_disposition || "";
         }
         if (headerLabel === "Address") {
+          if (dept.toLowerCase() === "daily logs") {
+            const cityState = [row.city, row.state].filter(Boolean).join(", ");
+            const locality = [cityState, row.postal_code].filter(Boolean).join(" ");
+            return [row.address, locality].filter(Boolean).join(", ");
+          }
           if (dataHeaders.includes("City/State")) return row.address || "";
           return [row.address, row.city, row.state].filter(Boolean).join(", ");
         }
@@ -1614,11 +1625,6 @@
         const filterPayload = getCurrentSearchFilters();
         lastSearchFilters = {...filterPayload};
         const params = new URLSearchParams(filterPayload);
-        const hasActiveSearchFilters = Object.values(filterPayload).some(value => {
-          if (value === null || value === undefined) return false;
-          return String(value).trim() !== "";
-        });
-
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
           const data = await response.json();
@@ -1651,9 +1657,6 @@
           for (const [dept, info] of orderedEntries) {
             const rows = info.records;
             const count = info.count;
-            if (hasActiveSearchFilters && count === 0) {
-              continue;
-            }
             const div = document.createElement("div");
             div.className = "department";
 
@@ -1667,7 +1670,10 @@
               "civil papers": "Civil Papers",
             };
             const baseTitle = DISPLAY_NAMES[dept.toLowerCase()] || dept;
-            title.textContent = baseTitle;
+            const civilDisplayRows = dept.toLowerCase() === "civil papers" ? buildCivilDisplayRows(rows) : [];
+            const displayedCount = dept.toLowerCase() === "civil papers" ? civilDisplayRows.length : count;
+            const recordLabel = `${displayedCount} record${displayedCount !== 1 ? "s" : ""}`;
+            title.textContent = `▶ ${baseTitle} — ${recordLabel}`;
 
             const header = document.createElement("div");
             header.className = "department-header";
@@ -1710,19 +1716,12 @@
             }
 
             const content = document.createElement("div");
-            content.className = "department-content";
-            const civilDisplayRows = dept.toLowerCase() === "civil papers" ? buildCivilDisplayRows(rows) : [];
-            const countText = document.createElement("div");
-            countText.className = "count";
-            const displayedCount = dept.toLowerCase() === "civil papers" ? civilDisplayRows.length : count;
-            countText.textContent = `Results: ${displayedCount} record${displayedCount !== 1 ? "s" : ""}`;
-            content.appendChild(countText);
+            content.className = "department-content collapsed";
 
             title.style.cursor = "pointer";
-            title.textContent = `▼ ${baseTitle}`;
             title.addEventListener("click", () => {
               const collapsed = content.classList.toggle("collapsed");
-              title.textContent = `${collapsed ? "▶" : "▼"} ${baseTitle}`;
+              title.textContent = `${collapsed ? "▶" : "▼"} ${baseTitle} — ${recordLabel}`;
             });
 
             const table = document.createElement("table");
@@ -1744,16 +1743,19 @@
               headers = ["Case Number","Respondent Name","Issue Date","Respondent Address","Order Type","Order Disposition"];
             } else if (dept.toLowerCase() === "civil papers") {
               headers = ["Intake Date","Case Number","Court Document Type","Court Issued Date","Tenant, Defendant, or Respondent Name","Tenant, Defendant or Respondent Address","Petitioner or Plaintiff Name","Administrative Status","Served By","Comments"];
+            } else if (dept.toLowerCase() === "daily logs") {
+              headers = ["Event Number","Received At","Event Status","Activity Type","Address","Additional Report","Name"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
-            headers.push("Actions");
+            const showActions = dept.toLowerCase() !== "daily logs";
+            if (showActions) headers.push("Actions");
 
             const thead = document.createElement("thead");
             const headerRow = document.createElement("tr");
             headers.forEach((h, headerIndex) => {
               const th = document.createElement("th");
               th.textContent = h;
-              if (/date/i.test(h)) {
+              if (/date/i.test(h) || h === "Received At") {
                 wireDateHeaderSort(table, th, headerIndex);
               }
               headerRow.appendChild(th);
@@ -1768,7 +1770,7 @@
             rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
               applyBcsoWarrantStatusRowColor(tr, row, dept);
-              const dataHeaders = headers.slice(0, -1);
+              const dataHeaders = showActions ? headers.slice(0, -1) : headers;
               const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
 
               cells.forEach((val, index) => {
@@ -1787,14 +1789,16 @@
                 tr.appendChild(td);
               });
 
-              const actionsTd = document.createElement("td");
-              actionsTd.className = "table-actions-cell";
+              const actionsTd = showActions ? document.createElement("td") : null;
+              if (actionsTd) actionsTd.className = "table-actions-cell";
               const deptKey = (dept || "").toLowerCase();
               const isActionableDept = ACTIONABLE_DEPARTMENTS.has(deptKey);
               const isLandlordTenantDept = LANDLORD_TENANT_DEPARTMENTS.has(deptKey);
               const isDvPdf = deptKey === "dv pdf";
 
-              if (isDvPdf) {
+              if (!showActions) {
+                // Daily Logs is a read-only view of dbo.esri_events.
+              } else if (isDvPdf) {
                 const editBtn = document.createElement("button");
                 editBtn.type = "button";
                 editBtn.textContent = "Edit";
@@ -2004,7 +2008,7 @@
                 actionsTd.textContent = "—";
               }
 
-              tr.appendChild(actionsTd);
+              if (actionsTd) tr.appendChild(actionsTd);
 
               if (deptKey === "bcso active warrants") {
                 tr.classList.add("bcso-edit-history-parent");
