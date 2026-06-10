@@ -252,6 +252,11 @@
         ,"Tenant, Defendant, or Respondent Name": "name"
         ,"Tenant, Defendant or Respondent Address": "address"
         ,"Comments": "notes"
+        ,"Event Number": "event_number"
+        ,"Received At": "received_at"
+        ,"Event Status": "event_status"
+        ,"Activity Type": "activity_type"
+        ,"Additional Report": "additional_report"
       };
 
       const FIELD_LABELS = {
@@ -442,7 +447,8 @@
         "Landlord Tenant",
         "Warrant Of Restitution",
         "Warrant of Restitution - Status",
-        "DV PDF"
+        "DV PDF",
+        "Daily Logs"
       ];
 
       function getFieldLabelForTable(tableName, field) {
@@ -758,6 +764,11 @@
           if (headerLabel === "Order Disposition") return row.order_disposition || "";
         }
         if (headerLabel === "Address") {
+          if (dept.toLowerCase() === "daily logs") {
+            const cityState = [row.city, row.state].filter(Boolean).join(", ");
+            const locality = [cityState, row.postal_code].filter(Boolean).join(" ");
+            return [row.address, locality].filter(Boolean).join(", ");
+          }
           if (dataHeaders.includes("City/State")) return row.address || "";
           return [row.address, row.city, row.state].filter(Boolean).join(", ");
         }
@@ -1744,16 +1755,19 @@
               headers = ["Case Number","Respondent Name","Issue Date","Respondent Address","Order Type","Order Disposition"];
             } else if (dept.toLowerCase() === "civil papers") {
               headers = ["Intake Date","Case Number","Court Document Type","Court Issued Date","Tenant, Defendant, or Respondent Name","Tenant, Defendant or Respondent Address","Petitioner or Plaintiff Name","Administrative Status","Served By","Comments"];
+            } else if (dept.toLowerCase() === "daily logs") {
+              headers = ["Event Number","Received At","Event Status","Activity Type","Address","Additional Report","Name"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
-            headers.push("Actions");
+            const showActions = dept.toLowerCase() !== "daily logs";
+            if (showActions) headers.push("Actions");
 
             const thead = document.createElement("thead");
             const headerRow = document.createElement("tr");
             headers.forEach((h, headerIndex) => {
               const th = document.createElement("th");
               th.textContent = h;
-              if (/date/i.test(h)) {
+              if (/date/i.test(h) || h === "Received At") {
                 wireDateHeaderSort(table, th, headerIndex);
               }
               headerRow.appendChild(th);
@@ -1787,14 +1801,16 @@
                 tr.appendChild(td);
               });
 
-              const actionsTd = document.createElement("td");
-              actionsTd.className = "table-actions-cell";
+              const actionsTd = showActions ? document.createElement("td") : null;
+              if (actionsTd) actionsTd.className = "table-actions-cell";
               const deptKey = (dept || "").toLowerCase();
               const isActionableDept = ACTIONABLE_DEPARTMENTS.has(deptKey);
               const isLandlordTenantDept = LANDLORD_TENANT_DEPARTMENTS.has(deptKey);
               const isDvPdf = deptKey === "dv pdf";
 
-              if (isDvPdf) {
+              if (!showActions) {
+                // Daily Logs is a read-only view of dbo.esri_events.
+              } else if (isDvPdf) {
                 const editBtn = document.createElement("button");
                 editBtn.type = "button";
                 editBtn.textContent = "Edit";
@@ -2004,7 +2020,7 @@
                 actionsTd.textContent = "—";
               }
 
-              tr.appendChild(actionsTd);
+              if (actionsTd) tr.appendChild(actionsTd);
 
               if (deptKey === "bcso active warrants") {
                 tr.classList.add("bcso-edit-history-parent");
