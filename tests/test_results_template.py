@@ -24,15 +24,16 @@ class ResultsTemplateTests(unittest.TestCase):
     def test_zero_result_departments_are_not_filtered_out(self):
         self.assertNotIn("if (hasActiveSearchFilters && count === 0)", self.template)
 
-    def test_read_only_daily_logs_keeps_deputy_name_and_radio_id_columns(self):
+    def test_read_only_daily_logs_keeps_notes_deputy_name_and_radio_id_columns(self):
         self.assertIn(
             "const dataHeaders = showActions ? headers.slice(0, -1) : headers;",
             self.template,
         )
         self.assertIn(
-            'headers = ["Event Number","Received At","Event Status","Activity Type","Address","Additional Report","Deputy Name","Radio ID"]',
+            'headers = ["Event Number","Received At","Event Status","Activity Type","Address","Notes","Additional Report","Deputy Name","Radio ID"]',
             self.template,
         )
+        self.assertIn(',"Notes": "notes_or_narrative"', self.template)
         self.assertIn(',"Deputy Name": "name"', self.template)
         self.assertIn(',"Radio ID": "radio_id"', self.template)
 

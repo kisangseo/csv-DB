@@ -256,6 +256,7 @@
         ,"Received At": "received_at"
         ,"Event Status": "event_status"
         ,"Activity Type": "activity_type"
+        ,"Notes": "notes_or_narrative"
         ,"Additional Report": "additional_report"
         ,"Deputy Name": "name"
         ,"Radio ID": "radio_id"
@@ -1749,7 +1750,7 @@
             } else if (dept.toLowerCase() === "civil papers") {
               headers = ["Intake Date","Case Number","Court Document Type","Court Issued Date","Tenant, Defendant, or Respondent Name","Tenant, Defendant or Respondent Address","Petitioner or Plaintiff Name","Administrative Status","Served By","Comments"];
             } else if (dept.toLowerCase() === "daily logs") {
-              headers = ["Event Number","Received At","Event Status","Activity Type","Address","Additional Report","Deputy Name","Radio ID"];
+              headers = ["Event Number","Received At","Event Status","Activity Type","Address","Notes","Additional Report","Deputy Name","Radio ID"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             const showActions = dept.toLowerCase() !== "daily logs";

@@ -35,6 +35,7 @@ def search_daily_logs(conn, filters, limit=2000):
             e.city,
             e.state,
             e.postal_code,
+            e.notes_or_narrative,
             e.additional_report,
             e.[name] AS name,
             e.radio_id
@@ -54,6 +55,7 @@ def search_daily_logs(conn, filters, limit=2000):
         "city",
         "state",
         "postal_code",
+        "notes_or_narrative",
         "additional_report",
         "name",
         "radio_id",

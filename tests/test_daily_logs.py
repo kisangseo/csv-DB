@@ -15,6 +15,7 @@ class FakeCursor:
             ("city",),
             ("state",),
             ("postal_code",),
+            ("notes_or_narrative",),
             ("additional_report",),
             ("name",),
             ("radio_id",),
@@ -58,6 +59,7 @@ class SearchDailyLogsTests(unittest.TestCase):
             "Baltimore",
             "MD",
             "21201",
+            "Assisted resident with a lockout.",
             "Yes",
             "Example Name",
             9820,
@@ -69,10 +71,12 @@ class SearchDailyLogsTests(unittest.TestCase):
         self.assertEqual(records[0]["event_number"], "E-123")
         self.assertEqual(records[0]["received_at"], "2026-06-10T08:30:00")
         self.assertEqual(records[0]["postal_code"], "21201")
+        self.assertEqual(records[0]["notes_or_narrative"], "Assisted resident with a lockout.")
         self.assertEqual(records[0]["name"], "Example Name")
         self.assertEqual(records[0]["radio_id"], 9820)
         self.assertIn("e.[name]", connection.cursor_instance.sql)
         self.assertNotIn("JSON_VALUE", connection.cursor_instance.sql)
+        self.assertIn("e.notes_or_narrative", connection.cursor_instance.sql)
         self.assertIn("e.[name] AS name", connection.cursor_instance.sql)
         self.assertIn("e.radio_id", connection.cursor_instance.sql)
         self.assertIn("FROM dbo.esri_events AS e", connection.cursor_instance.sql)
