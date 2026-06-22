@@ -1,3 +1,13 @@
+ARRIVAL_TIME_EASTERN_SQL = """
+CAST(
+    DATEADD(SECOND, TRY_CONVERT(INT, TRY_CONVERT(BIGINT, e.arrival_time) / 1000), '1970-01-01')
+    AT TIME ZONE 'UTC'
+    AT TIME ZONE 'Eastern Standard Time'
+    AS DATETIME2
+)
+""".strip()
+
+
 def search_daily_logs(conn, filters, limit=2000):
     """Return Daily Logs records from dbo.esri_events using applicable search filters."""
     where_clauses = ["1 = 1"]
@@ -12,7 +22,7 @@ def search_daily_logs(conn, filters, limit=2000):
         params.append(f"%{filters['case_number'].lower()}%")
 
     if filters["date_start"] and filters["date_end"]:
-        where_clauses.append("CAST(e.received_at AS date) BETWEEN CAST(? AS date) AND CAST(? AS date)")
+        where_clauses.append(f"CAST({ARRIVAL_TIME_EASTERN_SQL} AS date) BETWEEN CAST(? AS date) AND CAST(? AS date)")
         params.extend([filters["date_start"], filters["date_end"]])
     elif filters["last_x_days"]:
         try:
@@ -20,7 +30,7 @@ def search_daily_logs(conn, filters, limit=2000):
         except (TypeError, ValueError):
             last_x_days = None
         if last_x_days is not None and last_x_days >= 0:
-            where_clauses.append("e.received_at >= DATEADD(day, -?, CAST(GETDATE() AS date))")
+            where_clauses.append(f"{ARRIVAL_TIME_EASTERN_SQL} >= DATEADD(day, -?, CAST(GETDATE() AS date))")
             params.append(last_x_days)
 
     cursor = conn.cursor()
@@ -28,7 +38,7 @@ def search_daily_logs(conn, filters, limit=2000):
         f"""
         SELECT TOP {int(limit)}
             e.event_number,
-            CONVERT(varchar(19), e.received_at, 126) AS received_at,
+            CONVERT(varchar(19), {ARRIVAL_TIME_EASTERN_SQL}, 120) AS arrival_time,
             e.event_status,
             e.activity_type,
             e.address,
@@ -41,14 +51,14 @@ def search_daily_logs(conn, filters, limit=2000):
             e.radio_id
         FROM dbo.esri_events AS e
         WHERE {' AND '.join(where_clauses)}
-        ORDER BY e.received_at DESC, e.id DESC
+        ORDER BY {ARRIVAL_TIME_EASTERN_SQL} DESC, e.id DESC
         """,
         params,
     )
 
     columns = [
         "event_number",
-        "received_at",
+        "arrival_time",
         "event_status",
         "activity_type",
         "address",

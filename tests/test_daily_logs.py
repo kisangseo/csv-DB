@@ -8,7 +8,7 @@ class FakeCursor:
         self.rows = rows
         self.description = [
             ("event_number",),
-            ("received_at",),
+            ("arrival_time",),
             ("event_status",),
             ("activity_type",),
             ("address",),
@@ -52,7 +52,7 @@ class SearchDailyLogsTests(unittest.TestCase):
     def test_maps_esri_event_columns_to_dicts(self):
         row = (
             "E-123",
-            "2026-06-10T08:30:00",
+            "2025-12-12 11:09:22",
             "Open",
             "Patrol",
             "100 Main St",
@@ -69,7 +69,7 @@ class SearchDailyLogsTests(unittest.TestCase):
         records = search_daily_logs(connection, self.base_filters())
 
         self.assertEqual(records[0]["event_number"], "E-123")
-        self.assertEqual(records[0]["received_at"], "2026-06-10T08:30:00")
+        self.assertEqual(records[0]["arrival_time"], "2025-12-12 11:09:22")
         self.assertEqual(records[0]["postal_code"], "21201")
         self.assertEqual(records[0]["notes_or_narrative"], "Assisted resident with a lockout.")
         self.assertEqual(records[0]["name"], "Example Name")
@@ -80,7 +80,13 @@ class SearchDailyLogsTests(unittest.TestCase):
         self.assertIn("e.[name] AS name", connection.cursor_instance.sql)
         self.assertIn("e.radio_id", connection.cursor_instance.sql)
         self.assertIn("FROM dbo.esri_events AS e", connection.cursor_instance.sql)
-        self.assertIn("ORDER BY e.received_at DESC, e.id DESC", connection.cursor_instance.sql)
+        self.assertIn("TRY_CONVERT(BIGINT, e.arrival_time) / 1000", connection.cursor_instance.sql)
+        self.assertIn("TRY_CONVERT(INT,", connection.cursor_instance.sql)
+        self.assertIn("AT TIME ZONE 'UTC'", connection.cursor_instance.sql)
+        self.assertIn("AT TIME ZONE 'Eastern Standard Time'", connection.cursor_instance.sql)
+        self.assertIn("AS arrival_time", connection.cursor_instance.sql)
+        self.assertIn("ORDER BY", connection.cursor_instance.sql)
+        self.assertNotIn("AS received_at", connection.cursor_instance.sql)
 
     def test_applies_name_event_number_and_date_range_filters(self):
         filters = self.base_filters()
@@ -98,7 +104,8 @@ class SearchDailyLogsTests(unittest.TestCase):
 
         self.assertIn("LOWER(COALESCE(e.[name], '')) LIKE ?", connection.cursor_instance.sql)
         self.assertIn("LOWER(COALESCE(e.event_number, '')) LIKE ?", connection.cursor_instance.sql)
-        self.assertIn("CAST(e.received_at AS date) BETWEEN", connection.cursor_instance.sql)
+        self.assertIn("CAST(CAST(", connection.cursor_instance.sql)
+        self.assertIn("AS date) BETWEEN CAST(? AS date) AND CAST(? AS date)", connection.cursor_instance.sql)
         self.assertEqual(
             connection.cursor_instance.params,
             ["%smith%", "%event-9%", "2026-06-01", "2026-06-10"],
@@ -111,7 +118,8 @@ class SearchDailyLogsTests(unittest.TestCase):
 
         search_daily_logs(connection, filters)
 
-        self.assertIn("e.received_at >= DATEADD(day, -?", connection.cursor_instance.sql)
+        self.assertIn(">= DATEADD(day, -?", connection.cursor_instance.sql)
+        self.assertIn("Eastern Standard Time", connection.cursor_instance.sql)
         self.assertEqual(connection.cursor_instance.params, [7])
 
 

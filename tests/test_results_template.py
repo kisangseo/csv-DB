@@ -30,9 +30,10 @@ class ResultsTemplateTests(unittest.TestCase):
             self.template,
         )
         self.assertIn(
-            'headers = ["Event Number","Received At","Event Status","Activity Type","Address","Notes","Additional Report","Deputy Name","Radio ID"]',
+            'headers = ["Event Number","Arrival Time","Event Status","Activity Type","Address","Notes","Additional Report","Deputy Name","Radio ID"]',
             self.template,
         )
+        self.assertIn(',"Arrival Time": "arrival_time"', self.template)
         self.assertIn(',"Notes": "notes_or_narrative"', self.template)
         self.assertIn(',"Deputy Name": "name"', self.template)
         self.assertIn(',"Radio ID": "radio_id"', self.template)
