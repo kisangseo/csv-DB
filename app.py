@@ -115,6 +115,63 @@ COURT_DOC_TYPE_CANONICAL_TO_VALUES = {
 }
 COURT_DOC_TYPE_OPTIONS = list(COURT_DOC_TYPE_CANONICAL_TO_VALUES.keys())
 
+ADMIN_STATUS_FALLBACK_OPTIONS = [
+    "Active",
+    "Attempted",
+    "Dismissed",
+    "Expired",
+    "Non_Est",
+    "Quashed",
+    "Served",
+    "Valid",
+]
+
+
+def get_admin_status_options():
+    options = set(ADMIN_STATUS_FALLBACK_OPTIONS)
+    conn = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT LTRIM(RTRIM(warrant_status)) AS admin_status
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+              AND warrant_status IS NOT NULL
+              AND LTRIM(RTRIM(warrant_status)) <> ''
+            UNION
+            SELECT DISTINCT LTRIM(RTRIM(COALESCE(administrative_status, disposition, service_disp))) AS admin_status
+            FROM search.records
+            WHERE LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
+              AND COALESCE(administrative_status, disposition, service_disp) IS NOT NULL
+              AND LTRIM(RTRIM(COALESCE(administrative_status, disposition, service_disp))) <> ''
+        """)
+        for row in cur.fetchall():
+            value = str(row[0] or "").strip()
+            if value:
+                options.add(value)
+
+        if _dv_pdf_table_exists(cur):
+            _ensure_dv_pdf_optional_columns(cur)
+            if _dv_pdf_column_exists(cur, "csv_order_disposition"):
+                cur.execute("""
+                    SELECT DISTINCT LTRIM(RTRIM(csv_order_disposition)) AS admin_status
+                    FROM search.dv_pdf_records
+                    WHERE csv_order_disposition IS NOT NULL
+                      AND LTRIM(RTRIM(csv_order_disposition)) <> ''
+                """)
+                for row in cur.fetchall():
+                    value = str(row[0] or "").strip()
+                    if value:
+                        options.add(value)
+    except Exception as exc:
+        print(f"WARN admin status options fallback used: {exc}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return sorted(options, key=lambda value: value.lower())
+
 
 def get_court_doc_type_values(selected_value):
     selected = (selected_value or "").strip()
@@ -210,9 +267,9 @@ def _escape_control_chars_inside_json_strings(text):
 
     return "".join(escaped)
 
-def geocode_address(address):
+def geocode_address(address, include_confidence=False):
     if not address:
-        return None, None
+        return (None, None, None) if include_confidence else (None, None)
 
     address_text = str(address).strip().strip('"').strip("'")
 
@@ -237,7 +294,7 @@ def geocode_address(address):
 
     if not key:
         print("ERROR: AZURE_MAPS_KEY is missing")
-        return None, None
+        return (None, None, None) if include_confidence else (None, None)
 
     query_candidates = [cleaned_text]
     if len(parts) >= 4:
@@ -290,6 +347,9 @@ def geocode_address(address):
 
                 best = max(results, key=_score)
                 pos = best["position"]
+                confidence = best.get("score")
+                if include_confidence:
+                    return pos["lon"], pos["lat"], confidence
                 return pos["lon"], pos["lat"]
 
         print("NO RESULTS FOR:", address)
@@ -297,7 +357,7 @@ def geocode_address(address):
     except Exception as e:
         print("GEOCODE EXCEPTION:", str(e))
 
-    return None, None
+    return (None, None, None) if include_confidence else (None, None)
 
 
 def split_address_and_apt(address):
@@ -1254,6 +1314,7 @@ def filter_dv_pdf_records(records, filters):
     court_doc_type = (filters.get("court_document_type") or "").strip()
     if court_doc_type:
         return []
+    admin_status = (filters.get("admin_status") or "").strip().lower()
 
     def parse_date_value(value):
         if not value:
@@ -1291,6 +1352,8 @@ def filter_dv_pdf_records(records, filters):
                 continue
         if last_x_cutoff and (not issue_date or issue_date < last_x_cutoff):
             continue
+        if admin_status and (row.get("order_disposition") or "").strip().lower() != admin_status:
+            continue
         filtered.append(row)
     return filtered
 
@@ -1305,6 +1368,7 @@ def home():
         user_permission=get_current_permission(),
         latest_lt_file_date=get_latest_landlord_tenant_file_date_label(),
         court_doc_type_options=COURT_DOC_TYPE_OPTIONS,
+        admin_status_options=get_admin_status_options(),
     )
 @app.route("/change-password", methods=["GET","POST"])
 def change_password():
@@ -1547,18 +1611,37 @@ def normalize_department_name(value) -> str:
     return " ".join(text.split())
 
 
-def records_has_xy_columns(cur) -> bool:
+def records_has_columns(cur, column_names) -> bool:
+    placeholders = ", ".join("?" for _ in column_names)
     cur.execute(
-        """
+        f"""
         SELECT COLUMN_NAME
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = 'search'
           AND TABLE_NAME = 'records'
-          AND COLUMN_NAME IN ('x', 'y')
-        """
+          AND COLUMN_NAME IN ({placeholders})
+        """,
+        tuple(column_names),
     )
     found = {str(row[0]).strip().lower() for row in cur.fetchall()}
-    return "x" in found and "y" in found
+    return all(str(column).strip().lower() in found for column in column_names)
+
+
+def records_has_xy_columns(cur) -> bool:
+    return records_has_columns(cur, ["x", "y"])
+
+
+def records_has_geocode_confidence_column(cur) -> bool:
+    return records_has_columns(cur, ["geocode_confidence"])
+
+
+def ensure_records_geocode_confidence_column(cur):
+    cur.execute("""
+        IF COL_LENGTH('search.records', 'geocode_confidence') IS NULL
+        BEGIN
+            ALTER TABLE search.records ADD geocode_confidence FLOAT NULL
+        END
+    """)
 
 
 def upsert_set_value(set_parts, values, column_name, db_value):
@@ -2456,12 +2539,23 @@ def create_record():
     if table_name == "BCSO Active Warrants":
         address_text = (insert_data.get("address") or "").strip()
         if address_text:
-            x, y = geocode_address(address_text)
+            x, y, confidence = geocode_address(address_text, include_confidence=True)
             insert_data["x"] = x
             insert_data["y"] = y
+            insert_data["geocode_confidence"] = confidence
         else:
             insert_data["x"] = None
             insert_data["y"] = None
+            insert_data["geocode_confidence"] = None
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if table_name == "BCSO Active Warrants":
+            ensure_records_geocode_confidence_column(cur)
+            conn.commit()
+    finally:
+        conn.close()
 
     columns = list(insert_data.keys())
     placeholders = ", ".join(["?"] * len(columns))
@@ -2693,13 +2787,15 @@ def update_record(record_id):
             return jsonify({"error": "No valid fields provided"}), 400
 
         if is_bcso_active_warrants and "address" in updates and records_has_xy_columns(cur):
+            ensure_records_geocode_confidence_column(cur)
             updated_address = ("" if updates.get("address") is None else str(updates.get("address"))).strip()
             if updated_address:
-                x, y = geocode_address(updated_address)
+                x, y, confidence = geocode_address(updated_address, include_confidence=True)
             else:
-                x, y = (None, None)
+                x, y, confidence = (None, None, None)
             upsert_set_value(set_parts, values, "x", x)
             upsert_set_value(set_parts, values, "y", y)
+            upsert_set_value(set_parts, values, "geocode_confidence", confidence)
 
         values.append(record_id)
 
@@ -3019,6 +3115,7 @@ def parse_search_filters(source):
     sid = source.get("sid", "").strip()
     dob = source.get("dob", "").strip()
     court_document_type = source.get("court_document_type", "").strip()
+    admin_status = source.get("admin_status", "").strip()
 
     return {
         "query": query,
@@ -3033,6 +3130,7 @@ def parse_search_filters(source):
         "dob": dob or None,
         "court_document_type": court_document_type or None,
         "court_document_type_values": get_court_doc_type_values(court_document_type),
+        "admin_status": admin_status or None,
     }
 
 
@@ -3115,6 +3213,7 @@ def _iter_export_rows(cursor, filters):
         last_x_days=filters["last_x_days"],
         sid=filters["sid"],
         court_doc_types=filters["court_document_type_values"],
+        admin_status=filters["admin_status"],
         extra_where=["LOWER(LTRIM(RTRIM(r.department))) = 'field services department'"],
     )
     cursor.execute(sql, params)
@@ -3323,9 +3422,10 @@ def search_all():
             issuing_county=filters["issuing_county"],
             last_x_days=filters["last_x_days"],
             court_doc_types=filters["court_document_type_values"],
+            admin_status=filters["admin_status"],
             limit=None
         )
-        daily_logs = search_daily_logs(conn, filters)
+        daily_logs = [] if filters["admin_status"] else search_daily_logs(conn, filters)
     finally:
         conn.close()
     

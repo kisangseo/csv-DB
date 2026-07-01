@@ -12,9 +12,9 @@ print("USING INGEST.PY FROM:", __file__)
 
 
 
-def geocode_address(address, city=None, state=None, postal_code=None):
+def geocode_address(address, city=None, state=None, postal_code=None, include_confidence=False):
     if not address:
-        return None, None
+        return (None, None, None) if include_confidence else (None, None)
 
     address_text = str(address).strip().strip('"').strip("'")
 
@@ -45,7 +45,7 @@ def geocode_address(address, city=None, state=None, postal_code=None):
 
     if not key:
         print("ERROR: AZURE_MAPS_KEY is missing")
-        return None, None
+        return (None, None, None) if include_confidence else (None, None)
 
     query_candidates = [cleaned_text]
     if city_text or state_text or input_zip:
@@ -105,6 +105,9 @@ def geocode_address(address, city=None, state=None, postal_code=None):
 
                 best = max(results, key=_score)
                 pos = best["position"]
+                confidence = best.get("score")
+                if include_confidence:
+                    return pos["lon"], pos["lat"], confidence
                 return pos["lon"], pos["lat"]
 
         print("NO RESULTS FOR:", address)
@@ -112,7 +115,7 @@ def geocode_address(address, city=None, state=None, postal_code=None):
     except Exception as e:
         print("GEOCODE EXCEPTION:", str(e))
 
-    return None, None
+    return (None, None, None) if include_confidence else (None, None)
 
 
 def geocode_postal_code(address, city=None, state=None):
@@ -520,7 +523,17 @@ def insert_search_record_warrants(cursor, record):
     
     return cursor.fetchone()[0]
 
+def ensure_records_geocode_confidence_column(cursor):
+    cursor.execute("""
+        IF COL_LENGTH('search.records', 'geocode_confidence') IS NULL
+        BEGIN
+            ALTER TABLE search.records ADD geocode_confidence FLOAT NULL
+        END
+    """)
+
+
 def insert_search_record_active_warrants(cursor, record):
+    ensure_records_geocode_confidence_column(cursor)
     sql = """
         INSERT INTO search.records (
             department,
@@ -538,10 +551,11 @@ def insert_search_record_active_warrants(cursor, record):
             issuing_county,
             address,
             x,
-            y
+            y,
+            geocode_confidence
         )
         OUTPUT INSERTED.record_id
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     values = (
@@ -561,6 +575,7 @@ def insert_search_record_active_warrants(cursor, record):
         record.get("address"),
         record.get("x"),
         record.get("y"),
+        record.get("geocode_confidence"),
     )
 
     cursor.execute(sql, values)
@@ -1948,6 +1963,7 @@ def backfill_bcso_active_warrants_xy():
     conn = get_conn()
     try:
         cursor = conn.cursor()
+        ensure_records_geocode_confidence_column(cursor)
         cursor.execute("""
             SELECT record_id, address
             FROM search.records
@@ -1957,6 +1973,7 @@ def backfill_bcso_active_warrants_xy():
             AND (
                 x IS NULL
                 OR y IS NULL
+                OR geocode_confidence IS NULL
             )
         """)
         rows = cursor.fetchall()
@@ -1973,10 +1990,10 @@ def backfill_bcso_active_warrants_xy():
             address_text = str(address).strip()
             cache_key = address_text.lower()
             if cache_key in cache:
-                x, y = cache[cache_key]
+                x, y, confidence = cache[cache_key]
             else:
-                x, y = geocode_address(address_text)
-                cache[cache_key] = (x, y)
+                x, y, confidence = geocode_address(address_text, include_confidence=True)
+                cache[cache_key] = (x, y, confidence)
 
             if x is None or y is None:
                 continue
@@ -1984,11 +2001,12 @@ def backfill_bcso_active_warrants_xy():
             cursor.execute(
                 """
                 UPDATE search.records
-                SET x = ?, y = ?
+                SET x = ?, y = ?, geocode_confidence = ?
                 WHERE record_id = ?
                 """,
                 x,
                 y,
+                confidence,
                 record_id,
             )
             updated += 1
@@ -2002,6 +2020,77 @@ def backfill_bcso_active_warrants_xy():
         conn.close()
 
 
+def backfill_bcso_active_warrants_geocode_confidence():
+    """
+    One-time confidence-only backfill for BCSO Active Warrants rows that
+    already have X/Y coordinates but are missing geocode_confidence.
+
+    This intentionally does not overwrite existing X/Y coordinates. It only
+    re-runs the address through geocoding to capture and store the returned
+    confidence score.
+    """
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        ensure_records_geocode_confidence_column(cursor)
+        cursor.execute("""
+            SELECT record_id, address
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+            AND x IS NOT NULL
+            AND y IS NOT NULL
+            AND geocode_confidence IS NULL
+            AND address IS NOT NULL
+            AND LTRIM(RTRIM(address)) <> ''
+        """)
+        rows = cursor.fetchall()
+        print(f"Found {len(rows)} BCSO Active Warrants rows with X/Y and missing geocode confidence.")
+
+        cache = {}
+        scanned = 0
+        updated = 0
+        no_confidence = 0
+
+        for record_id, address in rows:
+            scanned += 1
+            if scanned % 100 == 0:
+                print(f"Scanned {scanned} BCSO Active Warrants rows; updated {updated}; no confidence {no_confidence}...")
+
+            address_text = str(address).strip()
+            cache_key = address_text.lower()
+            if cache_key in cache:
+                confidence = cache[cache_key]
+            else:
+                _x, _y, confidence = geocode_address(address_text, include_confidence=True)
+                cache[cache_key] = confidence
+
+            if confidence is None:
+                no_confidence += 1
+                continue
+
+            cursor.execute(
+                """
+                UPDATE search.records
+                SET geocode_confidence = ?
+                WHERE record_id = ?
+                """,
+                confidence,
+                record_id,
+            )
+            updated += 1
+            if updated % 100 == 0:
+                conn.commit()
+                print(f"Committed {updated} BCSO Active Warrants confidence updates...")
+
+        conn.commit()
+        print(
+            "Backfilled BCSO Active Warrants geocode confidence "
+            f"for {updated} rows. No confidence returned for {no_confidence} rows."
+        )
+    finally:
+        conn.close()
+
+
 def backfill_bcso_active_warrants_xy_force():
     """
     Re-geocode ALL BCSO active warrant rows that have an address,
@@ -2010,6 +2099,7 @@ def backfill_bcso_active_warrants_xy_force():
     conn = get_conn()
     try:
         cursor = conn.cursor()
+        ensure_records_geocode_confidence_column(cursor)
         cursor.execute("""
             SELECT record_id, address
             FROM search.records
@@ -2031,10 +2121,10 @@ def backfill_bcso_active_warrants_xy_force():
             address_text = str(address).strip()
             cache_key = address_text.lower()
             if cache_key in cache:
-                x, y = cache[cache_key]
+                x, y, confidence = cache[cache_key]
             else:
-                x, y = geocode_address(address_text)
-                cache[cache_key] = (x, y)
+                x, y, confidence = geocode_address(address_text, include_confidence=True)
+                cache[cache_key] = (x, y, confidence)
 
             if x is None or y is None:
                 continue
@@ -2042,11 +2132,12 @@ def backfill_bcso_active_warrants_xy_force():
             cursor.execute(
                 """
                 UPDATE search.records
-                SET x = ?, y = ?
+                SET x = ?, y = ?, geocode_confidence = ?
                 WHERE record_id = ?
                 """,
                 x,
                 y,
+                confidence,
                 record_id,
             )
             updated += 1
@@ -2386,6 +2477,7 @@ def ingest_bcso_active_warrants_csv(_=None):
     conn = get_conn()
     try:
         cursor = conn.cursor()
+        ensure_records_geocode_confidence_column(cursor)
 
         # 1) Build a set of blob filenames we've already ingested
         cursor.execute("""
@@ -2495,10 +2587,10 @@ def ingest_bcso_active_warrants_csv(_=None):
                 cache_key = address_text.lower()
                 if address_text:
                     if cache_key not in geocode_cache:
-                        geocode_cache[cache_key] = geocode_address(address_text)
-                    x, y = geocode_cache[cache_key]
+                        geocode_cache[cache_key] = geocode_address(address_text, include_confidence=True)
+                    x, y, confidence = geocode_cache[cache_key]
                 else:
-                    x, y = (None, None)
+                    x, y, confidence = (None, None, None)
 
                 record = {
                     "department": "BCSO_ACTIVE_WARRANTS",
@@ -2521,6 +2613,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                     "address": row.get("lka"),
                     "x": x,
                     "y": y,
+                    "geocode_confidence": confidence,
                 }
 
                 # 1) Try to find existing Active Warrant by case_number (update scenario)
@@ -2564,7 +2657,8 @@ def ingest_bcso_active_warrants_csv(_=None):
                             notes             = COALESCE(NULLIF(?, ''), notes),
                             address           = COALESCE(NULLIF(?, ''), address),
                             x                 = COALESCE(?, x),
-                            y                 = COALESCE(?, y)
+                            y                 = COALESCE(?, y),
+                            geocode_confidence = COALESCE(?, geocode_confidence)
                         WHERE record_id = ?
                     """,
                         record.get("source_file") or "",
@@ -2582,6 +2676,7 @@ def ingest_bcso_active_warrants_csv(_=None):
                         record.get("address") or "",
                         record.get("x"),
                         record.get("y"),
+                        record.get("geocode_confidence"),
                         record_id
                     )
 
