@@ -248,7 +248,8 @@
         "Administrative Status": "disposition",
         "Served By": "served_by",
         "X": "x",
-        "Y": "y"
+        "Y": "y",
+        "XY Confidence": "geocode_confidence"
         ,"Tenant, Defendant, or Respondent Name": "name"
         ,"Tenant, Defendant or Respondent Address": "address"
         ,"Comments": "notes"
@@ -769,6 +770,9 @@
         if (dept.toLowerCase() === "daily logs" && headerLabel === "Name") {
           return row.event_name || row.name || "";
         }
+        if (dept.toLowerCase() === "bcso active warrants" && headerLabel === "XY Confidence") {
+          return toCellText(row.geocode_confidence) || "Unknown";
+        }
         if (dept.toLowerCase() === "bcso active warrants" && headerLabel === "Notes") {
           return toCellText(row.notes) ? "Yes" : "No";
         }
@@ -889,6 +893,7 @@
         const details = [
           ["X", row.x],
           ["Y", row.y],
+          ["XY Confidence", toCellText(row.geocode_confidence) || "Unknown"],
           ["Sex", row.sex],
           ["Race", row.race]
         ];
@@ -1802,7 +1807,7 @@
             }
             let headers = [];
             if (dept.toLowerCase() === "bcso active warrants") {
-              headers = ["Issuing County","Case Number","Warrant ID Number","Warrant Type","Issue Date","Warrant Status","Name","SID","Date of Birth","LKA","Notes"];
+              headers = ["Issuing County","Case Number","Warrant ID Number","Warrant Type","Issue Date","Warrant Status","Name","SID","Date of Birth","LKA","XY Confidence","Notes"];
             } else if (dept.toLowerCase() === "active warrants") {
               headers = ["Name","Case Number","Issue Date","Date of Birth","Sex","Race","Issuing County","1st Charge"];
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
