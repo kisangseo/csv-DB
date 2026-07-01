@@ -165,7 +165,11 @@ def build_search_sql(
 def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, limit=100):
     cursor = conn.cursor()
 
-    select_sql = """
+    cursor.execute("SELECT COL_LENGTH('search.records', 'geocode_confidence')")
+    has_geocode_confidence = cursor.fetchone()[0] is not None
+    geocode_confidence_select = "geocode_confidence AS geocode_confidence" if has_geocode_confidence else "CAST(NULL AS FLOAT) AS geocode_confidence"
+
+    select_sql = f"""
         record_id,
         COALESCE(full_name, tenant_defendant_or_respondent, resp_name) AS name,
         sid AS sid,
@@ -184,6 +188,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         COALESCE(served_by, serving_or_attempting_deputy, member_reporting, return_deputy) AS served_by,
         x AS x,
         y AS y,
+        {geocode_confidence_select},
         state AS state,
         COALESCE(notes, notes_from_attempt) AS notes,
         warrant_type AS warrant_type,

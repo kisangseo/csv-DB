@@ -210,9 +210,9 @@ def _escape_control_chars_inside_json_strings(text):
 
     return "".join(escaped)
 
-def geocode_address(address):
+def geocode_address(address, include_confidence=False):
     if not address:
-        return None, None
+        return (None, None, None) if include_confidence else (None, None)
 
     address_text = str(address).strip().strip('"').strip("'")
 
@@ -237,7 +237,7 @@ def geocode_address(address):
 
     if not key:
         print("ERROR: AZURE_MAPS_KEY is missing")
-        return None, None
+        return (None, None, None) if include_confidence else (None, None)
 
     query_candidates = [cleaned_text]
     if len(parts) >= 4:
@@ -290,6 +290,9 @@ def geocode_address(address):
 
                 best = max(results, key=_score)
                 pos = best["position"]
+                confidence = best.get("score")
+                if include_confidence:
+                    return pos["lon"], pos["lat"], confidence
                 return pos["lon"], pos["lat"]
 
         print("NO RESULTS FOR:", address)
@@ -297,7 +300,7 @@ def geocode_address(address):
     except Exception as e:
         print("GEOCODE EXCEPTION:", str(e))
 
-    return None, None
+    return (None, None, None) if include_confidence else (None, None)
 
 
 def split_address_and_apt(address):
@@ -1547,18 +1550,37 @@ def normalize_department_name(value) -> str:
     return " ".join(text.split())
 
 
-def records_has_xy_columns(cur) -> bool:
+def records_has_columns(cur, column_names) -> bool:
+    placeholders = ", ".join("?" for _ in column_names)
     cur.execute(
-        """
+        f"""
         SELECT COLUMN_NAME
         FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = 'search'
           AND TABLE_NAME = 'records'
-          AND COLUMN_NAME IN ('x', 'y')
-        """
+          AND COLUMN_NAME IN ({placeholders})
+        """,
+        tuple(column_names),
     )
     found = {str(row[0]).strip().lower() for row in cur.fetchall()}
-    return "x" in found and "y" in found
+    return all(str(column).strip().lower() in found for column in column_names)
+
+
+def records_has_xy_columns(cur) -> bool:
+    return records_has_columns(cur, ["x", "y"])
+
+
+def records_has_geocode_confidence_column(cur) -> bool:
+    return records_has_columns(cur, ["geocode_confidence"])
+
+
+def ensure_records_geocode_confidence_column(cur):
+    cur.execute("""
+        IF COL_LENGTH('search.records', 'geocode_confidence') IS NULL
+        BEGIN
+            ALTER TABLE search.records ADD geocode_confidence FLOAT NULL
+        END
+    """)
 
 
 def upsert_set_value(set_parts, values, column_name, db_value):
@@ -2456,12 +2478,23 @@ def create_record():
     if table_name == "BCSO Active Warrants":
         address_text = (insert_data.get("address") or "").strip()
         if address_text:
-            x, y = geocode_address(address_text)
+            x, y, confidence = geocode_address(address_text, include_confidence=True)
             insert_data["x"] = x
             insert_data["y"] = y
+            insert_data["geocode_confidence"] = confidence
         else:
             insert_data["x"] = None
             insert_data["y"] = None
+            insert_data["geocode_confidence"] = None
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if table_name == "BCSO Active Warrants":
+            ensure_records_geocode_confidence_column(cur)
+            conn.commit()
+    finally:
+        conn.close()
 
     columns = list(insert_data.keys())
     placeholders = ", ".join(["?"] * len(columns))
@@ -2693,13 +2726,15 @@ def update_record(record_id):
             return jsonify({"error": "No valid fields provided"}), 400
 
         if is_bcso_active_warrants and "address" in updates and records_has_xy_columns(cur):
+            ensure_records_geocode_confidence_column(cur)
             updated_address = ("" if updates.get("address") is None else str(updates.get("address"))).strip()
             if updated_address:
-                x, y = geocode_address(updated_address)
+                x, y, confidence = geocode_address(updated_address, include_confidence=True)
             else:
-                x, y = (None, None)
+                x, y, confidence = (None, None, None)
             upsert_set_value(set_parts, values, "x", x)
             upsert_set_value(set_parts, values, "y", y)
+            upsert_set_value(set_parts, values, "geocode_confidence", confidence)
 
         values.append(record_id)
 

@@ -248,7 +248,8 @@
         "Administrative Status": "disposition",
         "Served By": "served_by",
         "X": "x",
-        "Y": "y"
+        "Y": "y",
+        "XY Confidence": "geocode_confidence"
         ,"Tenant, Defendant, or Respondent Name": "name"
         ,"Tenant, Defendant or Respondent Address": "address"
         ,"Comments": "notes"
@@ -769,6 +770,12 @@
         if (dept.toLowerCase() === "daily logs" && headerLabel === "Name") {
           return row.event_name || row.name || "";
         }
+        if (dept.toLowerCase() === "bcso active warrants" && headerLabel === "XY Confidence") {
+          return formatGeocodeConfidencePercent(row.geocode_confidence);
+        }
+        if (dept.toLowerCase() === "bcso active warrants" && headerLabel === "Notes") {
+          return toCellText(row.notes) ? "Yes" : "No";
+        }
         if (headerLabel === "Address") {
           if (dept.toLowerCase() === "daily logs") {
             const cityState = [row.city, row.state].filter(Boolean).join(", ");
@@ -788,6 +795,15 @@
       function toCellText(value) {
         if (value === null || value === undefined) return "";
         return String(value).trim();
+      }
+
+      function formatGeocodeConfidencePercent(value) {
+        const text = toCellText(value);
+        if (!text) return "Unknown";
+        const numeric = Number(text);
+        if (!Number.isFinite(numeric)) return text;
+        const percent = numeric <= 1 ? numeric * 100 : numeric;
+        return `${Math.round(percent)}%`;
       }
 
       function getBcsoWarrantStatusClass(status) {
@@ -862,16 +878,60 @@
         return Boolean(target.closest("button, a, input, select, textarea, label"));
       }
 
-      function renderBcsoEditHistoryCell(td, edits, errorText = "") {
+      function renderBcsoDetailCell(td, row, edits = null, errorText = "", isLoading = false) {
         td.innerHTML = "";
 
         const wrap = document.createElement("div");
         wrap.className = "bcso-edit-history-panel";
 
-        const title = document.createElement("div");
-        title.className = "bcso-edit-history-title";
-        title.textContent = "Edit History";
-        wrap.appendChild(title);
+        const notesTitle = document.createElement("div");
+        notesTitle.className = "bcso-edit-history-title";
+        notesTitle.textContent = "Notes";
+        wrap.appendChild(notesTitle);
+
+        const notesText = document.createElement("div");
+        notesText.className = "bcso-edit-history-summary";
+        notesText.textContent = toCellText(row.notes) || "No notes recorded.";
+        wrap.appendChild(notesText);
+
+        const detailsTitle = document.createElement("div");
+        detailsTitle.className = "bcso-edit-history-title";
+        detailsTitle.textContent = "Warrant Details";
+        wrap.appendChild(detailsTitle);
+
+        const details = [
+          ["X", row.x],
+          ["Y", row.y],
+          ["XY Confidence", formatGeocodeConfidencePercent(row.geocode_confidence)],
+          ["Sex", row.sex],
+          ["Race", row.race]
+        ];
+
+        const detailsList = document.createElement("ul");
+        detailsList.className = "bcso-edit-history-list";
+        details.forEach(([label, value]) => {
+          const item = document.createElement("li");
+          const summary = document.createElement("div");
+          summary.className = "bcso-edit-history-summary";
+          summary.textContent = `${label}: ${toCellText(value)}`;
+          item.appendChild(summary);
+          detailsList.appendChild(item);
+        });
+        wrap.appendChild(detailsList);
+
+        const historyTitle = document.createElement("div");
+        historyTitle.className = "bcso-edit-history-title";
+        historyTitle.textContent = "Edit History";
+        wrap.appendChild(historyTitle);
+
+        if (isLoading) {
+          const loading = document.createElement("div");
+          loading.className = "bcso-edit-history-empty";
+          loading.textContent = "Loading edit history...";
+          wrap.appendChild(loading);
+          td.appendChild(wrap);
+          return;
+        }
 
         if (errorText) {
           const message = document.createElement("div");
@@ -891,8 +951,8 @@
           return;
         }
 
-        const list = document.createElement("ul");
-        list.className = "bcso-edit-history-list";
+        const historyList = document.createElement("ul");
+        historyList.className = "bcso-edit-history-list";
         edits.forEach((edit) => {
           const item = document.createElement("li");
           const summary = document.createElement("div");
@@ -904,13 +964,13 @@
           meta.textContent = editedAt ? `${editedAt} EST` : "";
           item.appendChild(summary);
           if (meta.textContent) item.appendChild(meta);
-          list.appendChild(item);
+          historyList.appendChild(item);
         });
-        wrap.appendChild(list);
+        wrap.appendChild(historyList);
         td.appendChild(wrap);
       }
 
-      async function toggleBcsoEditHistoryRow(tr, row, colspan) {
+      async function toggleBcsoDetailRow(tr, row, colspan) {
         const existingDetailRow = tr.nextElementSibling;
         if (existingDetailRow?.classList.contains("bcso-edit-history-row")) {
           existingDetailRow.remove();
@@ -922,15 +982,12 @@
         detailTr.className = "bcso-edit-history-row";
         const detailTd = document.createElement("td");
         detailTd.colSpan = colspan;
-        detailTd.textContent = "Loading edit history...";
+        renderBcsoDetailCell(detailTd, row, row.edits || null, "", !Array.isArray(row.edits));
         detailTr.appendChild(detailTd);
         tr.insertAdjacentElement("afterend", detailTr);
         tr.classList.add("bcso-edit-history-open");
 
-        if (Array.isArray(row.edits)) {
-          renderBcsoEditHistoryCell(detailTd, row.edits);
-          return;
-        }
+        if (Array.isArray(row.edits)) return;
 
         try {
           const response = await fetch(`${window.location.origin}/records/${row.record_id}/edits`);
@@ -940,22 +997,22 @@
               const err = await response.json();
               errText = err.error || errText;
             } catch (_) {}
-            renderBcsoEditHistoryCell(detailTd, [], errText);
+            renderBcsoDetailCell(detailTd, row, [], errText);
             return;
           }
           const data = await response.json();
           row.edits = data.edits || [];
-          renderBcsoEditHistoryCell(detailTd, row.edits);
+          renderBcsoDetailCell(detailTd, row, row.edits);
         } catch (err) {
-          renderBcsoEditHistoryCell(detailTd, [], err?.message || "Unable to load edit history.");
+          renderBcsoDetailCell(detailTd, row, [], err?.message || "Unable to load edit history.");
         }
       }
 
-      function refreshOpenBcsoEditHistoryRow(tr, row) {
+      function refreshOpenBcsoDetailRow(tr, row) {
         const detailRow = tr.nextElementSibling;
         if (!detailRow?.classList.contains("bcso-edit-history-row")) return;
         const detailTd = detailRow.querySelector("td");
-        if (detailTd) renderBcsoEditHistoryCell(detailTd, row.edits || []);
+        if (detailTd) renderBcsoDetailCell(detailTd, row, row.edits || []);
       }
 
       function getCivilRowDateValue(row) {
@@ -1759,7 +1816,7 @@
             }
             let headers = [];
             if (dept.toLowerCase() === "bcso active warrants") {
-              headers = ["Issuing County","Case Number","Warrant ID Number","Warrant Type","Issue Date","Warrant Status","Name","SID","Date of Birth","Race","Sex","LKA","X","Y","Notes"];
+              headers = ["Issuing County","Case Number","Warrant ID Number","Warrant Type","Issue Date","Warrant Status","Name","SID","Date of Birth","LKA","XY Confidence","Notes"];
             } else if (dept.toLowerCase() === "active warrants") {
               headers = ["Name","Case Number","Issue Date","Date of Birth","Sex","Race","Issuing County","1st Charge"];
             } else if (dept.toLowerCase() === "baltimore jail population" || dept.toLowerCase() === "doc jail population") {
@@ -1937,7 +1994,7 @@
                               row.edits = responseData.edits;
                             }
                             updateRenderedRowCells(tr, row, dataHeaders, dept);
-                            refreshOpenBcsoEditHistoryRow(tr, row);
+                            refreshOpenBcsoDetailRow(tr, row);
                           }
                         : null
                     });
@@ -2041,10 +2098,10 @@
 
               if (deptKey === "bcso active warrants") {
                 tr.classList.add("bcso-edit-history-parent");
-                tr.title = "Click to show edit history";
+                tr.title = "Click to show warrant details and edit history";
                 tr.addEventListener("click", (event) => {
                   if (isInteractiveRowClickTarget(event.target)) return;
-                  toggleBcsoEditHistoryRow(tr, row, headers.length);
+                  toggleBcsoDetailRow(tr, row, headers.length);
                 });
               }
 
