@@ -769,6 +769,9 @@
         if (dept.toLowerCase() === "daily logs" && headerLabel === "Name") {
           return row.event_name || row.name || "";
         }
+        if (dept.toLowerCase() === "bcso active warrants" && headerLabel === "Notes") {
+          return toCellText(row.notes) ? "Yes" : "No";
+        }
         if (headerLabel === "Address") {
           if (dept.toLowerCase() === "daily logs") {
             const cityState = [row.city, row.state].filter(Boolean).join(", ");
@@ -868,6 +871,16 @@
         const wrap = document.createElement("div");
         wrap.className = "bcso-edit-history-panel";
 
+        const notesTitle = document.createElement("div");
+        notesTitle.className = "bcso-edit-history-title";
+        notesTitle.textContent = "Notes";
+        wrap.appendChild(notesTitle);
+
+        const notesText = document.createElement("div");
+        notesText.className = "bcso-edit-history-summary";
+        notesText.textContent = toCellText(row.notes) || "No notes recorded.";
+        wrap.appendChild(notesText);
+
         const detailsTitle = document.createElement("div");
         detailsTitle.className = "bcso-edit-history-title";
         detailsTitle.textContent = "Warrant Details";
@@ -876,8 +889,8 @@
         const details = [
           ["X", row.x],
           ["Y", row.y],
-          ["Race", row.race],
-          ["Sex", row.sex]
+          ["Sex", row.sex],
+          ["Race", row.race]
         ];
 
         const detailsList = document.createElement("ul");
