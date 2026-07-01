@@ -115,6 +115,63 @@ COURT_DOC_TYPE_CANONICAL_TO_VALUES = {
 }
 COURT_DOC_TYPE_OPTIONS = list(COURT_DOC_TYPE_CANONICAL_TO_VALUES.keys())
 
+ADMIN_STATUS_FALLBACK_OPTIONS = [
+    "Active",
+    "Attempted",
+    "Dismissed",
+    "Expired",
+    "Non_Est",
+    "Quashed",
+    "Served",
+    "Valid",
+]
+
+
+def get_admin_status_options():
+    options = set(ADMIN_STATUS_FALLBACK_OPTIONS)
+    conn = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT LTRIM(RTRIM(warrant_status)) AS admin_status
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+              AND warrant_status IS NOT NULL
+              AND LTRIM(RTRIM(warrant_status)) <> ''
+            UNION
+            SELECT DISTINCT LTRIM(RTRIM(COALESCE(administrative_status, disposition, service_disp))) AS admin_status
+            FROM search.records
+            WHERE LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
+              AND COALESCE(administrative_status, disposition, service_disp) IS NOT NULL
+              AND LTRIM(RTRIM(COALESCE(administrative_status, disposition, service_disp))) <> ''
+        """)
+        for row in cur.fetchall():
+            value = str(row[0] or "").strip()
+            if value:
+                options.add(value)
+
+        if _dv_pdf_table_exists(cur):
+            _ensure_dv_pdf_optional_columns(cur)
+            if _dv_pdf_column_exists(cur, "csv_order_disposition"):
+                cur.execute("""
+                    SELECT DISTINCT LTRIM(RTRIM(csv_order_disposition)) AS admin_status
+                    FROM search.dv_pdf_records
+                    WHERE csv_order_disposition IS NOT NULL
+                      AND LTRIM(RTRIM(csv_order_disposition)) <> ''
+                """)
+                for row in cur.fetchall():
+                    value = str(row[0] or "").strip()
+                    if value:
+                        options.add(value)
+    except Exception as exc:
+        print(f"WARN admin status options fallback used: {exc}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+    return sorted(options, key=lambda value: value.lower())
+
 
 def get_court_doc_type_values(selected_value):
     selected = (selected_value or "").strip()
@@ -1257,6 +1314,7 @@ def filter_dv_pdf_records(records, filters):
     court_doc_type = (filters.get("court_document_type") or "").strip()
     if court_doc_type:
         return []
+    admin_status = (filters.get("admin_status") or "").strip().lower()
 
     def parse_date_value(value):
         if not value:
@@ -1294,6 +1352,8 @@ def filter_dv_pdf_records(records, filters):
                 continue
         if last_x_cutoff and (not issue_date or issue_date < last_x_cutoff):
             continue
+        if admin_status and (row.get("order_disposition") or "").strip().lower() != admin_status:
+            continue
         filtered.append(row)
     return filtered
 
@@ -1308,6 +1368,7 @@ def home():
         user_permission=get_current_permission(),
         latest_lt_file_date=get_latest_landlord_tenant_file_date_label(),
         court_doc_type_options=COURT_DOC_TYPE_OPTIONS,
+        admin_status_options=get_admin_status_options(),
     )
 @app.route("/change-password", methods=["GET","POST"])
 def change_password():
@@ -3054,6 +3115,7 @@ def parse_search_filters(source):
     sid = source.get("sid", "").strip()
     dob = source.get("dob", "").strip()
     court_document_type = source.get("court_document_type", "").strip()
+    admin_status = source.get("admin_status", "").strip()
 
     return {
         "query": query,
@@ -3068,6 +3130,7 @@ def parse_search_filters(source):
         "dob": dob or None,
         "court_document_type": court_document_type or None,
         "court_document_type_values": get_court_doc_type_values(court_document_type),
+        "admin_status": admin_status or None,
     }
 
 
@@ -3150,6 +3213,7 @@ def _iter_export_rows(cursor, filters):
         last_x_days=filters["last_x_days"],
         sid=filters["sid"],
         court_doc_types=filters["court_document_type_values"],
+        admin_status=filters["admin_status"],
         extra_where=["LOWER(LTRIM(RTRIM(r.department))) = 'field services department'"],
     )
     cursor.execute(sql, params)
@@ -3358,9 +3422,10 @@ def search_all():
             issuing_county=filters["issuing_county"],
             last_x_days=filters["last_x_days"],
             court_doc_types=filters["court_document_type_values"],
+            admin_status=filters["admin_status"],
             limit=None
         )
-        daily_logs = search_daily_logs(conn, filters)
+        daily_logs = [] if filters["admin_status"] else search_daily_logs(conn, filters)
     finally:
         conn.close()
     

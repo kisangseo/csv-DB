@@ -43,7 +43,7 @@ form {
   gap: 12px;
   flex-wrap: wrap;
   margin: 20px auto 30px;
-  max-width: 900px;
+  max-width: 1180px;
 }
 
 .search-top-row {
@@ -72,7 +72,7 @@ form {
 }
 
 #searchForm .search-top-row select {
-  width: 220px;
+  width: 200px;
   height: 40px;
   padding: 10px 36px 10px 14px;
   border: 1px solid #cbd3e1;
@@ -94,6 +94,15 @@ form {
 #searchForm .search-top-row select:focus {
   border-color: #222;
   background-color: white;
+}
+
+#searchForm .search-top-row #name,
+#searchForm .search-top-row #case_number {
+  width: 180px;
+}
+
+#searchForm .search-top-row #intake_date {
+  width: 220px;
 }
 
 

@@ -24,6 +24,12 @@
           <option value="{{ option }}">{{ option }}</option>
           {% endfor %}
         </select>
+        <select id="admin_status" name="admin_status">
+          <option value="">Admin Status (Any)</option>
+          {% for option in admin_status_options %}
+          <option value="{{ option }}">{{ option }}</option>
+          {% endfor %}
+        </select>
         <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
         <input type="hidden" id="intake_date_hidden" name="intake_date">
         <input type="file" id="dvPdfFile" accept="application/pdf" style="display:none;">
@@ -1554,6 +1560,7 @@
           name: document.getElementById("name").value,
           case_number: document.getElementById("case_number").value,
           court_document_type: document.getElementById("court_document_type").value,
+          admin_status: document.getElementById("admin_status").value,
           intake_date: document.getElementById("intake_date_hidden").value,
           last_x_days: document.getElementById("last_x_days").value,
           sex: document.getElementById("sex").value,
