@@ -1759,11 +1759,12 @@ def backfill_landlord_tenant_xy():
             cursor.execute(
                 """
                 UPDATE search.records
-                SET x = ?, y = ?
+                SET x = ?, y = ?, geocode_confidence = ?
                 WHERE record_id = ?
                 """,
                 x,
                 y,
+                confidence,
                 record_id,
             )
             updated += 1
