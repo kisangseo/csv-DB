@@ -799,24 +799,47 @@
         return "";
       }
 
-      function applyBcsoWarrantStatusRowColor(tr, row, dept) {
-        if ((dept || "").toLowerCase() !== "bcso active warrants") return;
+      function getCivilPaperStatusClass(row) {
+        const status = normalizeCivilText(
+          row?.administrative_status || row?.service_disp || row?.disposition || row?.order_disposition || ""
+        );
+        const isNonServed = status.includes("non est")
+          || status.includes("not served")
+          || status.includes("unserved");
 
+        if (status === "active") return "civil-paper-status-active";
+        if (status.includes("attempt")) return "civil-paper-status-attempted";
+        if (status.includes("posted")) return "civil-paper-status-served";
+        if (status.includes("served") && !isNonServed) return "civil-paper-status-served";
+        return "";
+      }
+
+      function applyStatusRowColor(tr, row, dept) {
         tr.classList.remove(
           "bcso-warrant-status-active",
           "bcso-warrant-status-served",
           "bcso-warrant-status-detainer",
-          "bcso-warrant-status-quashed"
+          "bcso-warrant-status-quashed",
+          "civil-paper-status-active",
+          "civil-paper-status-served",
+          "civil-paper-status-attempted"
         );
 
-        const statusClass = getBcsoWarrantStatusClass(row?.warrant_status);
+        const normalizedDept = (dept || "").toLowerCase();
+        let statusClass = "";
+        if (normalizedDept === "bcso active warrants") {
+          statusClass = getBcsoWarrantStatusClass(row?.warrant_status);
+        } else if (normalizedDept === "civil papers") {
+          statusClass = getCivilPaperStatusClass(row);
+        }
+
         if (statusClass) {
           tr.classList.add(statusClass);
         }
       }
 
       function updateRenderedRowCells(tr, row, dataHeaders, dept) {
-        applyBcsoWarrantStatusRowColor(tr, row, dept);
+        applyStatusRowColor(tr, row, dept);
         dataHeaders.forEach((headerLabel, index) => {
           const td = tr.children[index];
           if (!td) return;
@@ -1775,7 +1798,7 @@
               : rows;
             rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
-              applyBcsoWarrantStatusRowColor(tr, row, dept);
+              applyStatusRowColor(tr, row, dept);
               const dataHeaders = showActions ? headers.slice(0, -1) : headers;
               const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
 
@@ -2033,6 +2056,7 @@
                 childRows.forEach((child) => {
                   const childTr = document.createElement("tr");
                   childTr.className = "civil-child-row";
+                  applyStatusRowColor(childTr, child, dept);
                   childTr.style.display = "none";
                   const childCells = dataHeaders.map((h) => getCellDisplayValue(h, child, dataHeaders, dept));
                   childCells.forEach((val) => {
