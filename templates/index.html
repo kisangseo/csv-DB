@@ -771,7 +771,7 @@
           return row.event_name || row.name || "";
         }
         if (dept.toLowerCase() === "bcso active warrants" && headerLabel === "XY Confidence") {
-          return toCellText(row.geocode_confidence) || "Unknown";
+          return formatGeocodeConfidencePercent(row.geocode_confidence);
         }
         if (dept.toLowerCase() === "bcso active warrants" && headerLabel === "Notes") {
           return toCellText(row.notes) ? "Yes" : "No";
@@ -795,6 +795,15 @@
       function toCellText(value) {
         if (value === null || value === undefined) return "";
         return String(value).trim();
+      }
+
+      function formatGeocodeConfidencePercent(value) {
+        const text = toCellText(value);
+        if (!text) return "Unknown";
+        const numeric = Number(text);
+        if (!Number.isFinite(numeric)) return text;
+        const percent = numeric <= 1 ? numeric * 100 : numeric;
+        return `${Math.round(percent)}%`;
       }
 
       function getBcsoWarrantStatusClass(status) {
@@ -893,7 +902,7 @@
         const details = [
           ["X", row.x],
           ["Y", row.y],
-          ["XY Confidence", toCellText(row.geocode_confidence) || "Unknown"],
+          ["XY Confidence", formatGeocodeConfidencePercent(row.geocode_confidence)],
           ["Sex", row.sex],
           ["Race", row.race]
         ];
