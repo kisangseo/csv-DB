@@ -2021,6 +2021,77 @@ def backfill_bcso_active_warrants_xy():
         conn.close()
 
 
+def backfill_bcso_active_warrants_geocode_confidence():
+    """
+    One-time confidence-only backfill for BCSO Active Warrants rows that
+    already have X/Y coordinates but are missing geocode_confidence.
+
+    This intentionally does not overwrite existing X/Y coordinates. It only
+    re-runs the address through geocoding to capture and store the returned
+    confidence score.
+    """
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        ensure_records_geocode_confidence_column(cursor)
+        cursor.execute("""
+            SELECT record_id, address
+            FROM search.records
+            WHERE department = 'BCSO_ACTIVE_WARRANTS'
+            AND x IS NOT NULL
+            AND y IS NOT NULL
+            AND geocode_confidence IS NULL
+            AND address IS NOT NULL
+            AND LTRIM(RTRIM(address)) <> ''
+        """)
+        rows = cursor.fetchall()
+        print(f"Found {len(rows)} BCSO Active Warrants rows with X/Y and missing geocode confidence.")
+
+        cache = {}
+        scanned = 0
+        updated = 0
+        no_confidence = 0
+
+        for record_id, address in rows:
+            scanned += 1
+            if scanned % 100 == 0:
+                print(f"Scanned {scanned} BCSO Active Warrants rows; updated {updated}; no confidence {no_confidence}...")
+
+            address_text = str(address).strip()
+            cache_key = address_text.lower()
+            if cache_key in cache:
+                confidence = cache[cache_key]
+            else:
+                _x, _y, confidence = geocode_address(address_text, include_confidence=True)
+                cache[cache_key] = confidence
+
+            if confidence is None:
+                no_confidence += 1
+                continue
+
+            cursor.execute(
+                """
+                UPDATE search.records
+                SET geocode_confidence = ?
+                WHERE record_id = ?
+                """,
+                confidence,
+                record_id,
+            )
+            updated += 1
+            if updated % 100 == 0:
+                conn.commit()
+                print(f"Committed {updated} BCSO Active Warrants confidence updates...")
+
+        conn.commit()
+        print(
+            "Backfilled BCSO Active Warrants geocode confidence "
+            f"for {updated} rows. No confidence returned for {no_confidence} rows."
+        )
+    finally:
+        conn.close()
+
+
 def backfill_bcso_active_warrants_xy_force():
     """
     Re-geocode ALL BCSO active warrant rows that have an address,
