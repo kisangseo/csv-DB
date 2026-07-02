@@ -10,6 +10,7 @@ import threading
 import uuid
 import io
 import zipfile
+import base64
 import requests
 import time
 import subprocess
@@ -1345,6 +1346,502 @@ def ingest_dv_email():
     return jsonify({"status": "ok"}), 200
 
 
+
+def ensure_civil_return_pdfs_table(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        IF OBJECT_ID('search.civil_return_pdfs', 'U') IS NULL
+        BEGIN
+            CREATE TABLE search.civil_return_pdfs (
+                id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                record_id INT NULL,
+                case_number NVARCHAR(100) NOT NULL,
+                intake_date DATE NULL,
+                mailbox NVARCHAR(320) NULL,
+                message_id NVARCHAR(1000) NOT NULL,
+                conversation_id NVARCHAR(1000) NULL,
+                email_subject NVARCHAR(1000) NULL,
+                email_from NVARCHAR(500) NULL,
+                email_received_at DATETIME2 NULL,
+                attachment_id NVARCHAR(1000) NOT NULL,
+                original_filename NVARCHAR(500) NULL,
+                blob_name NVARCHAR(1000) NOT NULL,
+                content_type NVARCHAR(255) NULL,
+                pdf_case_number NVARCHAR(100) NULL,
+                pdf_intake_date DATE NULL,
+                pdf_respondent_name NVARCHAR(500) NULL,
+                pdf_service_disposition NVARCHAR(255) NULL,
+                pdf_deputy NVARCHAR(500) NULL,
+                parse_status NVARCHAR(50) NOT NULL DEFAULT ('matched'),
+                parse_error NVARCHAR(MAX) NULL,
+                source_json NVARCHAR(MAX) NULL,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+        END
+    """)
+    cur.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE name = 'IX_civil_return_pdfs_record_created'
+              AND object_id = OBJECT_ID('search.civil_return_pdfs')
+        )
+        CREATE INDEX IX_civil_return_pdfs_record_created
+            ON search.civil_return_pdfs(record_id, created_at DESC)
+    """)
+    cur.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE name = 'IX_civil_return_pdfs_case_intake'
+              AND object_id = OBJECT_ID('search.civil_return_pdfs')
+        )
+        CREATE INDEX IX_civil_return_pdfs_case_intake
+            ON search.civil_return_pdfs(case_number, intake_date)
+    """)
+    conn.commit()
+
+
+def normalize_case_number_for_match(value):
+    return re.sub(r"[^A-Za-z0-9]+", "", str(value or "")).upper()
+
+
+def parse_graph_datetime(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return None
+
+
+def parse_civil_return_date(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    iso_match = re.search(r"\b(20\d{2}-\d{2}-\d{2})", text)
+    if iso_match:
+        return iso_match.group(1)
+    md_match = re.search(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", text)
+    if md_match:
+        month, day, year = md_match.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}"
+    return None
+
+
+def extract_pdf_text_from_bytes(pdf_bytes):
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    pages = []
+    for page in reader.pages:
+        try:
+            pages.append(page.extract_text() or "")
+        except Exception:
+            pages.append("")
+    return "\n".join(pages)
+
+
+def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
+    text = extract_pdf_text_from_bytes(pdf_bytes)
+    compact = re.sub(r"\s+", " ", text or " ").strip()
+
+    case_match = re.search(r"\b([A-Z]-\d{2}-[A-Z]{2}-\d{2}-\d{6})\b", compact, flags=re.IGNORECASE)
+    case_number = (case_match.group(1).upper() if case_match else fallback_case_number).strip()
+
+    intake_date = None
+    intake_match = re.search(r"Intake\s+Date\s+([^\n]+)", text or "", flags=re.IGNORECASE)
+    if intake_match:
+        intake_date = parse_civil_return_date(intake_match.group(1))
+    if not intake_date:
+        all_dates = re.findall(r"\b20\d{2}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}/20\d{2}\b", compact)
+        for raw_date in reversed(all_dates):
+            parsed = parse_civil_return_date(raw_date)
+            if parsed:
+                intake_date = parsed
+                break
+
+    respondent_name = ""
+    respondent_match = re.search(r"Respondent\s+([A-Z][A-Z .'\-]+?)(?:\s+Address\b|\n|$)", compact, flags=re.IGNORECASE)
+    if respondent_match:
+        respondent_name = re.sub(r"\s+", " ", respondent_match.group(1)).strip()
+
+    service_disposition = ""
+    service_match = re.search(r"Service\s+Disp\s+([A-Za-z ]+?)(?:\s+Method\s+of\s+Service\b|\n|$)", compact, flags=re.IGNORECASE)
+    if service_match:
+        service_disposition = re.sub(r"\s+", " ", service_match.group(1)).strip()
+
+    deputy = ""
+    deputy_match = re.search(r"Deputy\s+Reporting\s+(.+?)(?:\s+Deputy\s+Sequence\b|\n|$)", compact, flags=re.IGNORECASE)
+    if deputy_match:
+        deputy = re.sub(r"\s+", " ", deputy_match.group(1)).strip()
+
+    return {
+        "text": text,
+        "case_number": case_number,
+        "intake_date": intake_date,
+        "respondent_name": respondent_name,
+        "service_disposition": service_disposition,
+        "deputy": deputy,
+    }
+
+
+def civil_priority_sql():
+    return """
+        CASE
+            WHEN LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%served%'
+             AND LOWER(COALESCE(administrative_status, service_disp, disposition, '')) NOT LIKE '%non est%'
+             AND LOWER(COALESCE(administrative_status, service_disp, disposition, '')) NOT LIKE '%not served%'
+             AND LOWER(COALESCE(administrative_status, service_disp, disposition, '')) NOT LIKE '%unserved%'
+                THEN 0
+            WHEN LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%non est%'
+              OR LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%not served%'
+              OR LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%unserved%'
+                THEN 1
+            WHEN LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%attempt%'
+              OR LOWER(COALESCE(source_file, '')) = 'civil-paper-attempts'
+                THEN 2
+            WHEN LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%received%'
+                THEN 3
+            ELSE 4
+        END
+    """
+
+
+def find_civil_return_record(cur, case_number, intake_date):
+    if not case_number or not intake_date:
+        return None
+    normalized = normalize_case_number_for_match(case_number)
+    cur.execute(f"""
+        SELECT TOP 1 record_id
+        FROM search.records
+        WHERE LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
+          AND REPLACE(REPLACE(REPLACE(UPPER(COALESCE(case_number, '')), '-', ''), ' ', ''), '/', '') = ?
+          AND CAST(intake_date AS date) = CAST(? AS date)
+        ORDER BY
+          {civil_priority_sql()},
+          COALESCE(date_time_served, date_time_attempted, prior_attempt_date, date_received, intake_date, issue_date, created_at) DESC,
+          record_id DESC
+    """, normalized, intake_date)
+    row = cur.fetchone()
+    return int(row[0]) if row else None
+
+
+def insert_civil_return_pdf_record(conn, payload):
+    ensure_civil_return_pdfs_table(conn)
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id FROM search.civil_return_pdfs
+        WHERE message_id = ? AND attachment_id = ?
+    """, payload["message_id"], payload["attachment_id"])
+    existing = cur.fetchone()
+    if existing:
+        return int(existing[0]), False
+
+    cur.execute("""
+        INSERT INTO search.civil_return_pdfs (
+            record_id, case_number, intake_date, mailbox, message_id, conversation_id,
+            email_subject, email_from, email_received_at, attachment_id, original_filename,
+            blob_name, content_type, pdf_case_number, pdf_intake_date, pdf_respondent_name,
+            pdf_service_disposition, pdf_deputy, parse_status, parse_error, source_json
+        )
+        OUTPUT INSERTED.id
+        VALUES (?, ?, CAST(? AS date), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS date), ?, ?, ?, ?, ?, ?)
+    """,
+        payload.get("record_id"),
+        payload.get("case_number"),
+        payload.get("intake_date"),
+        payload.get("mailbox"),
+        payload.get("message_id"),
+        payload.get("conversation_id"),
+        payload.get("email_subject"),
+        payload.get("email_from"),
+        payload.get("email_received_at"),
+        payload.get("attachment_id"),
+        payload.get("original_filename"),
+        payload.get("blob_name"),
+        payload.get("content_type"),
+        payload.get("pdf_case_number"),
+        payload.get("pdf_intake_date"),
+        payload.get("pdf_respondent_name"),
+        payload.get("pdf_service_disposition"),
+        payload.get("pdf_deputy"),
+        payload.get("parse_status"),
+        payload.get("parse_error"),
+        json.dumps(payload.get("source_json") or {}, ensure_ascii=False),
+    )
+    new_id = int(cur.fetchone()[0])
+    conn.commit()
+    return new_id, True
+
+
+def upload_civil_return_pdf_to_blob(case_number, message_id, attachment_id, filename, pdf_bytes, content_type="application/pdf"):
+    safe_filename = secure_filename(filename or "return.pdf") or "return.pdf"
+    case_key = normalize_case_number_for_blob(case_number)
+    message_key = re.sub(r"[^A-Za-z0-9._-]+", "_", str(message_id or uuid.uuid4().hex))[:80].strip("._-")
+    attachment_key = re.sub(r"[^A-Za-z0-9._-]+", "_", str(attachment_id or uuid.uuid4().hex))[:80].strip("._-")
+    blob_name = f"{CIVIL_RETURN_FILES_PREFIX}/{case_key}/{message_key}_{attachment_key}_{safe_filename}"
+    container = get_civil_files_container()
+    blob_client = container.get_blob_client(blob_name)
+    blob_client.upload_blob(
+        io.BytesIO(pdf_bytes),
+        overwrite=False,
+        content_settings=ContentSettings(content_type=content_type or "application/pdf"),
+        metadata={
+            "case_number": str(case_number or "")[:128],
+            "original_filename": safe_filename[:200],
+            "source": "sheriff_return_email",
+        },
+    )
+    return blob_name
+
+
+def get_graph_processed_folder_id(headers, mailbox, processed_folder):
+    folder_candidates = []
+    for url in (
+        f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders?$select=id,displayName,parentFolderId",
+        f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/childFolders?$select=id,displayName,parentFolderId",
+    ):
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code >= 400:
+            print(f"[CIVIL RETURN EMAIL] Folder query failed status={resp.status_code} body={resp.text[:800]}")
+        resp.raise_for_status()
+        folder_candidates.extend(resp.json().get("value", []))
+    for folder in folder_candidates:
+        if (folder.get("displayName") or "").strip().lower() == processed_folder.lower():
+            return folder.get("id")
+    names = sorted({(f.get("displayName") or "").strip() for f in folder_candidates if f.get("displayName")})
+    raise RuntimeError(f"Processed folder '{processed_folder}' not found in mailbox {mailbox}. Available sample: {names[:30]}")
+
+
+def ingest_civil_return_email_payloads_for_run():
+    tenant_id = (os.getenv("MS_GRAPH_TENANT_ID") or "").strip()
+    client_id = (os.getenv("MS_GRAPH_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("MS_GRAPH_CLIENT_SECRET") or "").strip()
+    mailbox = (os.getenv("DV_EMAIL_MAILBOX") or "sheriff.records@baltimorecitysheriff.gov").strip()
+    processed_folder = (os.getenv("DV_EMAIL_PROCESSED_FOLDER") or "processed").strip()
+    subject_marker = CIVIL_RETURN_EMAIL_SUBJECT_MARKER
+
+    print(
+        f"[CIVIL RETURN EMAIL] Starting ingest. mailbox={mailbox}, marker={subject_marker!r}, "
+        f"processed_folder={processed_folder}, graph_configured={bool(tenant_id and client_id and client_secret)}"
+    )
+    if not (tenant_id and client_id and client_secret):
+        return {"status": "skipped", "reason": "Microsoft Graph env vars not configured", "ingested": 0}
+
+    try:
+        token_resp = requests.post(
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": "https://graph.microsoft.com/.default",
+                "grant_type": "client_credentials",
+            },
+            timeout=30,
+        )
+        if token_resp.status_code >= 400:
+            print(f"[CIVIL RETURN EMAIL] Token request failed status={token_resp.status_code} body={token_resp.text[:800]}")
+        token_resp.raise_for_status()
+        access_token = token_resp.json().get("access_token")
+        if not access_token:
+            raise RuntimeError("Failed to obtain Graph API access token.")
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+        messages = []
+        messages_url = (
+            f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
+            "?$top=200"
+            "&$select=id,subject,receivedDateTime,from,conversationId,hasAttachments"
+        )
+        while messages_url:
+            msg_resp = requests.get(messages_url, headers=headers, timeout=30)
+            if msg_resp.status_code >= 400:
+                print(f"[CIVIL RETURN EMAIL] Message query failed status={msg_resp.status_code} body={msg_resp.text[:800]}")
+            msg_resp.raise_for_status()
+            data = msg_resp.json()
+            messages.extend(data.get("value", []))
+            messages_url = data.get("@odata.nextLink")
+
+        candidates = [m for m in messages if subject_marker.lower() in (m.get("subject") or "").lower()]
+        candidates.sort(key=lambda m: m.get("receivedDateTime") or "")
+        print(f"[CIVIL RETURN EMAIL] Return candidates found: {len(candidates)}")
+
+        folder_id = get_graph_processed_folder_id(headers, mailbox, processed_folder)
+        conn = get_conn()
+        ensure_civil_return_pdfs_table(conn)
+        inserted = 0
+        duplicates = 0
+        unmatched = 0
+        failed = 0
+        moved = 0
+        errors = []
+        try:
+            cur = conn.cursor()
+            for message in candidates:
+                message_id = message.get("id") or ""
+                subject = message.get("subject") or ""
+                subject_case_match = re.search(r"\b([A-Z]-\d{2}-[A-Z]{2}-\d{2}-\d{6})\b", subject, flags=re.IGNORECASE)
+                subject_case_number = subject_case_match.group(1).upper() if subject_case_match else ""
+                try:
+                    att_resp = requests.get(
+                        f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/attachments",
+                        headers=headers,
+                        timeout=30,
+                    )
+                    if att_resp.status_code >= 400:
+                        print(f"[CIVIL RETURN EMAIL] Attachment query failed status={att_resp.status_code} body={att_resp.text[:800]}")
+                    att_resp.raise_for_status()
+                    attachments = att_resp.json().get("value", [])
+                    pdf_attachments = [
+                        a for a in attachments
+                        if str(a.get("name") or "").lower().endswith(".pdf")
+                        or str(a.get("contentType") or "").lower() == "application/pdf"
+                    ]
+                    if not pdf_attachments:
+                        print(f"[CIVIL RETURN EMAIL] No PDF attachments for message id={message_id}")
+                        continue
+
+                    message_inserted = False
+                    for attachment in pdf_attachments:
+                        attachment_id = attachment.get("id") or ""
+                        cur.execute(
+                            "SELECT id FROM search.civil_return_pdfs WHERE message_id = ? AND attachment_id = ?",
+                            message_id,
+                            attachment_id,
+                        )
+                        if cur.fetchone():
+                            duplicates += 1
+                            continue
+
+                        content_b64 = attachment.get("contentBytes")
+                        if not content_b64:
+                            full_att_resp = requests.get(
+                                f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/attachments/{attachment_id}",
+                                headers=headers,
+                                timeout=30,
+                            )
+                            full_att_resp.raise_for_status()
+                            content_b64 = full_att_resp.json().get("contentBytes")
+                        if not content_b64:
+                            raise RuntimeError(f"Attachment {attachment_id} has no contentBytes")
+                        pdf_bytes = base64.b64decode(content_b64)
+                        parsed = parse_civil_return_pdf(pdf_bytes, fallback_case_number=subject_case_number)
+                        match_record_id = find_civil_return_record(cur, parsed.get("case_number"), parsed.get("intake_date"))
+                        parse_status = "matched" if match_record_id else "unmatched"
+                        if not match_record_id:
+                            unmatched += 1
+
+                        blob_name = upload_civil_return_pdf_to_blob(
+                            parsed.get("case_number") or subject_case_number,
+                            message_id,
+                            attachment_id,
+                            attachment.get("name") or "return.pdf",
+                            pdf_bytes,
+                            attachment.get("contentType") or "application/pdf",
+                        )
+                        _, was_inserted = insert_civil_return_pdf_record(conn, {
+                            "record_id": match_record_id,
+                            "case_number": parsed.get("case_number") or subject_case_number,
+                            "intake_date": parsed.get("intake_date"),
+                            "mailbox": mailbox,
+                            "message_id": message_id,
+                            "conversation_id": message.get("conversationId"),
+                            "email_subject": subject,
+                            "email_from": ((message.get("from") or {}).get("emailAddress") or {}).get("address"),
+                            "email_received_at": parse_graph_datetime(message.get("receivedDateTime")),
+                            "attachment_id": attachment_id,
+                            "original_filename": attachment.get("name") or "return.pdf",
+                            "blob_name": blob_name,
+                            "content_type": attachment.get("contentType") or "application/pdf",
+                            "pdf_case_number": parsed.get("case_number"),
+                            "pdf_intake_date": parsed.get("intake_date"),
+                            "pdf_respondent_name": parsed.get("respondent_name"),
+                            "pdf_service_disposition": parsed.get("service_disposition"),
+                            "pdf_deputy": parsed.get("deputy"),
+                            "parse_status": parse_status,
+                            "parse_error": None if match_record_id else "No Civil Papers record matched case_number AND intake_date.",
+                            "source_json": {"message": message, "attachment": {k: v for k, v in attachment.items() if k != "contentBytes"}},
+                        })
+                        if was_inserted:
+                            inserted += 1
+                            if match_record_id:
+                                message_inserted = True
+
+                    if message_inserted:
+                        move_resp = requests.post(
+                            f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
+                            headers={**headers, "Content-Type": "application/json"},
+                            json={"destinationId": folder_id},
+                            timeout=30,
+                        )
+                        move_resp.raise_for_status()
+                        moved += 1
+                except Exception as msg_exc:
+                    failed += 1
+                    error_text = f"id={message_id}: {msg_exc}"
+                    errors.append(error_text)
+                    print(f"[CIVIL RETURN EMAIL] Failed message {error_text}")
+        finally:
+            conn.close()
+
+        summary = {
+            "status": "ok",
+            "source": "graph",
+            "candidates": len(candidates),
+            "ingested": inserted,
+            "duplicates": duplicates,
+            "unmatched": unmatched,
+            "moved_to_processed": moved,
+            "failed": failed,
+            "errors": errors[:10],
+        }
+        print(f"[CIVIL RETURN EMAIL] Summary: {summary}")
+        return summary
+    except Exception as exc:
+        error_text = str(exc)
+        print(f"[CIVIL RETURN EMAIL] Graph ingest failed: {error_text}")
+        return {"status": "failed", "source": "graph", "ingested": 0, "error": error_text}
+
+
+def fetch_civil_return_pdf_history_for_records(record_ids):
+    ids = [int(rid) for rid in record_ids if rid]
+    if not ids:
+        return {}
+    conn = get_conn()
+    try:
+        ensure_civil_return_pdfs_table(conn)
+        cur = conn.cursor()
+        placeholders = ", ".join("?" for _ in ids)
+        cur.execute(f"""
+            SELECT id, record_id, case_number, FORMAT(intake_date, 'yyyy-MM-dd') AS intake_date,
+                   email_subject, email_from, FORMAT(email_received_at, 'yyyy-MM-ddTHH:mm:ss') AS email_received_at,
+                   original_filename, blob_name, parse_status, created_at
+            FROM search.civil_return_pdfs
+            WHERE record_id IN ({placeholders})
+            ORDER BY email_received_at DESC, created_at DESC, id DESC
+        """, *ids)
+        rows = cur.fetchall()
+        columns = [col[0] for col in cur.description]
+    finally:
+        conn.close()
+    history = {}
+    for row in rows:
+        item = dict(zip(columns, row))
+        rid = item.get("record_id")
+        item["download_url"] = f"/civil-papers/return-pdfs/{item.get('id')}/download"
+        history.setdefault(rid, []).append(item)
+    return history
+
+
+def enrich_civil_return_pdf_history(records):
+    civil_records = [r for r in records if str(r.get("department") or "").lower() == "civil papers"]
+    history_by_record = fetch_civil_return_pdf_history_for_records([r.get("record_id") for r in civil_records])
+    for row in civil_records:
+        history = history_by_record.get(row.get("record_id"), [])
+        row["return_pdf_history"] = history
+        row["has_return_pdf"] = bool(history)
+        row["return_pdf_count"] = len(history)
+        row["return_pdf_download"] = history[0]["download_url"] if history else ""
+    return records
+
 def filter_dv_pdf_records(records, filters):
     query = (filters.get("query") or "").strip().lower()
     case_number = (filters.get("case_number") or "").strip().lower()
@@ -1797,6 +2294,8 @@ DV_PDF_CSV_BLOB_NAME = (
 )
 ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
 CIVIL_PAPERS_CONTAINER_NAME = "civilpapers"
+CIVIL_RETURN_EMAIL_SUBJECT_MARKER = os.environ.get("CIVIL_RETURN_EMAIL_SUBJECT_MARKER", "Baltimore City Sheriff's Office Return").strip() or "Baltimore City Sheriff's Office Return"
+CIVIL_RETURN_FILES_PREFIX = os.environ.get("CIVIL_RETURN_FILES_PREFIX", "return_pdfs").strip().strip("/") or "return_pdfs"
 WOR_FILES_CONTAINER_NAME = "warrantscsv"
 WOR_FILES_PREFIX = "wor_files"
 
@@ -2310,6 +2809,7 @@ def download_wor_file():
 def upload_civil_papers_file():
     uploaded = request.files.get("file")
     case_number = (request.form.get("case_number") or "").strip()
+    record_id = (request.form.get("record_id") or "").strip()
     if not case_number:
         return jsonify({"error": "Missing case number"}), 400
     if not uploaded or not uploaded.filename:
@@ -2326,7 +2826,11 @@ def upload_civil_papers_file():
             uploaded.stream,
             overwrite=False,
             content_settings=ContentSettings(content_type=uploaded.mimetype or "application/octet-stream"),
-            metadata={"case_number": case_number[:128], "original_filename": safe_filename[:200]},
+            metadata={
+                "case_number": case_number[:128],
+                "original_filename": safe_filename[:200],
+                "record_id": record_id[:32],
+            },
         )
     except Exception as exc:
         return jsonify({"error": f"Unable to upload file to blob storage: {exc}"}), 500
@@ -2334,26 +2838,19 @@ def upload_civil_papers_file():
     return jsonify({"ok": True, "blob_name": blob_name}), 201
 
 
-@app.route("/civil-papers/files/download")
-def download_civil_papers_files():
-    case_number = (request.args.get("case_number") or "").strip()
-    if not case_number:
-        return jsonify({"error": "Missing case number"}), 400
+def send_civil_blob_collection(container, blob_names, zip_download_name, empty_message="No files found"):
+    unique_blob_names = []
+    seen = set()
+    for blob_name in blob_names:
+        if blob_name and blob_name not in seen:
+            seen.add(blob_name)
+            unique_blob_names.append(blob_name)
 
-    case_key = normalize_case_number_for_blob(case_number)
-    prefix = f"{case_key}/"
+    if not unique_blob_names:
+        return jsonify({"error": empty_message}), 404
 
-    try:
-        container = get_civil_files_container()
-        blobs = [blob.name for blob in container.list_blobs(name_starts_with=prefix)]
-    except Exception as exc:
-        return jsonify({"error": f"Unable to list files from blob storage: {exc}"}), 500
-
-    if not blobs:
-        return jsonify({"error": "No files found for this case number"}), 404
-
-    if len(blobs) == 1:
-        blob_name = blobs[0]
+    if len(unique_blob_names) == 1:
+        blob_name = unique_blob_names[0]
         try:
             blob_client = container.get_blob_client(blob_name)
             data = blob_client.download_blob().readall()
@@ -2373,12 +2870,20 @@ def download_civil_papers_files():
     zip_buffer = io.BytesIO()
     try:
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for blob_name in blobs:
+            used_names = set()
+            for blob_name in unique_blob_names:
                 blob_client = container.get_blob_client(blob_name)
                 data = blob_client.download_blob().readall()
                 props = blob_client.get_blob_properties()
                 filename = (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
-                zf.writestr(filename, data)
+                candidate = filename
+                idx = 2
+                while candidate in used_names:
+                    stem, ext = os.path.splitext(filename)
+                    candidate = f"{stem}_{idx}{ext}"
+                    idx += 1
+                used_names.add(candidate)
+                zf.writestr(candidate, data)
     except Exception as exc:
         return jsonify({"error": f"Unable to create ZIP from blob files: {exc}"}), 500
 
@@ -2387,7 +2892,66 @@ def download_civil_papers_files():
         zip_buffer,
         mimetype="application/zip",
         as_attachment=True,
-        download_name=f"civil_papers_{case_key}_files.zip",
+        download_name=zip_download_name,
+    )
+
+
+@app.route("/civil-papers/return-pdfs/<int:return_pdf_id>/download")
+def download_civil_return_pdf(return_pdf_id):
+    conn = get_conn()
+    try:
+        ensure_civil_return_pdfs_table(conn)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT blob_name
+            FROM search.civil_return_pdfs
+            WHERE id = ?
+        """, return_pdf_id)
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row or not row[0]:
+        return jsonify({"error": "Return PDF not found"}), 404
+    container = get_civil_files_container()
+    return send_civil_blob_collection(container, [row[0]], "return_pdf.pdf", "Return PDF not found")
+
+
+@app.route("/civil-papers/files/download")
+def download_civil_papers_files():
+    case_number = (request.args.get("case_number") or "").strip()
+    record_id = (request.args.get("record_id") or "").strip()
+    if not case_number and not record_id:
+        return jsonify({"error": "Missing case number or record ID"}), 400
+
+    try:
+        container = get_civil_files_container()
+        blob_names = []
+        case_key = normalize_case_number_for_blob(case_number) if case_number else "civil_papers"
+        if case_number:
+            prefix = f"{case_key}/"
+            blob_names.extend(blob.name for blob in container.list_blobs(name_starts_with=prefix))
+        if record_id:
+            conn = get_conn()
+            try:
+                ensure_civil_return_pdfs_table(conn)
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT blob_name
+                    FROM search.civil_return_pdfs
+                    WHERE record_id = ?
+                    ORDER BY email_received_at DESC, created_at DESC, id DESC
+                """, int(record_id))
+                blob_names.extend(row[0] for row in cur.fetchall() if row[0])
+            finally:
+                conn.close()
+    except Exception as exc:
+        return jsonify({"error": f"Unable to list files from blob storage: {exc}"}), 500
+
+    return send_civil_blob_collection(
+        container,
+        blob_names,
+        f"civil_papers_{case_key}_files.zip",
+        "No files found for this record",
     )
 
 
@@ -2411,7 +2975,11 @@ def upload_dv_case_file():
             uploaded.stream,
             overwrite=False,
             content_settings=ContentSettings(content_type=uploaded.mimetype or "application/octet-stream"),
-            metadata={"case_number": case_number[:128], "original_filename": safe_filename[:200]},
+            metadata={
+                "case_number": case_number[:128],
+                "original_filename": safe_filename[:200],
+                "record_id": record_id[:32],
+            },
         )
     except Exception as exc:
         return jsonify({"error": f"Unable to upload file to blob storage: {exc}"}), 500
@@ -3075,6 +3643,8 @@ def _run_ingest_pipeline_background():
         steps.append({"step": "ingest_all_odyssey_civil_blobs", "status": "ok"})
         dv_result = ingest_dv_email_payloads_for_run()
         steps.append({"step": "ingest_dv_email_payloads_for_run", **dv_result})
+        civil_return_result = ingest_civil_return_email_payloads_for_run()
+        steps.append({"step": "ingest_civil_return_email_payloads_for_run", **civil_return_result})
 
         commands = [
             [sys.executable, "extract_doc_pop.py"],
@@ -3473,6 +4043,8 @@ def search_all():
         daily_logs = [] if filters["admin_status"] else search_daily_logs(conn, filters)
     finally:
         conn.close()
+
+    records = enrich_civil_return_pdf_history(records)
     
     grouped = {}
     for r in records:

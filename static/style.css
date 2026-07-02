@@ -753,3 +753,20 @@ textarea.modal-control {
   color: #555;
   font-size: 14px;
 }
+
+.civil-return-history-row > td {
+  background: #f8fbff;
+}
+
+.civil-return-history-panel {
+  padding: 12px 16px;
+  border-left: 4px solid #93c5fd;
+  background: #eff6ff;
+}
+
+.civil-return-history-panel a {
+  display: inline-block;
+  margin-top: 6px;
+  color: #1d4ed8;
+  font-weight: 600;
+}
