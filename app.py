@@ -115,20 +115,60 @@ COURT_DOC_TYPE_CANONICAL_TO_VALUES = {
 }
 COURT_DOC_TYPE_OPTIONS = list(COURT_DOC_TYPE_CANONICAL_TO_VALUES.keys())
 
+ADMIN_STATUS_CANONICAL_TO_VALUES = {
+    "Cancelled": [
+        "Cancelled - Moved",
+        "Cancelled - Other",
+        "Cancelled - Paid",
+    ],
+    "Non-Est": [
+        "Non EST",
+        "NON EST",
+        "Non Est",
+        "Non-Est",
+        "NON-EST",
+        "Non_Est",
+    ],
+    "Served": [
+        "Served",
+        "Served - In Office",
+        "served in office",
+    ],
+}
+ADMIN_STATUS_VARIATION_TO_CANONICAL = {
+    value.strip().lower(): canonical
+    for canonical, values in ADMIN_STATUS_CANONICAL_TO_VALUES.items()
+    for value in values
+}
 ADMIN_STATUS_FALLBACK_OPTIONS = [
     "Active",
     "Attempted",
+    "Cancelled",
     "Dismissed",
     "Expired",
-    "Non_Est",
+    "Non-Est",
     "Quashed",
     "Served",
     "Valid",
 ]
 
 
+def canonicalize_admin_status_option(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return ADMIN_STATUS_VARIATION_TO_CANONICAL.get(text.lower(), text)
+
+
+def get_admin_status_values(selected_value):
+    selected = str(selected_value or "").strip()
+    if not selected:
+        return None
+    return ADMIN_STATUS_CANONICAL_TO_VALUES.get(selected, [selected])
+
+
 def get_admin_status_options():
-    options = set(ADMIN_STATUS_FALLBACK_OPTIONS)
+    options = {canonicalize_admin_status_option(option) for option in ADMIN_STATUS_FALLBACK_OPTIONS}
     conn = None
     try:
         conn = get_conn()
@@ -147,7 +187,7 @@ def get_admin_status_options():
               AND LTRIM(RTRIM(COALESCE(administrative_status, disposition, service_disp))) <> ''
         """)
         for row in cur.fetchall():
-            value = str(row[0] or "").strip()
+            value = canonicalize_admin_status_option(row[0])
             if value:
                 options.add(value)
 
@@ -161,7 +201,7 @@ def get_admin_status_options():
                       AND LTRIM(RTRIM(csv_order_disposition)) <> ''
                 """)
                 for row in cur.fetchall():
-                    value = str(row[0] or "").strip()
+                    value = canonicalize_admin_status_option(row[0])
                     if value:
                         options.add(value)
     except Exception as exc:
@@ -1314,7 +1354,11 @@ def filter_dv_pdf_records(records, filters):
     court_doc_type = (filters.get("court_document_type") or "").strip()
     if court_doc_type:
         return []
-    admin_status = (filters.get("admin_status") or "").strip().lower()
+    admin_status_values = {
+        str(value or "").strip().lower()
+        for value in (filters.get("admin_status_values") or [])
+        if str(value or "").strip()
+    }
 
     def parse_date_value(value):
         if not value:
@@ -1352,7 +1396,7 @@ def filter_dv_pdf_records(records, filters):
                 continue
         if last_x_cutoff and (not issue_date or issue_date < last_x_cutoff):
             continue
-        if admin_status and (row.get("order_disposition") or "").strip().lower() != admin_status:
+        if admin_status_values and (row.get("order_disposition") or "").strip().lower() not in admin_status_values:
             continue
         filtered.append(row)
     return filtered
@@ -3131,6 +3175,7 @@ def parse_search_filters(source):
         "court_document_type": court_document_type or None,
         "court_document_type_values": get_court_doc_type_values(court_document_type),
         "admin_status": admin_status or None,
+        "admin_status_values": get_admin_status_values(admin_status),
     }
 
 
@@ -3213,7 +3258,7 @@ def _iter_export_rows(cursor, filters):
         last_x_days=filters["last_x_days"],
         sid=filters["sid"],
         court_doc_types=filters["court_document_type_values"],
-        admin_status=filters["admin_status"],
+        admin_status_values=filters["admin_status_values"],
         extra_where=["LOWER(LTRIM(RTRIM(r.department))) = 'field services department'"],
     )
     cursor.execute(sql, params)
@@ -3422,7 +3467,7 @@ def search_all():
             issuing_county=filters["issuing_county"],
             last_x_days=filters["last_x_days"],
             court_doc_types=filters["court_document_type_values"],
-            admin_status=filters["admin_status"],
+            admin_status_values=filters["admin_status_values"],
             limit=None
         )
         daily_logs = [] if filters["admin_status"] else search_daily_logs(conn, filters)

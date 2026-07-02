@@ -13,7 +13,7 @@ def _build_filters_sql(
     last_x_days: Optional[str] = None,
     sid: Optional[str] = None,
     court_doc_types: Optional[List[str]] = None,
-    admin_status: Optional[str] = None,
+    admin_status_values: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
     name_tokens = [t for t in (name_query or "").strip().split() if t]
     where_clauses = ["1=1"]
@@ -100,24 +100,34 @@ def _build_filters_sql(
         where_clauses.append("date_of_birth = CAST(? AS date)")
         params.append(dob)
 
-    if admin_status:
-        normalized_admin_status = admin_status.strip().lower()
-        where_clauses.append(
-            """
-            (
+    if admin_status_values:
+        normalized_admin_statuses = []
+        seen_admin_statuses = set()
+        for value in admin_status_values:
+            text = str(value or "").strip().lower()
+            if not text or text in seen_admin_statuses:
+                continue
+            seen_admin_statuses.add(text)
+            normalized_admin_statuses.append(text)
+        if normalized_admin_statuses:
+            placeholders = ", ".join("?" for _ in normalized_admin_statuses)
+            where_clauses.append(
+                f"""
                 (
-                    department = 'BCSO_ACTIVE_WARRANTS'
-                    AND LOWER(LTRIM(RTRIM(COALESCE(warrant_status, '')))) = ?
+                    (
+                        department = 'BCSO_ACTIVE_WARRANTS'
+                        AND LOWER(LTRIM(RTRIM(COALESCE(warrant_status, '')))) IN ({placeholders})
+                    )
+                    OR
+                    (
+                        LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
+                        AND LOWER(LTRIM(RTRIM(COALESCE(administrative_status, disposition, service_disp, '')))) IN ({placeholders})
+                    )
                 )
-                OR
-                (
-                    LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
-                    AND LOWER(LTRIM(RTRIM(COALESCE(administrative_status, disposition, service_disp, '')))) = ?
-                )
+                """.strip()
             )
-            """.strip()
-        )
-        params.extend([normalized_admin_status, normalized_admin_status])
+            params.extend(normalized_admin_statuses)
+            params.extend(normalized_admin_statuses)
 
     if court_doc_types:
         normalized_values = []
@@ -152,7 +162,7 @@ def build_search_sql(
     last_x_days: Optional[str] = None,
     sid: Optional[str] = None,
     court_doc_types: Optional[List[str]] = None,
-    admin_status: Optional[str] = None,
+    admin_status_values: Optional[List[str]] = None,
     order_by: str = "created_at DESC",
     extra_where: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
@@ -168,7 +178,7 @@ def build_search_sql(
         last_x_days=last_x_days,
         sid=sid,
         court_doc_types=court_doc_types,
-        admin_status=admin_status,
+        admin_status_values=admin_status_values,
     )
 
     if extra_where:
@@ -184,7 +194,7 @@ def build_search_sql(
     return sql, params
 
 
-def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, admin_status=None, limit=100):
+def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, admin_status_values=None, limit=100):
     cursor = conn.cursor()
 
     cursor.execute("SELECT COL_LENGTH('search.records', 'geocode_confidence')")
@@ -256,7 +266,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         last_x_days=last_x_days,
         sid=sid,
         court_doc_types=court_doc_types,
-        admin_status=admin_status,
+        admin_status_values=admin_status_values,
     )
 
     cursor.execute(sql, params)
