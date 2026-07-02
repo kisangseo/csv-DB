@@ -13,6 +13,7 @@ def _build_filters_sql(
     last_x_days: Optional[str] = None,
     sid: Optional[str] = None,
     court_doc_types: Optional[List[str]] = None,
+    admin_status_values: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
     name_tokens = [t for t in (name_query or "").strip().split() if t]
     where_clauses = ["1=1"]
@@ -99,6 +100,35 @@ def _build_filters_sql(
         where_clauses.append("date_of_birth = CAST(? AS date)")
         params.append(dob)
 
+    if admin_status_values:
+        normalized_admin_statuses = []
+        seen_admin_statuses = set()
+        for value in admin_status_values:
+            text = str(value or "").strip().lower()
+            if not text or text in seen_admin_statuses:
+                continue
+            seen_admin_statuses.add(text)
+            normalized_admin_statuses.append(text)
+        if normalized_admin_statuses:
+            placeholders = ", ".join("?" for _ in normalized_admin_statuses)
+            where_clauses.append(
+                f"""
+                (
+                    (
+                        department = 'BCSO_ACTIVE_WARRANTS'
+                        AND LOWER(LTRIM(RTRIM(COALESCE(warrant_status, '')))) IN ({placeholders})
+                    )
+                    OR
+                    (
+                        LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
+                        AND LOWER(LTRIM(RTRIM(COALESCE(administrative_status, disposition, service_disp, '')))) IN ({placeholders})
+                    )
+                )
+                """.strip()
+            )
+            params.extend(normalized_admin_statuses)
+            params.extend(normalized_admin_statuses)
+
     if court_doc_types:
         normalized_values = []
         seen = set()
@@ -132,6 +162,7 @@ def build_search_sql(
     last_x_days: Optional[str] = None,
     sid: Optional[str] = None,
     court_doc_types: Optional[List[str]] = None,
+    admin_status_values: Optional[List[str]] = None,
     order_by: str = "created_at DESC",
     extra_where: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
@@ -147,6 +178,7 @@ def build_search_sql(
         last_x_days=last_x_days,
         sid=sid,
         court_doc_types=court_doc_types,
+        admin_status_values=admin_status_values,
     )
 
     if extra_where:
@@ -162,10 +194,14 @@ def build_search_sql(
     return sql, params
 
 
-def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, limit=100):
+def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, admin_status_values=None, limit=100):
     cursor = conn.cursor()
 
-    select_sql = """
+    cursor.execute("SELECT COL_LENGTH('search.records', 'geocode_confidence')")
+    has_geocode_confidence = cursor.fetchone()[0] is not None
+    geocode_confidence_select = "geocode_confidence AS geocode_confidence" if has_geocode_confidence else "CAST(NULL AS FLOAT) AS geocode_confidence"
+
+    select_sql = f"""
         record_id,
         COALESCE(full_name, tenant_defendant_or_respondent, resp_name) AS name,
         sid AS sid,
@@ -184,6 +220,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         COALESCE(served_by, serving_or_attempting_deputy, member_reporting, return_deputy) AS served_by,
         x AS x,
         y AS y,
+        {geocode_confidence_select},
         state AS state,
         COALESCE(notes, notes_from_attempt) AS notes,
         warrant_type AS warrant_type,
@@ -229,6 +266,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         last_x_days=last_x_days,
         sid=sid,
         court_doc_types=court_doc_types,
+        admin_status_values=admin_status_values,
     )
 
     cursor.execute(sql, params)
