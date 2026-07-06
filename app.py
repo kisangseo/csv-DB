@@ -1699,7 +1699,7 @@ def ingest_civil_return_email_payloads_for_run():
                         print(f"[CIVIL RETURN EMAIL] No PDF attachments for message id={message_id}")
                         continue
 
-                    message_inserted = False
+                    message_processed = False
                     for attachment in pdf_attachments:
                         attachment_id = attachment.get("id") or ""
                         cur.execute(
@@ -1709,6 +1709,7 @@ def ingest_civil_return_email_payloads_for_run():
                         )
                         if cur.fetchone():
                             duplicates += 1
+                            message_processed = True
                             continue
 
                         content_b64 = attachment.get("contentBytes")
@@ -1762,10 +1763,9 @@ def ingest_civil_return_email_payloads_for_run():
                         })
                         if was_inserted:
                             inserted += 1
-                            if match_record_id:
-                                message_inserted = True
+                            message_processed = True
 
-                    if message_inserted:
+                    if message_processed:
                         move_resp = requests.post(
                             f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
                             headers={**headers, "Content-Type": "application/json"},
@@ -1774,6 +1774,7 @@ def ingest_civil_return_email_payloads_for_run():
                         )
                         move_resp.raise_for_status()
                         moved += 1
+                        print(f"[CIVIL RETURN EMAIL] Processed and moved message id={message_id}.")
                 except Exception as msg_exc:
                     failed += 1
                     error_text = f"id={message_id}: {msg_exc}"
