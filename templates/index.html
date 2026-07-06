@@ -766,6 +766,11 @@
         if (dept.toLowerCase() === "civil papers" && headerLabel === "Served By") {
           return row.served_by_display || getCivilServedByValue(row) || "";
         }
+        if (dept.toLowerCase() === "civil papers" && headerLabel === "Comments") {
+          const baseComment = toCellText(row.notes || row.comments || "");
+          if (!row.has_return_pdf) return baseComment;
+          return baseComment ? `${baseComment}; Return PDF` : "Return PDF";
+        }
         if (dept.toLowerCase() === "dv pdf") {
           if (headerLabel === "Respondent Name") return row.respondent_name || "";
           if (headerLabel === "Issue Date") return row.issue_date || "";
@@ -1143,6 +1148,80 @@
         return [caseKey, deputy, status, attemptedAt].join("|");
       }
 
+
+      function formatDateTimeForDisplay(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value || "";
+        return date.toLocaleString();
+      }
+
+      function formatHistoryDateTime(value) {
+        return value || "";
+      }
+
+      function createCivilReturnHistoryRow(row, colspan) {
+        const history = Array.isArray(row.return_pdf_history) ? row.return_pdf_history : [];
+        if (!history.length) return null;
+
+        const historyTr = document.createElement("tr");
+        historyTr.className = "civil-child-row civil-return-history-row";
+        historyTr.style.display = "none";
+
+        const td = document.createElement("td");
+        td.colSpan = colspan;
+
+        const wrap = document.createElement("div");
+        wrap.className = "civil-return-history-panel";
+
+        const title = document.createElement("div");
+        title.className = "bcso-edit-history-title";
+        title.textContent = "Download History by Email";
+        wrap.appendChild(title);
+
+        const list = document.createElement("ul");
+        list.className = "bcso-edit-history-list";
+        history.forEach((item) => {
+          const li = document.createElement("li");
+
+          const summary = document.createElement("div");
+          summary.className = "bcso-edit-history-summary";
+          summary.textContent = item.email_subject || "Baltimore City Sheriff's Office Return";
+          li.appendChild(summary);
+
+          const meta = document.createElement("div");
+          meta.className = "bcso-edit-history-meta";
+          const received = item.email_received_at ? formatHistoryDateTime(item.email_received_at) : "unknown date";
+          meta.textContent = `From ${item.email_from || "unknown sender"} • ${received} • ${item.original_filename || "Return PDF"}`;
+          li.appendChild(meta);
+
+          const link = document.createElement("a");
+          link.href = item.download_url || `/civil-papers/return-pdfs/${item.id}/download`;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = "Download Return PDF";
+          li.appendChild(link);
+
+          const downloads = Array.isArray(item.download_history) ? item.download_history : [];
+          const downloadMeta = document.createElement("div");
+          downloadMeta.className = "bcso-edit-history-meta";
+          if (downloads.length) {
+            downloadMeta.textContent = `Downloaded by ${downloads.map((entry) => {
+              const when = entry.downloaded_at ? ` at ${formatHistoryDateTime(entry.downloaded_at)}` : "";
+              return `${entry.downloaded_by_email || "unknown user"}${when}`;
+            }).join("; ")}`;
+          } else {
+            downloadMeta.textContent = "No user downloads recorded yet.";
+          }
+          li.appendChild(downloadMeta);
+
+          list.appendChild(li);
+        });
+        wrap.appendChild(list);
+        td.appendChild(wrap);
+        historyTr.appendChild(td);
+        return historyTr;
+      }
+
       function buildCivilDisplayRows(rows) {
         const groups = new Map();
         rows.forEach((row) => {
@@ -1247,7 +1326,7 @@
         resetLandlordTenantInlineEditState(row, tr, dataHeaders, actionsTd, editBtn, deleteBtn);
       }
 
-      async function uploadCivilPaperFile(caseNumber, file, statusEl) {
+      async function uploadCivilPaperFile(caseNumber, recordId, file, statusEl) {
         if (!caseNumber) {
           alert("Case number is missing for this record.");
           return;
@@ -1258,6 +1337,7 @@
 
         const formData = new FormData();
         formData.append("case_number", caseNumber);
+        if (recordId) formData.append("record_id", recordId);
         formData.append("file", file);
 
         try {
@@ -1276,7 +1356,9 @@
         }
       }
 
-      function appendCivilPaperFileActions(actionsTd, caseNumber) {
+      function appendCivilPaperFileActions(actionsTd, row) {
+        const caseNumber = row?.case_number || "";
+        const recordId = row?.record_id || "";
         const uploadBtn = document.createElement("button");
         uploadBtn.type = "button";
         uploadBtn.textContent = "Upload File";
@@ -1299,7 +1381,7 @@
         uploadBtn.addEventListener("click", () => fileInput.click());
         fileInput.addEventListener("change", () => {
           const selected = fileInput.files && fileInput.files[0];
-          uploadCivilPaperFile(caseNumber, selected, status);
+          uploadCivilPaperFile(caseNumber, recordId, selected, status);
           fileInput.value = "";
         });
 
@@ -1310,6 +1392,7 @@
           }
           const url = new URL(`${window.location.origin}/civil-papers/files/download`);
           url.searchParams.set("case_number", caseNumber);
+          if (recordId) url.searchParams.set("record_id", recordId);
           window.open(url.toString(), "_blank", "noopener,noreferrer");
         });
 
@@ -1330,6 +1413,7 @@
 
         const formData = new FormData();
         formData.append("case_number", caseNumber);
+        if (recordId) formData.append("record_id", recordId);
         formData.append("file", file);
 
         try {
@@ -1397,6 +1481,7 @@
         const formData = new FormData();
         formData.append("record_id", String(recordId));
         formData.append("case_number", caseNumber);
+        if (recordId) formData.append("record_id", recordId);
         formData.append("file", file);
         try {
           const response = await fetch(`${window.location.origin}/wor/files/upload`, { method: "POST", body: formData });
@@ -2093,7 +2178,7 @@
                   actionsTd.appendChild(deleteBtn);
                 }
                 if (deptKey === "civil papers") {
-                  appendCivilPaperFileActions(actionsTd, row.case_number || "");
+                  appendCivilPaperFileActions(actionsTd, row);
                 } else if (deptKey === "warrant of restitution") {
                   appendWorFileActions(actionsTd, row);
                 }
@@ -2155,7 +2240,7 @@
                     });
                     childActionsTd.appendChild(childEditBtn);
                     if (dept.toLowerCase() === "civil papers") {
-                      appendCivilPaperFileActions(childActionsTd, child.case_number || "");
+                      appendCivilPaperFileActions(childActionsTd, child);
                     }
                   } else {
                     childActionsTd.textContent = "—";
@@ -2164,7 +2249,12 @@
                   tbody.appendChild(childTr);
                 });
 
-                if (childRows.length > 0) {
+                const historyRow = createCivilReturnHistoryRow(row, headers.length);
+                if (historyRow) {
+                  tbody.appendChild(historyRow);
+                }
+
+                if (childRows.length > 0 || historyRow) {
                   tr.style.cursor = "pointer";
                   tr.addEventListener("click", (event) => {
                     const clickedInsideActions = event.target && event.target.closest && event.target.closest(".table-actions-cell");
