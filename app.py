@@ -1397,11 +1397,44 @@ def ensure_civil_return_pdfs_table(conn):
         CREATE INDEX IX_civil_return_pdfs_case_intake
             ON search.civil_return_pdfs(case_number, intake_date)
     """)
+    cur.execute("""
+        IF OBJECT_ID('search.civil_return_pdf_downloads', 'U') IS NULL
+        BEGIN
+            CREATE TABLE search.civil_return_pdf_downloads (
+                id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                return_pdf_id INT NOT NULL,
+                record_id INT NULL,
+                downloaded_by_email NVARCHAR(320) NULL,
+                download_route NVARCHAR(100) NULL,
+                downloaded_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+        END
+    """)
+    cur.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE name = 'IX_civil_return_pdf_downloads_return_pdf'
+              AND object_id = OBJECT_ID('search.civil_return_pdf_downloads')
+        )
+        CREATE INDEX IX_civil_return_pdf_downloads_return_pdf
+            ON search.civil_return_pdf_downloads(return_pdf_id, downloaded_at DESC)
+    """)
     conn.commit()
 
 
 def normalize_case_number_for_match(value):
     return re.sub(r"[^A-Za-z0-9]+", "", str(value or "")).upper()
+
+
+CIVIL_RETURN_CASE_NUMBER_RE = re.compile(
+    r"\b([A-Z]-\d{2}-[A-Z]{2}-\d{2}-\d{6}|\d{2}-[A-Z]{1,3}-\d{2}-\d{6})\b",
+    flags=re.IGNORECASE,
+)
+
+
+def extract_civil_return_case_number(text, fallback=""):
+    match = CIVIL_RETURN_CASE_NUMBER_RE.search(str(text or ""))
+    return (match.group(1).upper() if match else str(fallback or "")).strip()
 
 
 def parse_graph_datetime(value):
@@ -1443,8 +1476,7 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
     text = extract_pdf_text_from_bytes(pdf_bytes)
     compact = re.sub(r"\s+", " ", text or " ").strip()
 
-    case_match = re.search(r"\b([A-Z]-\d{2}-[A-Z]{2}-\d{2}-\d{6})\b", compact, flags=re.IGNORECASE)
-    case_number = (case_match.group(1).upper() if case_match else fallback_case_number).strip()
+    case_number = extract_civil_return_case_number(compact, fallback_case_number)
 
     intake_date = None
     intake_match = re.search(r"Intake\s+Date\s+([^\n]+)", text or "", flags=re.IGNORECASE)
@@ -1514,12 +1546,14 @@ def find_civil_return_record(cur, case_number, intake_date):
         FROM search.records
         WHERE LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
           AND REPLACE(REPLACE(REPLACE(UPPER(COALESCE(case_number, '')), '-', ''), ' ', ''), '/', '') = ?
-          AND CAST(intake_date AS date) = CAST(? AS date)
+          AND CAST(intake_date AS date) BETWEEN DATEADD(day, -5, CAST(? AS date)) AND DATEADD(day, 5, CAST(? AS date))
         ORDER BY
+          CASE WHEN CAST(intake_date AS date) = CAST(? AS date) THEN 0 ELSE 1 END,
+          ABS(DATEDIFF(day, CAST(intake_date AS date), CAST(? AS date))),
           {civil_priority_sql()},
           COALESCE(date_time_served, date_time_attempted, prior_attempt_date, date_received, intake_date, issue_date, created_at) DESC,
           record_id DESC
-    """, normalized, intake_date)
+    """, normalized, intake_date, intake_date, intake_date, intake_date)
     row = cur.fetchone()
     return int(row[0]) if row else None
 
@@ -1727,8 +1761,7 @@ def ingest_civil_return_email_payloads_for_run():
             for message in candidates:
                 message_id = message.get("id") or ""
                 subject = message.get("subject") or ""
-                subject_case_match = re.search(r"\b([A-Z]-\d{2}-[A-Z]{2}-\d{2}-\d{6})\b", subject, flags=re.IGNORECASE)
-                subject_case_number = subject_case_match.group(1).upper() if subject_case_match else ""
+                subject_case_number = extract_civil_return_case_number(subject)
                 try:
                     att_resp = requests.get(
                         f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/attachments",
@@ -1827,7 +1860,7 @@ def ingest_civil_return_email_payloads_for_run():
                             "pdf_service_disposition": parsed.get("service_disposition"),
                             "pdf_deputy": parsed.get("deputy"),
                             "parse_status": parse_status,
-                            "parse_error": None if match_record_id else "No Civil Papers record matched case_number AND intake_date.",
+                            "parse_error": None if match_record_id else "No Civil Papers record matched case_number and intake_date within 5 days.",
                             "source_json": {"message": message, "attachment": {k: v for k, v in attachment.items() if k != "contentBytes"}},
                         })
                         if was_inserted:
@@ -1885,7 +1918,8 @@ def fetch_civil_return_pdf_history_for_records(record_ids):
             WITH ranked_return_pdfs AS (
                 SELECT
                     id, record_id, case_number, FORMAT(intake_date, 'yyyy-MM-dd') AS intake_date,
-                    email_subject, email_from, FORMAT(email_received_at, 'yyyy-MM-ddTHH:mm:ss') AS email_received_at,
+                    email_subject, email_from,
+                    FORMAT(email_received_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time', 'yyyy-MM-dd h:mm tt') AS email_received_at,
                     original_filename, blob_name, parse_status, created_at,
                     ROW_NUMBER() OVER (
                         PARTITION BY record_id, LOWER(LTRIM(RTRIM(COALESCE(original_filename, blob_name))))
@@ -1902,6 +1936,27 @@ def fetch_civil_return_pdf_history_for_records(record_ids):
         """, *ids)
         rows = cur.fetchall()
         columns = [col[0] for col in cur.description]
+        return_pdf_ids = [int(row[0]) for row in rows if row and row[0]]
+        download_history = {}
+        if return_pdf_ids:
+            download_placeholders = ", ".join("?" for _ in return_pdf_ids)
+            cur.execute(f"""
+                SELECT
+                    return_pdf_id,
+                    downloaded_by_email,
+                    download_route,
+                    FORMAT(downloaded_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time', 'yyyy-MM-dd h:mm tt') AS downloaded_at
+                FROM search.civil_return_pdf_downloads
+                WHERE return_pdf_id IN ({download_placeholders})
+                ORDER BY downloaded_at DESC, id DESC
+            """, *return_pdf_ids)
+            for download_row in cur.fetchall():
+                return_pdf_id, downloaded_by_email, download_route, downloaded_at = download_row
+                download_history.setdefault(int(return_pdf_id), []).append({
+                    "downloaded_by_email": downloaded_by_email,
+                    "download_route": download_route,
+                    "downloaded_at": downloaded_at,
+                })
     finally:
         conn.close()
     history = {}
@@ -1909,6 +1964,7 @@ def fetch_civil_return_pdf_history_for_records(record_ids):
         item = dict(zip(columns, row))
         rid = item.get("record_id")
         item["download_url"] = f"/civil-papers/return-pdfs/{item.get('id')}/download"
+        item["download_history"] = download_history.get(int(item.get("id")), [])
         history.setdefault(rid, []).append(item)
     return history
 
@@ -2306,6 +2362,30 @@ def get_current_user_email(cur):
     if row and row[0]:
         return str(row[0]).strip()
     return f"user_id:{user_id}"
+
+
+def record_civil_return_pdf_downloads(conn, return_pdf_ids, route_name):
+    ids = [int(return_pdf_id) for return_pdf_id in return_pdf_ids if return_pdf_id]
+    if not ids:
+        return
+    ensure_civil_return_pdfs_table(conn)
+    cur = conn.cursor()
+    downloaded_by_email = get_current_user_email(cur)
+    placeholders = ", ".join("?" for _ in ids)
+    cur.execute(f"""
+        SELECT id, record_id
+        FROM search.civil_return_pdfs
+        WHERE id IN ({placeholders})
+    """, *ids)
+    rows = cur.fetchall()
+    for return_pdf_id, record_id in rows:
+        cur.execute("""
+            INSERT INTO search.civil_return_pdf_downloads (
+                return_pdf_id, record_id, downloaded_by_email, download_route
+            )
+            VALUES (?, ?, ?, ?)
+        """, int(return_pdf_id), record_id, downloaded_by_email, route_name)
+    conn.commit()
 
 
 def format_edit_value(value):
@@ -2990,6 +3070,8 @@ def download_civil_return_pdf(return_pdf_id):
             WHERE id = ?
         """, return_pdf_id)
         row = cur.fetchone()
+        if row and row[0]:
+            record_civil_return_pdf_downloads(conn, [return_pdf_id], "return_pdf")
     finally:
         conn.close()
     if not row or not row[0]:
@@ -3020,6 +3102,7 @@ def download_civil_papers_files():
                 cur.execute("""
                     WITH ranked_return_pdfs AS (
                         SELECT
+                            id,
                             blob_name,
                             ROW_NUMBER() OVER (
                                 PARTITION BY LOWER(LTRIM(RTRIM(COALESCE(original_filename, blob_name))))
@@ -3028,11 +3111,14 @@ def download_civil_papers_files():
                         FROM search.civil_return_pdfs
                         WHERE record_id = ?
                     )
-                    SELECT blob_name
+                    SELECT id, blob_name
                     FROM ranked_return_pdfs
                     WHERE rn = 1
                 """, int(record_id))
-                blob_names.extend(row[0] for row in cur.fetchall() if row[0])
+                return_rows = cur.fetchall()
+                return_pdf_ids = [int(row[0]) for row in return_rows if row[0]]
+                blob_names.extend(row[1] for row in return_rows if row[1])
+                record_civil_return_pdf_downloads(conn, return_pdf_ids, "record_files")
             finally:
                 conn.close()
     except Exception as exc:

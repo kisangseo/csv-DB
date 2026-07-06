@@ -56,3 +56,28 @@ BEGIN
         ON search.civil_return_pdfs(case_number, intake_date);
 END;
 GO
+
+IF OBJECT_ID('search.civil_return_pdf_downloads', 'U') IS NULL
+BEGIN
+    CREATE TABLE search.civil_return_pdf_downloads (
+        id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        return_pdf_id INT NOT NULL,
+        record_id INT NULL,
+        downloaded_by_email NVARCHAR(320) NULL,
+        download_route NVARCHAR(100) NULL,
+        downloaded_at DATETIME2 NOT NULL CONSTRAINT DF_civil_return_pdf_downloads_downloaded_at DEFAULT SYSUTCDATETIME()
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = 'IX_civil_return_pdf_downloads_return_pdf'
+      AND object_id = OBJECT_ID('search.civil_return_pdf_downloads')
+)
+BEGIN
+    CREATE INDEX IX_civil_return_pdf_downloads_return_pdf
+        ON search.civil_return_pdf_downloads(return_pdf_id, downloaded_at DESC);
+END;
+GO
