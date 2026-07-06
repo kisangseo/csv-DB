@@ -1580,6 +1580,10 @@ def upload_civil_return_pdf_to_blob(case_number, message_id, attachment_id, file
     blob_name = f"{CIVIL_RETURN_FILES_PREFIX}/{case_key}/{message_key}_{attachment_key}_{safe_filename}"
     container = get_civil_files_container()
     blob_client = container.get_blob_client(blob_name)
+    if blob_client.exists():
+        print(f"[CIVIL RETURN EMAIL] Return PDF blob already exists; reusing blob={blob_name}")
+        return blob_name
+
     blob_client.upload_blob(
         io.BytesIO(pdf_bytes),
         overwrite=False,
