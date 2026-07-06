@@ -1572,6 +1572,51 @@ def insert_civil_return_pdf_record(conn, payload):
     return new_id, True
 
 
+
+def find_existing_civil_return_pdf_for_record(cur, record_id, case_number, intake_date, original_filename):
+    if not record_id:
+        return None
+    cur.execute("""
+        SELECT TOP 1 id, blob_name
+        FROM search.civil_return_pdfs
+        WHERE record_id = ?
+          AND (
+                LOWER(LTRIM(RTRIM(COALESCE(original_filename, '')))) = LOWER(LTRIM(RTRIM(COALESCE(?, ''))))
+             OR (
+                    REPLACE(REPLACE(REPLACE(UPPER(COALESCE(case_number, '')), '-', ''), ' ', ''), '/', '') = ?
+                AND (CAST(intake_date AS date) = CAST(? AS date) OR ? IS NULL)
+                )
+          )
+        ORDER BY email_received_at DESC, created_at DESC, id DESC
+    """,
+        int(record_id),
+        original_filename or "",
+        normalize_case_number_for_match(case_number),
+        intake_date,
+        intake_date,
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {"id": int(row[0]), "blob_name": row[1]}
+
+
+def mark_civil_record_return_pdf_comment(conn, record_id):
+    if not record_id:
+        return
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE search.records
+        SET notes = CASE
+            WHEN notes IS NULL OR LTRIM(RTRIM(notes)) = '' THEN 'Return PDF'
+            WHEN LOWER(notes) NOT LIKE '%return pdf%' THEN CONCAT(notes, '; Return PDF')
+            ELSE notes
+        END
+        WHERE record_id = ?
+    """, int(record_id))
+    conn.commit()
+
+
 def upload_civil_return_pdf_to_blob(case_number, message_id, attachment_id, filename, pdf_bytes, content_type="application/pdf"):
     safe_filename = secure_filename(filename or "return.pdf") or "return.pdf"
     case_key = normalize_case_number_for_blob(case_number)
@@ -1707,12 +1752,14 @@ def ingest_civil_return_email_payloads_for_run():
                     for attachment in pdf_attachments:
                         attachment_id = attachment.get("id") or ""
                         cur.execute(
-                            "SELECT id FROM search.civil_return_pdfs WHERE message_id = ? AND attachment_id = ?",
+                            "SELECT id, record_id FROM search.civil_return_pdfs WHERE message_id = ? AND attachment_id = ?",
                             message_id,
                             attachment_id,
                         )
-                        if cur.fetchone():
+                        existing_message_attachment = cur.fetchone()
+                        if existing_message_attachment:
                             duplicates += 1
+                            mark_civil_record_return_pdf_comment(conn, existing_message_attachment[1])
                             message_processed = True
                             continue
 
@@ -1734,11 +1781,29 @@ def ingest_civil_return_email_payloads_for_run():
                         if not match_record_id:
                             unmatched += 1
 
+                        attachment_name = attachment.get("name") or "return.pdf"
+                        existing_record_pdf = find_existing_civil_return_pdf_for_record(
+                            cur,
+                            match_record_id,
+                            parsed.get("case_number") or subject_case_number,
+                            parsed.get("intake_date"),
+                            attachment_name,
+                        )
+                        if existing_record_pdf:
+                            duplicates += 1
+                            mark_civil_record_return_pdf_comment(conn, match_record_id)
+                            message_processed = True
+                            print(
+                                f"[CIVIL RETURN EMAIL] Return PDF already linked to record_id={match_record_id}; "
+                                f"existing_return_pdf_id={existing_record_pdf['id']}. Moving email without creating duplicate."
+                            )
+                            continue
+
                         blob_name = upload_civil_return_pdf_to_blob(
                             parsed.get("case_number") or subject_case_number,
                             message_id,
                             attachment_id,
-                            attachment.get("name") or "return.pdf",
+                            attachment_name,
                             pdf_bytes,
                             attachment.get("contentType") or "application/pdf",
                         )
@@ -1753,7 +1818,7 @@ def ingest_civil_return_email_payloads_for_run():
                             "email_from": ((message.get("from") or {}).get("emailAddress") or {}).get("address"),
                             "email_received_at": parse_graph_datetime(message.get("receivedDateTime")),
                             "attachment_id": attachment_id,
-                            "original_filename": attachment.get("name") or "return.pdf",
+                            "original_filename": attachment_name,
                             "blob_name": blob_name,
                             "content_type": attachment.get("contentType") or "application/pdf",
                             "pdf_case_number": parsed.get("case_number"),
@@ -1767,6 +1832,7 @@ def ingest_civil_return_email_payloads_for_run():
                         })
                         if was_inserted:
                             inserted += 1
+                            mark_civil_record_return_pdf_comment(conn, match_record_id)
                             message_processed = True
 
                     if message_processed:
@@ -1816,11 +1882,22 @@ def fetch_civil_return_pdf_history_for_records(record_ids):
         cur = conn.cursor()
         placeholders = ", ".join("?" for _ in ids)
         cur.execute(f"""
-            SELECT id, record_id, case_number, FORMAT(intake_date, 'yyyy-MM-dd') AS intake_date,
-                   email_subject, email_from, FORMAT(email_received_at, 'yyyy-MM-ddTHH:mm:ss') AS email_received_at,
-                   original_filename, blob_name, parse_status, created_at
-            FROM search.civil_return_pdfs
-            WHERE record_id IN ({placeholders})
+            WITH ranked_return_pdfs AS (
+                SELECT
+                    id, record_id, case_number, FORMAT(intake_date, 'yyyy-MM-dd') AS intake_date,
+                    email_subject, email_from, FORMAT(email_received_at, 'yyyy-MM-ddTHH:mm:ss') AS email_received_at,
+                    original_filename, blob_name, parse_status, created_at,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY record_id, LOWER(LTRIM(RTRIM(COALESCE(original_filename, blob_name))))
+                        ORDER BY email_received_at DESC, created_at DESC, id DESC
+                    ) AS rn
+                FROM search.civil_return_pdfs
+                WHERE record_id IN ({placeholders})
+            )
+            SELECT id, record_id, case_number, intake_date, email_subject, email_from,
+                   email_received_at, original_filename, blob_name, parse_status, created_at
+            FROM ranked_return_pdfs
+            WHERE rn = 1
             ORDER BY email_received_at DESC, created_at DESC, id DESC
         """, *ids)
         rows = cur.fetchall()
@@ -2941,10 +3018,19 @@ def download_civil_papers_files():
                 ensure_civil_return_pdfs_table(conn)
                 cur = conn.cursor()
                 cur.execute("""
+                    WITH ranked_return_pdfs AS (
+                        SELECT
+                            blob_name,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY LOWER(LTRIM(RTRIM(COALESCE(original_filename, blob_name))))
+                                ORDER BY email_received_at DESC, created_at DESC, id DESC
+                            ) AS rn
+                        FROM search.civil_return_pdfs
+                        WHERE record_id = ?
+                    )
                     SELECT blob_name
-                    FROM search.civil_return_pdfs
-                    WHERE record_id = ?
-                    ORDER BY email_received_at DESC, created_at DESC, id DESC
+                    FROM ranked_return_pdfs
+                    WHERE rn = 1
                 """, int(record_id))
                 blob_names.extend(row[0] for row in cur.fetchall() if row[0])
             finally:
