@@ -7,6 +7,18 @@ CAST(
 )
 """.strip()
 
+EVENT_NUMBER_DISPLAY_SQL = """
+COALESCE(
+    NULLIF(LTRIM(RTRIM(e.event_number)), ''),
+    CASE
+        WHEN LOWER(COALESCE(e.activity_type, '')) LIKE '%peace%'
+          OR LOWER(COALESCE(e.activity_type, '')) LIKE '%protective%'
+        THEN e.generated_event_number
+        ELSE NULL
+    END
+)
+""".strip()
+
 
 def search_daily_logs(conn, filters, limit=2000):
     """Return Daily Logs records from dbo.esri_events using applicable search filters."""
@@ -18,7 +30,7 @@ def search_daily_logs(conn, filters, limit=2000):
         params.append(f"%{filters['query'].lower()}%")
 
     if filters["case_number"]:
-        where_clauses.append("LOWER(COALESCE(e.event_number, '')) LIKE ?")
+        where_clauses.append(f"LOWER(COALESCE({EVENT_NUMBER_DISPLAY_SQL}, '')) LIKE ?")
         params.append(f"%{filters['case_number'].lower()}%")
 
     if filters["date_start"] and filters["date_end"]:
@@ -37,7 +49,7 @@ def search_daily_logs(conn, filters, limit=2000):
     cursor.execute(
         f"""
         SELECT TOP {int(limit)}
-            e.event_number,
+            {EVENT_NUMBER_DISPLAY_SQL} AS event_number,
             CONVERT(varchar(19), {ARRIVAL_TIME_EASTERN_SQL}, 120) AS arrival_time,
             e.event_status,
             e.activity_type,
