@@ -79,6 +79,9 @@ class SearchDailyLogsTests(unittest.TestCase):
         self.assertIn("e.notes_or_narrative", connection.cursor_instance.sql)
         self.assertIn("e.[name] AS name", connection.cursor_instance.sql)
         self.assertIn("e.radio_id", connection.cursor_instance.sql)
+        self.assertIn("NULLIF(LTRIM(RTRIM(e.event_number)), '')", connection.cursor_instance.sql)
+        self.assertIn("THEN e.generated_event_number", connection.cursor_instance.sql)
+        self.assertIn("AS event_number", connection.cursor_instance.sql)
         self.assertIn("FROM dbo.esri_events AS e", connection.cursor_instance.sql)
         self.assertIn("TRY_CONVERT(BIGINT, e.arrival_time) / 1000", connection.cursor_instance.sql)
         self.assertIn("TRY_CONVERT(INT,", connection.cursor_instance.sql)
@@ -103,7 +106,9 @@ class SearchDailyLogsTests(unittest.TestCase):
         search_daily_logs(connection, filters)
 
         self.assertIn("LOWER(COALESCE(e.[name], '')) LIKE ?", connection.cursor_instance.sql)
-        self.assertIn("LOWER(COALESCE(e.event_number, '')) LIKE ?", connection.cursor_instance.sql)
+        self.assertIn("LOWER(COALESCE(COALESCE(", connection.cursor_instance.sql)
+        self.assertIn("NULLIF(LTRIM(RTRIM(e.event_number)), '')", connection.cursor_instance.sql)
+        self.assertIn("THEN e.generated_event_number", connection.cursor_instance.sql)
         self.assertIn("CAST(CAST(", connection.cursor_instance.sql)
         self.assertIn("AS date) BETWEEN CAST(? AS date) AND CAST(? AS date)", connection.cursor_instance.sql)
         self.assertEqual(
