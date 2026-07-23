@@ -1411,15 +1411,19 @@
 
         if (statusEl) statusEl.textContent = "Uploading...";
 
-        const formData = new FormData();
-        formData.append("case_number", caseNumber);
-        if (recordId) formData.append("record_id", String(recordId));
-        formData.append("file", file);
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 120000);
 
         try {
+          const formData = new FormData();
+          formData.append("case_number", caseNumber);
+          if (recordId) formData.append("record_id", String(recordId));
+          formData.append("file", file);
+
           const response = await fetch(`${window.location.origin}/dv-pdf/files/upload`, {
             method: "POST",
-            body: formData
+            body: formData,
+            signal: controller.signal
           });
           const data = await response.json().catch(() => ({}));
           if (!response.ok) {
@@ -1427,8 +1431,13 @@
           }
           if (statusEl) statusEl.textContent = "Uploaded";
         } catch (err) {
+          const message = err.name === "AbortError"
+            ? "Upload timed out before the server responded."
+            : (err.message || "Upload failed.");
           if (statusEl) statusEl.textContent = "Upload failed";
-          alert(err.message || "Upload failed.");
+          alert(message);
+        } finally {
+          window.clearTimeout(timeoutId);
         }
       }
 

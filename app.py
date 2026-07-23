@@ -3143,6 +3143,10 @@ def upload_dv_case_file():
         return jsonify({"error": "No file selected"}), 400
 
     safe_filename = secure_filename(uploaded.filename) or f"file-{uuid.uuid4().hex}"
+    file_bytes = uploaded.read()
+    if not file_bytes:
+        return jsonify({"error": "Selected file is empty"}), 400
+
     case_key = normalize_case_number_for_blob(case_number)
     blob_name = f"{DV_PDF_CASE_FILES_PREFIX}/{case_key}/{uuid.uuid4().hex}_{safe_filename}"
 
@@ -3150,7 +3154,7 @@ def upload_dv_case_file():
         container = get_dv_files_container()
         blob_client = container.get_blob_client(blob_name)
         blob_client.upload_blob(
-            uploaded.stream,
+            file_bytes,
             overwrite=False,
             content_settings=ContentSettings(content_type=uploaded.mimetype or "application/octet-stream"),
             metadata={
