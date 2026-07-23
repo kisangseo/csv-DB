@@ -3136,6 +3136,7 @@ def download_civil_papers_files():
 def upload_dv_case_file():
     uploaded = request.files.get("file")
     case_number = (request.form.get("case_number") or "").strip()
+    record_id = (request.form.get("record_id") or "").strip()
     if not case_number:
         return jsonify({"error": "Missing case number"}), 400
     if not uploaded or not uploaded.filename:

@@ -1337,7 +1337,7 @@
 
         const formData = new FormData();
         formData.append("case_number", caseNumber);
-        if (recordId) formData.append("record_id", recordId);
+        if (recordId) formData.append("record_id", String(recordId));
         formData.append("file", file);
 
         try {
@@ -1402,7 +1402,7 @@
         actionsTd.appendChild(status);
       }
 
-      async function uploadDvCaseFile(caseNumber, file, statusEl) {
+      async function uploadDvCaseFile(caseNumber, recordId, file, statusEl) {
         if (!caseNumber) {
           alert("Case number is missing for this record.");
           return;
@@ -1413,7 +1413,7 @@
 
         const formData = new FormData();
         formData.append("case_number", caseNumber);
-        if (recordId) formData.append("record_id", recordId);
+        if (recordId) formData.append("record_id", String(recordId));
         formData.append("file", file);
 
         try {
@@ -1432,7 +1432,7 @@
         }
       }
 
-      function appendDvCaseFileActions(actionsTd, caseNumber) {
+      function appendDvCaseFileActions(actionsTd, caseNumber, recordId) {
         const uploadBtn = document.createElement("button");
         uploadBtn.type = "button";
         uploadBtn.textContent = "Upload File";
@@ -1455,7 +1455,7 @@
         uploadBtn.addEventListener("click", () => fileInput.click());
         fileInput.addEventListener("change", () => {
           const selected = fileInput.files && fileInput.files[0];
-          uploadDvCaseFile(caseNumber, selected, status);
+          uploadDvCaseFile(caseNumber, recordId, selected, status);
           fileInput.value = "";
         });
 
@@ -1466,6 +1466,7 @@
           }
           const url = new URL(`${window.location.origin}/dv-pdf/files/download`);
           url.searchParams.set("case_number", caseNumber);
+          if (recordId) url.searchParams.set("record_id", String(recordId));
           window.open(url.toString(), "_blank", "noopener,noreferrer");
         });
 
@@ -1481,7 +1482,7 @@
         const formData = new FormData();
         formData.append("record_id", String(recordId));
         formData.append("case_number", caseNumber);
-        if (recordId) formData.append("record_id", recordId);
+        if (recordId) formData.append("record_id", String(recordId));
         formData.append("file", file);
         try {
           const response = await fetch(`${window.location.origin}/wor/files/upload`, { method: "POST", body: formData });
@@ -2059,7 +2060,7 @@
 
                 actionsTd.appendChild(editBtn);
                 actionsTd.appendChild(cancelBtn);
-                appendDvCaseFileActions(actionsTd, row.case_number || "");
+                appendDvCaseFileActions(actionsTd, row.case_number || "", row.record_id || "");
               } else if (isActionableDept) {
                 const editBtn = document.createElement("button");
                 editBtn.type = "button";
