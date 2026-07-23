@@ -201,6 +201,10 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
     has_geocode_confidence = cursor.fetchone()[0] is not None
     geocode_confidence_select = "geocode_confidence AS geocode_confidence" if has_geocode_confidence else "CAST(NULL AS FLOAT) AS geocode_confidence"
 
+    cursor.execute("SELECT COL_LENGTH('search.records', 'blob_name')")
+    has_blob_name = cursor.fetchone()[0] is not None
+    blob_name_select = "blob_name AS blob_name" if has_blob_name else "CAST(NULL AS NVARCHAR(512)) AS blob_name"
+
     select_sql = f"""
         record_id,
         COALESCE(full_name, tenant_defendant_or_respondent, resp_name) AS name,
@@ -243,6 +247,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         race AS race,
         issuing_county AS issuing_county,
         source_file,
+        {blob_name_select},
         CASE
             WHEN source_file = 'AllActiveWarrants_0.csv'
                 THEN 'Active Warrants'
