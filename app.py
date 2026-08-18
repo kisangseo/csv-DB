@@ -28,7 +28,20 @@ from azure.storage.blob import (
 from db_connect import get_conn
 from daily_logs import search_daily_logs
 from search_sql import search_by_name, build_search_sql
-from datetime import timedelta, datetime, UTC
+from returns import (
+    RETURN_STATUS_VALUES,
+    ensure_returns_tables,
+    fetch_return_activity,
+    get_return,
+    log_return_activity,
+    normalize_return_payload,
+    normalize_service_disposition,
+    parse_cognito_entry_details,
+    search_returns,
+    update_return_status,
+    upsert_return,
+)
+from datetime import timedelta, datetime, date, UTC
 from werkzeug.utils import secure_filename
 
 
@@ -1505,6 +1518,26 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
     if deputy_match:
         deputy = re.sub(r"\s+", " ", deputy_match.group(1)).strip()
 
+    def between(label, following_labels):
+        boundary = "|".join(re.escape(item) for item in following_labels)
+        match = re.search(
+            rf"{re.escape(label)}\s+(.+?)(?=\s+(?:{boundary})\b|$)",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(r"\s+", " ", match.group(1)).strip() if match else ""
+
+    document_type = between("Type", ["Date Issued", "Type of RFS", "Petitioner", "Respondent"])
+    type_of_rfs = between("Type of RFS", ["Petitioner", "Respondent", "Address", "Date Attempted"])
+    petitioner_name = between("Petitioner", ["Respondent", "Address", "Date Attempted"])
+    service_address = between("Address", ["Date Attempted", "Service Disp", "Method of Service"])
+    method_of_service = between("Method of Service", ["Signature", "Date Signed", "Deputy Reporting"])
+    date_issued = parse_civil_return_date(between("Date Issued", ["Type of RFS", "Petitioner", "Respondent"]))
+    attempt_date = parse_civil_return_date(between("Date Attempted", ["Service Disp", "Method of Service", "Signature"]))
+    date_signed = parse_civil_return_date(between("Date Signed", ["Deputy Reporting", "Deputy Sequence", "Intake Date"]))
+    return_sequence = between("Deputy Sequence", ["Intake Date", "Court Issue Date", "Court"])
+    court_issue_date = parse_civil_return_date(between("Court Issue Date", ["Court"]))
+
     return {
         "text": text,
         "case_number": case_number,
@@ -1512,7 +1545,57 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
         "respondent_name": respondent_name,
         "service_disposition": service_disposition,
         "deputy": deputy,
+        "document_type": document_type,
+        "type_of_rfs": type_of_rfs,
+        "petitioner_name": petitioner_name,
+        "service_address": service_address,
+        "method_of_service": method_of_service,
+        "date_issued": date_issued,
+        "attempt_date": attempt_date,
+        "date_signed": date_signed,
+        "return_sequence": return_sequence,
+        "court_issue_date": court_issue_date,
     }
+
+
+def build_return_email_payload(message, attachment, parsed_pdf, blob_name, mailbox):
+    body = message.get("body") or {}
+    entry_payload = parse_cognito_entry_details(body.get("content") or "")
+    fallback_payload = {
+        "case_number": parsed_pdf.get("case_number"),
+        "document_type": parsed_pdf.get("document_type"),
+        "type_of_rfs": parsed_pdf.get("type_of_rfs"),
+        "petitioner_name": parsed_pdf.get("petitioner_name"),
+        "respondent_name": parsed_pdf.get("respondent_name"),
+        "service_address": parsed_pdf.get("service_address"),
+        "attempt_date": parsed_pdf.get("attempt_date"),
+        "service_disposition": parsed_pdf.get("service_disposition"),
+        "method_of_service": parsed_pdf.get("method_of_service"),
+        "date_signed": parsed_pdf.get("date_signed"),
+        "member_reporting": parsed_pdf.get("deputy"),
+        "return_sequence": parsed_pdf.get("return_sequence"),
+        "intake_date": parsed_pdf.get("intake_date"),
+        "court_issue_date": parsed_pdf.get("court_issue_date"),
+    }
+    for key, value in fallback_payload.items():
+        if value and not entry_payload.get(key):
+            entry_payload[key] = value
+    entry_payload.update({
+        "blob_container": CIVIL_PAPERS_CONTAINER_NAME,
+        "blob_name": blob_name,
+        "original_filename": attachment.get("name") or "return.pdf",
+        "content_type": attachment.get("contentType") or "application/pdf",
+        "source_email_message_id": message.get("id"),
+        "source_email_attachment_id": attachment.get("id"),
+        "source_email_subject": message.get("subject"),
+        "source_email_received_at": parse_graph_datetime(message.get("receivedDateTime")),
+        "source_payload_json": {
+            "mailbox": mailbox,
+            "message": {key: value for key, value in message.items() if key != "body"},
+            "entry_details": entry_payload.copy(),
+        },
+    })
+    return normalize_return_payload(entry_payload)
 
 
 def civil_priority_sql():
@@ -1651,12 +1734,24 @@ def mark_civil_record_return_pdf_comment(conn, record_id):
     conn.commit()
 
 
-def upload_civil_return_pdf_to_blob(case_number, message_id, attachment_id, filename, pdf_bytes, content_type="application/pdf"):
+def upload_civil_return_pdf_to_blob(
+    case_number,
+    message_id,
+    attachment_id,
+    filename,
+    pdf_bytes,
+    content_type="application/pdf",
+    service_disposition="",
+):
     safe_filename = secure_filename(filename or "return.pdf") or "return.pdf"
     case_key = normalize_case_number_for_blob(case_number)
     message_key = re.sub(r"[^A-Za-z0-9._-]+", "_", str(message_id or uuid.uuid4().hex))[:80].strip("._-")
     attachment_key = re.sub(r"[^A-Za-z0-9._-]+", "_", str(attachment_id or uuid.uuid4().hex))[:80].strip("._-")
-    blob_name = f"{CIVIL_RETURN_FILES_PREFIX}/{case_key}/{message_key}_{attachment_key}_{safe_filename}"
+    disposition_key = "served" if normalize_service_disposition(service_disposition) == "Served" else "non-est"
+    blob_name = (
+        f"{CIVIL_RETURN_FILES_PREFIX}/{disposition_key}/{case_key}/"
+        f"{message_key}_{attachment_key}_{safe_filename}"
+    )
     container = get_civil_files_container()
     blob_client = container.get_blob_client(blob_name)
     if blob_client.exists():
@@ -1694,7 +1789,16 @@ def get_graph_processed_folder_id(headers, mailbox, processed_folder):
     raise RuntimeError(f"Processed folder '{processed_folder}' not found in mailbox {mailbox}. Available sample: {names[:30]}")
 
 
-def ingest_civil_return_email_payloads_for_run():
+def ingest_civil_return_email_payloads_for_run(source_folder="inbox", move_to_processed=True):
+    if not CIVIL_RETURN_INGEST_LOCK.acquire(blocking=False):
+        return {"status": "skipped", "reason": "Return email ingest is already running", "ingested": 0}
+    try:
+        return _ingest_civil_return_email_payloads_for_run(source_folder, move_to_processed)
+    finally:
+        CIVIL_RETURN_INGEST_LOCK.release()
+
+
+def _ingest_civil_return_email_payloads_for_run(source_folder="inbox", move_to_processed=True):
     tenant_id = (os.getenv("MS_GRAPH_TENANT_ID") or "").strip()
     client_id = (os.getenv("MS_GRAPH_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("MS_GRAPH_CLIENT_SECRET") or "").strip()
@@ -1728,11 +1832,14 @@ def ingest_civil_return_email_payloads_for_run():
             raise RuntimeError("Failed to obtain Graph API access token.")
 
         headers = {"Authorization": f"Bearer {access_token}"}
+        processed_folder_id = get_graph_processed_folder_id(headers, mailbox, processed_folder)
+        source_folder_name = str(source_folder or "inbox").strip().lower()
+        source_folder_path = "inbox" if source_folder_name == "inbox" else processed_folder_id
         messages = []
         messages_url = (
-            f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
+            f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{source_folder_path}/messages"
             "?$top=200"
-            "&$select=id,subject,receivedDateTime,from,conversationId,hasAttachments"
+            "&$select=id,subject,receivedDateTime,from,conversationId,hasAttachments,body"
         )
         while messages_url:
             msg_resp = requests.get(messages_url, headers=headers, timeout=30)
@@ -1747,10 +1854,12 @@ def ingest_civil_return_email_payloads_for_run():
         candidates.sort(key=lambda m: m.get("receivedDateTime") or "")
         print(f"[CIVIL RETURN EMAIL] Return candidates found: {len(candidates)}")
 
-        folder_id = get_graph_processed_folder_id(headers, mailbox, processed_folder)
         conn = get_conn()
         ensure_civil_return_pdfs_table(conn)
+        ensure_returns_tables(conn)
         inserted = 0
+        returns_inserted = 0
+        returns_updated = 0
         duplicates = 0
         unmatched = 0
         failed = 0
@@ -1785,7 +1894,7 @@ def ingest_civil_return_email_payloads_for_run():
                     for attachment in pdf_attachments:
                         attachment_id = attachment.get("id") or ""
                         cur.execute(
-                            "SELECT id, record_id FROM search.civil_return_pdfs WHERE message_id = ? AND attachment_id = ?",
+                            "SELECT id, record_id, blob_name FROM search.civil_return_pdfs WHERE message_id = ? AND attachment_id = ?",
                             message_id,
                             attachment_id,
                         )
@@ -1793,8 +1902,6 @@ def ingest_civil_return_email_payloads_for_run():
                         if existing_message_attachment:
                             duplicates += 1
                             mark_civil_record_return_pdf_comment(conn, existing_message_attachment[1])
-                            message_processed = True
-                            continue
 
                         content_b64 = attachment.get("contentBytes")
                         if not content_b64:
@@ -1826,20 +1933,40 @@ def ingest_civil_return_email_payloads_for_run():
                             duplicates += 1
                             mark_civil_record_return_pdf_comment(conn, match_record_id)
                             message_processed = True
+                            return_payload = build_return_email_payload(
+                                message,
+                                attachment,
+                                parsed,
+                                existing_record_pdf["blob_name"],
+                                mailbox,
+                            )
+                            _, return_was_inserted = upsert_return(conn, return_payload)
+                            returns_inserted += int(return_was_inserted)
+                            returns_updated += int(not return_was_inserted)
                             print(
                                 f"[CIVIL RETURN EMAIL] Return PDF already linked to record_id={match_record_id}; "
                                 f"existing_return_pdf_id={existing_record_pdf['id']}. Moving email without creating duplicate."
                             )
                             continue
 
-                        blob_name = upload_civil_return_pdf_to_blob(
-                            parsed.get("case_number") or subject_case_number,
-                            message_id,
-                            attachment_id,
-                            attachment_name,
-                            pdf_bytes,
-                            attachment.get("contentType") or "application/pdf",
-                        )
+                        blob_name = existing_message_attachment[2] if existing_message_attachment else None
+                        if not blob_name:
+                            blob_name = upload_civil_return_pdf_to_blob(
+                                parsed.get("case_number") or subject_case_number,
+                                message_id,
+                                attachment_id,
+                                attachment_name,
+                                pdf_bytes,
+                                attachment.get("contentType") or "application/pdf",
+                                parsed.get("service_disposition"),
+                            )
+                        if existing_message_attachment:
+                            return_payload = build_return_email_payload(message, attachment, parsed, blob_name, mailbox)
+                            _, return_was_inserted = upsert_return(conn, return_payload)
+                            returns_inserted += int(return_was_inserted)
+                            returns_updated += int(not return_was_inserted)
+                            message_processed = True
+                            continue
                         _, was_inserted = insert_civil_return_pdf_record(conn, {
                             "record_id": match_record_id,
                             "case_number": parsed.get("case_number") or subject_case_number,
@@ -1861,18 +1988,26 @@ def ingest_civil_return_email_payloads_for_run():
                             "pdf_deputy": parsed.get("deputy"),
                             "parse_status": parse_status,
                             "parse_error": None if match_record_id else "No Civil Papers record matched case_number and intake_date within 5 days.",
-                            "source_json": {"message": message, "attachment": {k: v for k, v in attachment.items() if k != "contentBytes"}},
+                            "source_json": {
+                                "message": {k: v for k, v in message.items() if k != "body"},
+                                "attachment": {k: v for k, v in attachment.items() if k != "contentBytes"},
+                            },
                         })
                         if was_inserted:
                             inserted += 1
                             mark_civil_record_return_pdf_comment(conn, match_record_id)
                             message_processed = True
+                        return_payload = build_return_email_payload(message, attachment, parsed, blob_name, mailbox)
+                        _, return_was_inserted = upsert_return(conn, return_payload)
+                        returns_inserted += int(return_was_inserted)
+                        returns_updated += int(not return_was_inserted)
+                        message_processed = True
 
-                    if message_processed:
+                    if message_processed and move_to_processed and source_folder_name == "inbox":
                         move_resp = requests.post(
                             f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
                             headers={**headers, "Content-Type": "application/json"},
-                            json={"destinationId": folder_id},
+                            json={"destinationId": processed_folder_id},
                             timeout=30,
                         )
                         move_resp.raise_for_status()
@@ -1891,6 +2026,8 @@ def ingest_civil_return_email_payloads_for_run():
             "source": "graph",
             "candidates": len(candidates),
             "ingested": inserted,
+            "returns_inserted": returns_inserted,
+            "returns_updated": returns_updated,
             "duplicates": duplicates,
             "unmatched": unmatched,
             "moved_to_processed": moved,
@@ -2458,6 +2595,7 @@ ALLOWED_DV_PDF_EXTENSIONS = {".pdf"}
 CIVIL_PAPERS_CONTAINER_NAME = "civilpapers"
 CIVIL_RETURN_EMAIL_SUBJECT_MARKER = os.environ.get("CIVIL_RETURN_EMAIL_SUBJECT_MARKER", "Baltimore City Sheriff's Office Return").strip() or "Baltimore City Sheriff's Office Return"
 CIVIL_RETURN_FILES_PREFIX = os.environ.get("CIVIL_RETURN_FILES_PREFIX", "return_pdfs").strip().strip("/") or "return_pdfs"
+CIVIL_RETURN_INGEST_LOCK = threading.Lock()
 WOR_FILES_CONTAINER_NAME = "warrantscsv"
 WOR_FILES_PREFIX = "wor_files"
 
@@ -3931,6 +4069,99 @@ def parse_search_filters(source):
     }
 
 
+def json_safe_return(record):
+    output = {}
+    for key, value in (record or {}).items():
+        output[key] = value.isoformat() if isinstance(value, (datetime, date)) else value
+    return output
+
+
+@app.route("/returns/<int:return_id>", methods=["GET"])
+def get_return_details(return_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    conn = get_conn()
+    try:
+        ensure_returns_tables(conn)
+        record = get_return(conn, return_id)
+        if not record:
+            return jsonify({"error": "Return not found"}), 404
+        activity = fetch_return_activity(conn, return_id)
+    finally:
+        conn.close()
+    return jsonify({"record": json_safe_return(record), "activity": activity})
+
+
+@app.route("/returns/<int:return_id>/status", methods=["PATCH"])
+def patch_return_status(return_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    if not can_edit_records():
+        return jsonify({"error": "You do not have permission to update return status"}), 403
+    payload = request.get_json(silent=True) or {}
+    conn = get_conn()
+    try:
+        ensure_returns_tables(conn)
+        cur = conn.cursor()
+        actor_email = get_current_user_email(cur)
+        try:
+            updated = update_return_status(
+                conn,
+                return_id,
+                payload.get("status"),
+                actor_email,
+                payload.get("reason_for_hold"),
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        if not updated:
+            return jsonify({"error": "Return not found"}), 404
+        record = get_return(conn, return_id)
+        activity = fetch_return_activity(conn, return_id)
+    finally:
+        conn.close()
+    return jsonify({"status": "success", "record": json_safe_return(record), "activity": activity})
+
+
+@app.route("/returns/<int:return_id>/download", methods=["GET"])
+def download_return_pdf(return_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    conn = get_conn()
+    try:
+        ensure_returns_tables(conn)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT blob_name, original_filename FROM search.Returns WHERE mdec_return_id = ? AND is_active = 1",
+            return_id,
+        )
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return jsonify({"error": "Return PDF not found"}), 404
+        blob_name = row[0]
+        filename = row[1] or "return.pdf"
+        actor_email = get_current_user_email(cur)
+        log_return_activity(cur, return_id, "pdf_downloaded", "Return PDF downloaded.", actor_email)
+        conn.commit()
+    finally:
+        conn.close()
+    container = get_civil_files_container()
+    return send_civil_blob_collection(container, [blob_name], filename, "Return PDF not found")
+
+
+@app.route("/ingest-returns-email", methods=["GET", "POST"])
+def ingest_returns_email_route():
+    expected_key = (os.getenv("RETURNS_INGEST_KEY") or "").strip()
+    supplied_key = (request.headers.get("X-Ingest-Key") or "").strip()
+    if not expected_key:
+        return jsonify({"error": "RETURNS_INGEST_KEY is not configured"}), 503
+    if supplied_key != expected_key:
+        return jsonify({"error": "Unauthorized"}), 401
+    result = ingest_civil_return_email_payloads_for_run(source_folder="inbox", move_to_processed=True)
+    status_code = 200 if result.get("status") in {"ok", "skipped"} else 500
+    return jsonify(result), status_code
+
+
 def ensure_exports_table(conn):
     cur = conn.cursor()
     cur.execute("""
@@ -4223,6 +4454,7 @@ def search_all():
             limit=None
         )
         daily_logs = [] if filters["admin_status"] else search_daily_logs(conn, filters)
+        return_records = search_returns(conn, filters)
     finally:
         conn.close()
 
@@ -4241,6 +4473,7 @@ def search_all():
         "Doc Jail Population",
         "Field Services Department",
         "Warrant Of Restitution - Mdec",
+        "Returns",
     ]
 
     response = {}
@@ -4261,6 +4494,10 @@ def search_all():
     response["Daily Logs"] = {
         "count": len(daily_logs),
         "records": daily_logs,
+    }
+    response["Returns"] = {
+        "count": len(return_records),
+        "records": return_records,
     }
 
     return jsonify(response)

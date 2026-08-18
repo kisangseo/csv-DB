@@ -458,6 +458,7 @@
         "Warrant Of Restitution",
         "Warrant of Restitution - Status",
         "DV PDF",
+        "Returns",
         "Daily Logs"
       ];
 
@@ -763,6 +764,15 @@
 
       function getCellDisplayValue(headerLabel, row, dataHeaders, dept) {
         if (headerLabel === "PDF Download") return row.pdf_download || "";
+        if (dept.toLowerCase() === "returns") {
+          if (headerLabel === "Case Number") return row.case_number || "";
+          if (headerLabel === "Respondent") return row.respondent_name || "";
+          if (headerLabel === "Petitioner") return row.petitioner_name || "";
+          if (headerLabel === "Service Disposition") return row.service_disposition || "";
+          if (headerLabel === "Status") return row.bcso_status || row.signature_status || "";
+          if (headerLabel === "Date Attempted") return row.attempt_date || "";
+          if (headerLabel === "Deputy Reporting") return row.member_reporting || row.return_deputy || "";
+        }
         if (dept.toLowerCase() === "civil papers" && headerLabel === "Served By") {
           return row.served_by_display || getCivilServedByValue(row) || "";
         }
@@ -1157,6 +1167,229 @@
 
       function formatHistoryDateTime(value) {
         return value || "";
+      }
+
+      function returnBadgeClass(value, kind = "status") {
+        const normalized = String(value || "").trim().toLowerCase();
+        if (kind === "disposition") {
+          return normalized === "served" ? "return-badge-served" : "return-badge-non-est";
+        }
+        if (normalized === "uploaded") return "return-badge-uploaded";
+        if (normalized === "hold") return "return-badge-hold";
+        if (normalized === "pending" || normalized === "needs signature") return "return-badge-pending";
+        return "return-badge-signed";
+      }
+
+      function createReturnBadge(value, kind = "status") {
+        const badge = document.createElement("span");
+        badge.className = `return-badge ${returnBadgeClass(value, kind)}`;
+        badge.textContent = value || "—";
+        return badge;
+      }
+
+      function renderReturnActivity(container, activity) {
+        container.innerHTML = "";
+        const title = document.createElement("div");
+        title.className = "return-detail-title";
+        title.textContent = "Activity Log";
+        container.appendChild(title);
+
+        if (!activity.length) {
+          const empty = document.createElement("p");
+          empty.textContent = "No activity recorded.";
+          container.appendChild(empty);
+          return;
+        }
+
+        const table = document.createElement("table");
+        table.className = "return-activity-table";
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["Date and Time", "User", "Activity"].forEach((label) => {
+          const th = document.createElement("th");
+          th.textContent = label;
+          headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        activity.forEach((item) => {
+          const tr = document.createElement("tr");
+          [item.created_at || "", item.actor_email || "System", item.activity_summary || ""].forEach((value) => {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+      }
+
+      function renderReturnDetailCell(detailTd, payload, summaryRow, parentRow) {
+        const record = payload.record || summaryRow;
+        const activity = Array.isArray(payload.activity) ? payload.activity : [];
+        detailTd.innerHTML = "";
+
+        const panel = document.createElement("div");
+        panel.className = "return-detail-panel";
+        const heading = document.createElement("div");
+        heading.className = "return-detail-heading";
+        const headingTitle = document.createElement("div");
+        headingTitle.className = "return-detail-title";
+        headingTitle.textContent = record.case_number || "Return Details";
+        heading.appendChild(headingTitle);
+        heading.appendChild(createReturnBadge(record.service_disposition, "disposition"));
+        const statusBadge = createReturnBadge(record.bcso_status || record.signature_status, "status");
+        statusBadge.classList.add("return-detail-status-badge");
+        heading.appendChild(statusBadge);
+        if (record.blob_name || summaryRow.has_pdf) {
+          const download = document.createElement("a");
+          download.className = "table-action-btn return-download-link";
+          download.href = `/returns/${summaryRow.mdec_return_id}/download`;
+          download.textContent = "Download PDF";
+          heading.appendChild(download);
+        }
+        panel.appendChild(heading);
+
+        const detailFields = [
+          ["Entry Number", "cognito_entry_number"],
+          ["Case Number", "case_number"],
+          ["Date Submitted", "submitted_at"],
+          ["Type", "document_type"],
+          ["Date Issued", "date_issued"],
+          ["Type of RFS", "type_of_rfs"],
+          ["Type of Child Support", "type_of_child_support"],
+          ["Child Support Show Cause Type", "child_support_show_cause_type"],
+          ["Petitioner", "petitioner_name"],
+          ["Respondent", "respondent_name"],
+          ["Address", "service_address"],
+          ["Unit", "service_unit"],
+          ["Date Attempted", "attempt_date"],
+          ["Service Disposition", "service_disposition"],
+          ["Method of Service", "method_of_service"],
+          ["Prior Attempt Date", "prior_attempt_date"],
+          ["Location of Prior Attempt", "prior_attempt_location"],
+          ["Name of Adult", "adult_served_name"],
+          ["Relationship to Respondent", "relationship_to_respondent"],
+          ["Reason for Non Est", "reason_for_non_est"],
+          ["Notes from Attempt", "attempt_notes"],
+          ["Parent Document", "parent_document_id"],
+          ["Unit ID", "unit_id"],
+          ["Return Deputy", "return_deputy"],
+          ["Return Rank", "return_rank"],
+          ["Return Email", "return_email"],
+          ["Method to Confirm ID and Age", "method_to_confirm_id_age"],
+          ["Signature", "signature_value"],
+          ["Signature Status", "signature_status"],
+          ["Date Signed", "date_signed"],
+          ["Member Reporting", "member_reporting"],
+          ["Return Sequence", "return_sequence"],
+          ["Date Received", "date_received"],
+          ["Intake Date", "intake_date"],
+          ["Court Issue Date", "court_issue_date"],
+          ["Court", "court"],
+          ["Status", "bcso_status"],
+          ["Reason for Hold", "reason_for_hold"],
+          ["MDEC Status", "mdec_status"],
+        ];
+        const grid = document.createElement("div");
+        grid.className = "return-detail-grid";
+        detailFields.forEach(([label, key]) => {
+          const item = document.createElement("div");
+          item.className = "return-detail-item";
+          const itemLabel = document.createElement("div");
+          itemLabel.className = "return-detail-label";
+          itemLabel.textContent = label;
+          const value = document.createElement("div");
+          value.textContent = toCellText(record[key]) || "—";
+          item.appendChild(itemLabel);
+          item.appendChild(value);
+          grid.appendChild(item);
+        });
+        panel.appendChild(grid);
+
+        if (CAN_EDIT) {
+          const editor = document.createElement("div");
+          editor.className = "return-status-editor";
+          const select = document.createElement("select");
+          ["Signed", "Uploaded", "Hold", "Pending"].forEach((status) => {
+            const option = document.createElement("option");
+            option.value = status;
+            option.textContent = status;
+            option.selected = status === record.bcso_status;
+            select.appendChild(option);
+          });
+          const reason = document.createElement("input");
+          reason.type = "text";
+          reason.placeholder = "Reason for hold";
+          reason.value = record.reason_for_hold || "";
+          reason.style.display = select.value === "Hold" ? "" : "none";
+          select.addEventListener("change", () => {
+            reason.style.display = select.value === "Hold" ? "" : "none";
+          });
+          const save = document.createElement("button");
+          save.type = "button";
+          save.className = "table-action-btn";
+          save.textContent = "Update Status";
+          save.addEventListener("click", async () => {
+            save.disabled = true;
+            try {
+              const response = await fetch(`/returns/${summaryRow.mdec_return_id}/status`, {
+                method: "PATCH",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({status: select.value, reason_for_hold: reason.value})
+              });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.error || "Unable to update status.");
+              summaryRow.bcso_status = result.record.bcso_status;
+              const tableBadge = parentRow.querySelector(".return-table-status-badge");
+              if (tableBadge) tableBadge.replaceWith(createReturnBadge(summaryRow.bcso_status, "status"));
+              const replacementBadge = parentRow.querySelector("td:nth-child(5) .return-badge");
+              if (replacementBadge) replacementBadge.classList.add("return-table-status-badge");
+              renderReturnDetailCell(detailTd, result, summaryRow, parentRow);
+            } catch (error) {
+              alert(error.message || "Unable to update status.");
+            } finally {
+              save.disabled = false;
+            }
+          });
+          editor.appendChild(select);
+          editor.appendChild(reason);
+          editor.appendChild(save);
+          panel.appendChild(editor);
+        }
+
+        const activityWrap = document.createElement("div");
+        activityWrap.className = "return-activity-wrap";
+        renderReturnActivity(activityWrap, activity);
+        panel.appendChild(activityWrap);
+        detailTd.appendChild(panel);
+      }
+
+      async function toggleReturnDetailRow(parentRow, row, colspan) {
+        const existing = parentRow.nextElementSibling;
+        if (existing?.classList.contains("return-detail-row")) {
+          existing.remove();
+          parentRow.classList.remove("expanded");
+          return;
+        }
+        const detailRow = document.createElement("tr");
+        detailRow.className = "return-detail-row";
+        const detailTd = document.createElement("td");
+        detailTd.colSpan = colspan;
+        detailTd.textContent = "Loading return details...";
+        detailRow.appendChild(detailTd);
+        parentRow.insertAdjacentElement("afterend", detailRow);
+        parentRow.classList.add("expanded");
+        try {
+          const response = await fetch(`/returns/${row.mdec_return_id}`);
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || "Unable to load return details.");
+          renderReturnDetailCell(detailTd, payload, row, parentRow);
+        } catch (error) {
+          detailTd.textContent = error.message || "Unable to load return details.";
+        }
       }
 
       function createCivilReturnHistoryRow(row, colspan) {
@@ -1856,6 +2089,7 @@
               "field services department": "Landlord Tenant",
               "active warrants": "Warrants to Audit",
               "civil papers": "Civil Papers",
+              "returns": "Returns",
             };
             const baseTitle = DISPLAY_NAMES[dept.toLowerCase()] || dept;
             const civilDisplayRows = dept.toLowerCase() === "civil papers" ? buildCivilDisplayRows(rows) : [];
@@ -1933,6 +2167,8 @@
               headers = ["Intake Date","Case Number","Court Document Type","Court Issued Date","Tenant, Defendant, or Respondent Name","Tenant, Defendant or Respondent Address","Petitioner or Plaintiff Name","Administrative Status","Served By","Comments"];
             } else if (dept.toLowerCase() === "daily logs") {
               headers = ["Event Number","Arrival Time","Event Status","Activity Type","Address","Notes","Additional Report","Deputy Name","Radio ID"];
+            } else if (dept.toLowerCase() === "returns") {
+              headers = ["Case Number","Respondent","Petitioner","Service Disposition","Status","Date Attempted","Deputy Reporting"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             const showActions = dept.toLowerCase() !== "daily logs";
@@ -1971,6 +2207,12 @@
                   link.rel = "noopener noreferrer";
                   link.textContent = "Download PDF";
                   td.appendChild(link);
+                } else if (dept.toLowerCase() === "returns" && headerLabel === "Service Disposition") {
+                  td.appendChild(createReturnBadge(val, "disposition"));
+                } else if (dept.toLowerCase() === "returns" && headerLabel === "Status") {
+                  const badge = createReturnBadge(val, "status");
+                  badge.classList.add("return-table-status-badge");
+                  td.appendChild(badge);
                 } else {
                   td.textContent = toCellText(val);
                 }
@@ -1983,9 +2225,22 @@
               const isActionableDept = ACTIONABLE_DEPARTMENTS.has(deptKey);
               const isLandlordTenantDept = LANDLORD_TENANT_DEPARTMENTS.has(deptKey);
               const isDvPdf = deptKey === "dv pdf";
+              const isReturns = deptKey === "returns";
 
               if (!showActions) {
                 // Daily Logs is a read-only view of dbo.esri_events.
+              } else if (isReturns) {
+                const downloadBtn = document.createElement("a");
+                downloadBtn.textContent = row.has_pdf ? "Download PDF" : "PDF unavailable";
+                downloadBtn.className = "table-action-btn return-download-link";
+                if (row.has_pdf) {
+                  downloadBtn.href = `/returns/${row.mdec_return_id}/download`;
+                } else {
+                  downloadBtn.setAttribute("aria-disabled", "true");
+                  downloadBtn.classList.add("disabled");
+                }
+                downloadBtn.addEventListener("click", (event) => event.stopPropagation());
+                actionsTd.appendChild(downloadBtn);
               } else if (isDvPdf) {
                 const editBtn = document.createElement("button");
                 editBtn.type = "button";
@@ -2208,6 +2463,15 @@
               }
 
               tbody.appendChild(tr);
+
+              if (deptKey === "returns") {
+                tr.classList.add("return-parent-row");
+                tr.title = "Click to view entry details and activity log";
+                tr.addEventListener("click", (event) => {
+                  if (event.target.closest("a, button, input, select, textarea")) return;
+                  toggleReturnDetailRow(tr, row, headers.length);
+                });
+              }
 
               if (dept.toLowerCase() === "civil papers") {
                 const civilEntry = civilDisplayRows.find((entry) => entry.parent.record_id === row.record_id);

@@ -38,6 +38,14 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn(',"Deputy Name": "name"', self.template)
         self.assertIn(',"Radio ID": "radio_id"', self.template)
 
+    def test_returns_uses_existing_search_and_has_details_activity_and_status(self):
+        self.assertIn('"Returns",', self.template)
+        self.assertIn('headers = ["Case Number","Respondent","Petitioner","Service Disposition","Status","Date Attempted","Deputy Reporting"]', self.template)
+        self.assertIn('title.textContent = "Activity Log";', self.template)
+        self.assertIn('["Signed", "Uploaded", "Hold", "Pending"]', self.template)
+        self.assertIn('toggleReturnDetailRow(tr, row, headers.length);', self.template)
+        self.assertNotIn('placeholder="Search returns"', self.template)
+
 
 if __name__ == "__main__":
     unittest.main()

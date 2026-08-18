@@ -1,0 +1,25 @@
+name: run-returns-ingest
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: run-returns-ingest-main
+  cancel-in-progress: false
+
+jobs:
+  run-returns-ingest:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      ENDPOINT_URL: https://bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/ingest-returns-email
+      INGEST_KEY: ${{ secrets.RETURNS_INGEST_KEY }}
+
+    steps:
+      - name: Scan return emails
+        run: |
+          curl --fail --show-error --silent --location \
+            --header "X-Ingest-Key: $INGEST_KEY" \
+            "$ENDPOINT_URL"

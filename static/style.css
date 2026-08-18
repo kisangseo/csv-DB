@@ -770,3 +770,137 @@ textarea.modal-control {
   color: #1d4ed8;
   font-weight: 600;
 }
+
+.return-parent-row {
+  cursor: pointer;
+}
+
+.return-detail-row > td {
+  background: #f8fafc;
+  padding: 0;
+}
+
+.return-detail-panel {
+  padding: 18px;
+  border-left: 4px solid #2563eb;
+}
+
+.return-detail-heading,
+.return-status-editor {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.return-detail-heading {
+  margin-bottom: 16px;
+}
+
+.return-detail-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.return-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 20px;
+}
+
+.return-detail-item {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.return-detail-label {
+  color: #52606d;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 3px;
+  text-transform: uppercase;
+}
+
+.return-status-editor {
+  margin-top: 18px;
+}
+
+.return-status-editor select,
+.return-status-editor input {
+  min-width: 190px;
+  padding: 7px 9px;
+}
+
+.return-activity-wrap {
+  margin-top: 22px;
+}
+
+.return-activity-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+}
+
+.return-activity-table th,
+.return-activity-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #dbe3ea;
+  text-align: left;
+  vertical-align: top;
+}
+
+.return-badge {
+  display: inline-block;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.return-badge-served {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.return-badge-non-est {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.return-badge-signed {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.return-badge-uploaded {
+  background: #ccfbf1;
+  color: #115e59;
+}
+
+.return-badge-hold {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
+.return-badge-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.return-download-link.disabled {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+@media (max-width: 800px) {
+  .return-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .return-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
