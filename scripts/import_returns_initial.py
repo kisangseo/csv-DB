@@ -23,6 +23,16 @@ from returns import payload_from_export_row, upsert_return
 
 CONTAINER_NAME = os.getenv("CIVIL_PAPERS_CONTAINER_NAME", "civilpapers").strip() or "civilpapers"
 PREFIX = os.getenv("CIVIL_RETURN_FILES_PREFIX", "return_pdfs").strip().strip("/") or "return_pdfs"
+STANDARD_SOURCE_FILES = {
+    "Served": (
+        "BaltimoreCitySheriffsOfficeReturn2 served.xlsx",
+        "BaltimoreCitySheriffsOfficeReturn Served.zip",
+    ),
+    "Non Est": (
+        "BaltimoreCitySheriffsOfficeReturn2 non est.xlsx",
+        "BaltimoreCitySheriffsOfficeReturn2 non est.zip",
+    ),
+}
 
 
 def normalized_case(value):
@@ -72,6 +82,13 @@ def pair_matches(xlsx_path, zip_path):
 
 def discover_sources(source_dir):
     source_dir = Path(source_dir)
+    standard_sources = [
+        (source_dir / xlsx_name, source_dir / zip_name, disposition)
+        for disposition, (xlsx_name, zip_name) in STANDARD_SOURCE_FILES.items()
+    ]
+    if all(xlsx_path.is_file() and zip_path.is_file() for xlsx_path, zip_path, _ in standard_sources):
+        return standard_sources
+
     xlsx_files = sorted(source_dir.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
     zip_files = sorted(source_dir.glob("*.zip"), key=lambda path: path.stat().st_mtime, reverse=True)
     sources = []
