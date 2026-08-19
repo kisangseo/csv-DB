@@ -7,6 +7,7 @@ stored in this repository.
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict, deque
 import io
 import os
 import re
@@ -72,12 +73,13 @@ def pair_matches(xlsx_path, zip_path):
     frame = pd.read_excel(xlsx_path, dtype=object)
     with ZipFile(zip_path) as archive:
         pdf_infos = [item for item in archive.infolist() if not item.is_dir()]
-    if len(frame) != len(pdf_infos) or "Document" not in frame.columns:
+    if "Document" not in frame.columns:
         return False
-    return all(
-        normalized_case(document) == normalized_case(case_from_pdf_filename(pdf_info.filename))
-        for document, pdf_info in zip(frame["Document"], pdf_infos)
-    )
+    row_cases = {normalized_case(document) for document in frame["Document"]}
+    pdf_cases = {normalized_case(case_from_pdf_filename(item.filename)) for item in pdf_infos}
+    row_cases.discard("")
+    pdf_cases.discard("")
+    return bool(row_cases & pdf_cases)
 
 
 def discover_sources(source_dir):
@@ -112,20 +114,21 @@ def load_pairs(xlsx_path, zip_path, expected_disposition):
     frame = pd.read_excel(xlsx_path, dtype=object)
     with ZipFile(zip_path) as archive:
         pdf_infos = [item for item in archive.infolist() if not item.is_dir()]
-        if len(frame) != len(pdf_infos):
-            raise RuntimeError(
-                f"{Path(xlsx_path).name} has {len(frame)} rows but {Path(zip_path).name} has {len(pdf_infos)} PDFs."
-            )
-        pairs = []
-        for index, (row, pdf_info) in enumerate(zip(frame.to_dict(orient="records"), pdf_infos), start=2):
+        pdfs_by_case = defaultdict(deque)
+        for pdf_info in pdf_infos:
             if Path(pdf_info.filename).is_absolute() or ".." in Path(pdf_info.filename).parts:
                 raise RuntimeError(f"Unsafe ZIP member: {pdf_info.filename}")
+            pdfs_by_case[normalized_case(case_from_pdf_filename(pdf_info.filename))].append(pdf_info)
+
+        pairs = []
+        skipped_rows = 0
+        for index, row in enumerate(frame.to_dict(orient="records"), start=2):
             document = row.get("Document")
-            pdf_case = case_from_pdf_filename(pdf_info.filename)
-            if normalized_case(document) != normalized_case(pdf_case):
-                raise RuntimeError(
-                    f"Row {index} case {document!r} does not match PDF {pdf_info.filename!r}."
-                )
+            case_key = normalized_case(document)
+            if not case_key or not pdfs_by_case[case_key]:
+                skipped_rows += 1
+                continue
+            pdf_info = pdfs_by_case[case_key].popleft()
             disposition_value = row.get("Service Disp")
             disposition = str(disposition_value or "").strip()
             if not disposition:
@@ -137,6 +140,15 @@ def load_pairs(xlsx_path, zip_path, expected_disposition):
                     f"Row {index} has disposition {disposition_value!r}; expected {expected_disposition!r}."
                 )
             pairs.append((row, pdf_info.filename, archive.read(pdf_info)))
+        skipped_pdfs = sum(len(items) for items in pdfs_by_case.values())
+        print(
+            {
+                "source": Path(xlsx_path).name,
+                "matched": len(pairs),
+                "rows_without_pdf": skipped_rows,
+                "pdfs_without_row": skipped_pdfs,
+            }
+        )
     return pairs
 
 
@@ -183,6 +195,11 @@ def main():
     parser.add_argument("--non-est-xlsx")
     parser.add_argument("--non-est-zip")
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument(
+        "--replace-all",
+        action="store_true",
+        help="Delete all current Returns and their activity before importing this source set.",
+    )
     args = parser.parse_args()
 
     if args.source_dir:
@@ -215,7 +232,16 @@ def main():
     conn = get_conn()
     inserted = 0
     updated = 0
+    deleted = 0
     try:
+        if args.replace_all:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM search.Returns")
+            deleted = int(cur.fetchone()[0])
+            cur.execute("DELETE FROM search.mdec_return_activity_log")
+            cur.execute("DELETE FROM search.Returns")
+            conn.commit()
+            print({"status": "cleared", "returns_deleted": deleted})
         for row, pdf_filename, pdf_bytes in all_pairs:
             _, was_inserted = upload_and_import(container, conn, row, pdf_filename, pdf_bytes)
             if was_inserted:
@@ -231,6 +257,7 @@ def main():
             "records": len(all_pairs),
             "inserted": inserted,
             "updated": updated,
+            "deleted": deleted,
             "pdfs_uploaded": len(all_pairs),
             "container": CONTAINER_NAME,
             "prefix": PREFIX,
