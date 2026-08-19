@@ -4426,10 +4426,11 @@ def export_download():
 def search_all():
     global _apt_backfill_attempted
     filters = parse_search_filters(request.args)
+    returns_queue = str(request.args.get("returns_queue") or "").strip().lower() in {"1", "true", "yes"}
 
     conn = get_conn()
     try:
-        if ENABLE_APT_BACKFILL_ON_SEARCH and not _apt_backfill_attempted:
+        if not returns_queue and ENABLE_APT_BACKFILL_ON_SEARCH and not _apt_backfill_attempted:
             try:
                 backfill_landlord_tenant_apt(conn)
                 conn.commit()
@@ -4437,7 +4438,7 @@ def search_all():
                 print(f"WARN apt backfill skipped due to error: {exc}")
             finally:
                 _apt_backfill_attempted = True
-        records = search_by_name(
+        records = [] if returns_queue else search_by_name(
             conn,
             filters["query"],
             date_start=filters["date_start"],
@@ -4453,8 +4454,8 @@ def search_all():
             admin_status_values=filters["admin_status_values"],
             limit=None
         )
-        daily_logs = [] if filters["admin_status"] else search_daily_logs(conn, filters)
-        return_records = search_returns(conn, filters)
+        daily_logs = [] if returns_queue or filters["admin_status"] else search_daily_logs(conn, filters)
+        return_records = search_returns(conn, filters, exclude_uploaded=returns_queue)
     finally:
         conn.close()
 
