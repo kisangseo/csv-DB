@@ -518,6 +518,7 @@
         INITIAL_DEPARTMENT_HEADERS.forEach((label) => {
           const div = document.createElement("div");
           div.className = "department";
+          div.dataset.department = label.toLowerCase();
 
           const header = document.createElement("div");
           header.className = "department-header";
@@ -1347,6 +1348,19 @@
               if (tableBadge) tableBadge.replaceWith(createReturnBadge(summaryRow.bcso_status, "status"));
               const replacementBadge = parentRow.querySelector("td:nth-child(5) .return-badge");
               if (replacementBadge) replacementBadge.classList.add("return-table-status-badge");
+              if (summaryRow.bcso_status === "Uploaded" && parentRow.dataset.returnsQueue === "true") {
+                const department = parentRow.closest(".department");
+                const detailRow = parentRow.nextElementSibling?.classList.contains("return-detail-row")
+                  ? parentRow.nextElementSibling
+                  : null;
+                detailRow?.remove();
+                parentRow.remove();
+                const remaining = department.querySelectorAll("tbody > tr:not(.return-detail-row)").length;
+                const title = department.querySelector("h2");
+                const collapsed = department.querySelector(".department-content")?.classList.contains("collapsed");
+                title.textContent = `${collapsed ? "▶" : "▼"} Returns — ${remaining} record${remaining !== 1 ? "s" : ""}`;
+                return;
+              }
               renderReturnDetailCell(detailTd, result, summaryRow, parentRow);
             } catch (error) {
               alert(error.message || "Unable to update status.");
@@ -2039,17 +2053,24 @@
         [uploadDvPdfBtn, addRecordBtn, latestLtDownloadLink, dvPdfCsvDownloadLink].forEach(el => {
           if (el) controlDock.appendChild(el);
         });
-        resultsDiv.innerHTML = "";
-        status.textContent = "Searching...";
-        status.classList.add("loading");
+        if (!options.preserveExistingSections) {
+          resultsDiv.innerHTML = "";
+        }
+        if (!options.silent) {
+          status.textContent = "Searching...";
+          status.classList.add("loading");
+        }
 
         const filterPayload = getCurrentSearchFilters();
         lastSearchFilters = {...filterPayload};
         const params = new URLSearchParams(filterPayload);
+        if (options.returnsQueue) {
+          params.set("returns_queue", "1");
+        }
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
           const data = await response.json();
-          status.classList.remove("loading");
+          if (!options.silent) status.classList.remove("loading");
 
           if (Object.keys(data).length === 0) {
             resultsDiv.innerHTML = "<p>No results found.</p>";
@@ -2057,7 +2078,7 @@
             return;
           }
 
-          status.textContent = "Search complete.";
+          if (!options.silent) status.textContent = "Search complete.";
           let renderedDepartments = 0;
 
           const targetDepartment = (options.department || "").toLowerCase().trim();
@@ -2080,6 +2101,7 @@
             const count = info.count;
             const div = document.createElement("div");
             div.className = "department";
+            div.dataset.department = dept.toLowerCase();
 
             const title = document.createElement("h2");
             const DISPLAY_NAMES = {
@@ -2193,6 +2215,9 @@
               : rows;
             rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
+              if (dept.toLowerCase() === "returns" && options.returnsQueue) {
+                tr.dataset.returnsQueue = "true";
+              }
               applyStatusRowColor(tr, row, dept);
               const dataHeaders = showActions ? headers.slice(0, -1) : headers;
               const cells = dataHeaders.map(h => getCellDisplayValue(h, row, dataHeaders, dept));
@@ -2554,7 +2579,18 @@
             wrapper.appendChild(table);
             content.appendChild(wrapper);
             div.appendChild(content);
-            resultsDiv.appendChild(div);
+            if (options.preserveExistingSections) {
+              const existingSection = Array.from(resultsDiv.children).find(
+                (section) => section.dataset.department === dept.toLowerCase()
+              );
+              if (existingSection) {
+                existingSection.replaceWith(div);
+              } else {
+                resultsDiv.appendChild(div);
+              }
+            } else {
+              resultsDiv.appendChild(div);
+            }
             renderedDepartments += 1;
           }
 
@@ -2641,6 +2677,12 @@
       window.addEventListener("DOMContentLoaded", async () => {
         await loadTableDefinitions();
         renderInitialDepartmentHeaders();
+        await search({
+          department: "Returns",
+          returnsQueue: true,
+          preserveExistingSections: true,
+          silent: true,
+        });
       });
     </script>
 
