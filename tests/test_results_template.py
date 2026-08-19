@@ -52,6 +52,9 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('preserveExistingSections: true,', self.template)
         self.assertIn('params.set("returns_queue", "1");', self.template)
         self.assertIn('summaryRow.bcso_status === "Uploaded"', self.template)
+        self.assertIn('document.createTextNode(" Show uploaded")', self.template)
+        self.assertIn('params.set("include_uploaded", "1");', self.template)
+        self.assertIn('uploadedCheckbox.checked = Boolean(options.includeUploaded);', self.template)
 
 
 if __name__ == "__main__":

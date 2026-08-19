@@ -4496,6 +4496,7 @@ def search_all():
     global _apt_backfill_attempted
     filters = parse_search_filters(request.args)
     returns_queue = str(request.args.get("returns_queue") or "").strip().lower() in {"1", "true", "yes"}
+    include_uploaded_returns = str(request.args.get("include_uploaded") or "").strip().lower() in {"1", "true", "yes"}
 
     conn = get_conn()
     try:
@@ -4524,7 +4525,11 @@ def search_all():
             limit=None
         )
         daily_logs = [] if returns_queue or filters["admin_status"] else search_daily_logs(conn, filters)
-        return_records = search_returns(conn, filters, exclude_uploaded=returns_queue)
+        return_records = search_returns(
+            conn,
+            filters,
+            exclude_uploaded=returns_queue and not include_uploaded_returns,
+        )
     finally:
         conn.close()
 

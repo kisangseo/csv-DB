@@ -176,6 +176,20 @@ input[type="date"]:focus {
   flex-wrap: wrap;
 }
 
+.returns-uploaded-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.returns-uploaded-toggle input {
+  margin: 0;
+}
+
 .header-control-dock {
   display: none;
 }

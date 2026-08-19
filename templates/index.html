@@ -1348,7 +1348,11 @@
               if (tableBadge) tableBadge.replaceWith(createReturnBadge(summaryRow.bcso_status, "status"));
               const replacementBadge = parentRow.querySelector("td:nth-child(5) .return-badge");
               if (replacementBadge) replacementBadge.classList.add("return-table-status-badge");
-              if (summaryRow.bcso_status === "Uploaded" && parentRow.dataset.returnsQueue === "true") {
+              if (
+                summaryRow.bcso_status === "Uploaded"
+                && parentRow.dataset.returnsQueue === "true"
+                && parentRow.dataset.includeUploaded !== "true"
+              ) {
                 const department = parentRow.closest(".department");
                 const detailRow = parentRow.nextElementSibling?.classList.contains("return-detail-row")
                   ? parentRow.nextElementSibling
@@ -2067,6 +2071,9 @@
         if (options.returnsQueue) {
           params.set("returns_queue", "1");
         }
+        if (options.returnsQueue && options.includeUploaded) {
+          params.set("include_uploaded", "1");
+        }
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
           const data = await response.json();
@@ -2125,6 +2132,28 @@
             headerActions.className = "department-header-actions";
             addSectionHeaderActions(headerActions, dept);
             header.appendChild(title);
+            if (dept.toLowerCase() === "returns" && options.returnsQueue) {
+              const uploadedToggle = document.createElement("label");
+              uploadedToggle.className = "returns-uploaded-toggle";
+              const uploadedCheckbox = document.createElement("input");
+              uploadedCheckbox.type = "checkbox";
+              uploadedCheckbox.checked = Boolean(options.includeUploaded);
+              uploadedCheckbox.setAttribute("aria-label", "Show uploaded returns");
+              uploadedCheckbox.addEventListener("change", () => {
+                const keepExpanded = !content.classList.contains("collapsed");
+                search({
+                  department: "Returns",
+                  returnsQueue: true,
+                  includeUploaded: uploadedCheckbox.checked,
+                  preserveExistingSections: true,
+                  silent: true,
+                  expandReturns: keepExpanded,
+                });
+              });
+              uploadedToggle.appendChild(uploadedCheckbox);
+              uploadedToggle.appendChild(document.createTextNode(" Show uploaded"));
+              header.appendChild(uploadedToggle);
+            }
             if (headerActions.childElementCount > 0) {
               header.appendChild(headerActions);
             }
@@ -2161,6 +2190,10 @@
 
             const content = document.createElement("div");
             content.className = "department-content collapsed";
+            if (dept.toLowerCase() === "returns" && options.expandReturns) {
+              content.classList.remove("collapsed");
+              title.textContent = `▼ ${baseTitle} — ${recordLabel}`;
+            }
 
             title.style.cursor = "pointer";
             title.addEventListener("click", () => {
@@ -2217,6 +2250,7 @@
               const tr = document.createElement("tr");
               if (dept.toLowerCase() === "returns" && options.returnsQueue) {
                 tr.dataset.returnsQueue = "true";
+                tr.dataset.includeUploaded = options.includeUploaded ? "true" : "false";
               }
               applyStatusRowColor(tr, row, dept);
               const dataHeaders = showActions ? headers.slice(0, -1) : headers;
