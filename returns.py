@@ -588,10 +588,12 @@ def _format_rows(cursor):
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def search_returns(conn, filters):
+def search_returns(conn, filters, exclude_uploaded=False):
     ensure_returns_tables(conn)
     clauses = ["is_active = 1"]
     params = []
+    if exclude_uploaded:
+        clauses.append("COALESCE(bcso_status, '') <> 'Uploaded'")
     query = clean_value(filters.get("query"))
     if query:
         clauses.append(
