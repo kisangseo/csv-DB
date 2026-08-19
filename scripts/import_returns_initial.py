@@ -60,10 +60,15 @@ def load_pairs(xlsx_path, zip_path, expected_disposition):
                 raise RuntimeError(
                     f"Row {index} case {document!r} does not match PDF {pdf_info.filename!r}."
                 )
-            disposition = str(row.get("Service Disp") or "").strip().lower()
-            if disposition != expected_disposition.lower():
+            disposition_value = row.get("Service Disp")
+            disposition = str(disposition_value or "").strip()
+            if not disposition:
+                # Cognito exports occasionally leave this cell blank even though
+                # the row came from a disposition-specific export/view.
+                row["Service Disp"] = expected_disposition
+            elif disposition.lower() != expected_disposition.lower():
                 raise RuntimeError(
-                    f"Row {index} has disposition {row.get('Service Disp')!r}; expected {expected_disposition!r}."
+                    f"Row {index} has disposition {disposition_value!r}; expected {expected_disposition!r}."
                 )
             pairs.append((row, pdf_info.filename, archive.read(pdf_info)))
     return pairs
