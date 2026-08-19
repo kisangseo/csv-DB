@@ -1497,32 +1497,9 @@ def extract_pdf_text_from_bytes(pdf_bytes):
     return "\n".join(pages)
 
 
-def pdf_has_captured_signature(pdf_bytes):
-    """Detect the signature image embedded by Cognito in a generated return PDF."""
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    for page in reader.pages:
-        try:
-            resources = page.get("/Resources") or {}
-            xobjects_ref = resources.get("/XObject")
-            xobjects = xobjects_ref.get_object() if xobjects_ref else {}
-            image_sizes = []
-            for value in xobjects.values():
-                obj = value.get_object()
-                if obj.get("/Subtype") == "/Image":
-                    image_sizes.append((int(obj.get("/Width") or 0), int(obj.get("/Height") or 0)))
-            # Cognito's letterhead seal is one fixed-size image. A captured
-            # handwritten signature is embedded as a separate variable-size image.
-            if any(size != (1641, 392) for size in image_sizes):
-                return True
-        except Exception:
-            continue
-    return False
-
-
 def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
     text = extract_pdf_text_from_bytes(pdf_bytes)
     compact = re.sub(r"\s+", " ", text or " ").strip()
-    signature_captured = pdf_has_captured_signature(pdf_bytes)
 
     case_number = extract_civil_return_case_number(compact, fallback_case_number)
 
@@ -1616,7 +1593,6 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
         "date_issued": date_issued,
         "attempt_date": attempt_date,
         "date_signed": date_signed,
-        "signature_captured": signature_captured,
         "return_sequence": return_sequence,
         "court_issue_date": court_issue_date,
     }
@@ -1659,8 +1635,7 @@ def build_return_email_payload(message, attachment, parsed_pdf, blob_name, mailb
     ):
         if parsed_pdf.get(key):
             entry_payload[key] = parsed_pdf[key]
-    if parsed_pdf.get("signature_captured"):
-        entry_payload["signature_value"] = "Captured"
+    entry_payload["signature_value"] = "Captured"
     entry_payload.update({
         "blob_container": CIVIL_PAPERS_CONTAINER_NAME,
         "blob_name": blob_name,

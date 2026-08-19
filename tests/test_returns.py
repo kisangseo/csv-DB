@@ -40,13 +40,13 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertEqual(payload["signature_status"], "Signed")
         self.assertEqual(payload["bcso_status"], "Signed")
 
-    def test_unsigned_return_needs_signature(self):
-        self.assertEqual(derived_signature_status({"signature_value": None}), "Needs Signature")
+    def test_every_ingested_return_is_signed(self):
+        self.assertEqual(derived_signature_status({"signature_value": None}), "Signed")
 
-    def test_date_signed_without_signature_still_needs_signature(self):
+    def test_date_signed_is_not_required_for_signed_workflow(self):
         self.assertEqual(
             derived_signature_status({"signature_value": None, "date_signed": "2026-08-19"}),
-            "Needs Signature",
+            "Signed",
         )
 
     def test_normalizes_non_est_variants(self):

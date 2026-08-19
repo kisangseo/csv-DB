@@ -9,7 +9,7 @@ from datetime import date, datetime
 from html.parser import HTMLParser
 
 
-RETURN_STATUS_VALUES = ("Needs Signature", "Signed", "Uploaded", "Hold", "Pending")
+RETURN_STATUS_VALUES = ("Signed", "Uploaded", "Hold", "Pending")
 MANUAL_RETURN_STATUSES = {"Uploaded", "Hold", "Pending"}
 _schema_lock = threading.Lock()
 _schema_ready = False
@@ -158,17 +158,16 @@ def signature_is_captured(value):
 
 
 def derived_signature_status(payload):
-    if signature_is_captured(payload.get("signature_value")):
-        return "Signed"
-    return "Needs Signature"
+    # Returns reach this pipeline only after Cognito has generated the signed PDF.
+    return "Signed"
 
 
 def normalize_return_payload(payload):
     normalized = {field: clean_value(payload.get(field)) for field in RETURN_FIELDS}
     normalized["service_disposition"] = normalize_service_disposition(normalized.get("service_disposition"))
     normalized["signature_status"] = derived_signature_status(normalized)
-    if not normalized.get("bcso_status"):
-        normalized["bcso_status"] = normalized["signature_status"]
+    if not normalized.get("bcso_status") or normalized.get("bcso_status") == "Needs Signature":
+        normalized["bcso_status"] = "Signed"
     return normalized
 
 
@@ -277,7 +276,7 @@ def _ensure_returns_tables(conn):
                 return_email NVARCHAR(320) NULL,
                 method_to_confirm_id_age NVARCHAR(1000) NULL,
                 signature_value NVARCHAR(100) NULL,
-                signature_status NVARCHAR(50) NOT NULL DEFAULT ('Needs Signature'),
+                signature_status NVARCHAR(50) NOT NULL DEFAULT ('Signed'),
                 date_signed DATE NULL,
                 member_reporting NVARCHAR(500) NULL,
                 return_sequence NVARCHAR(100) NULL,
@@ -285,7 +284,7 @@ def _ensure_returns_tables(conn):
                 intake_date DATE NULL,
                 court_issue_date DATE NULL,
                 court NVARCHAR(255) NULL,
-                bcso_status NVARCHAR(50) NOT NULL DEFAULT ('Needs Signature'),
+                bcso_status NVARCHAR(50) NOT NULL DEFAULT ('Signed'),
                 reason_for_hold NVARCHAR(1000) NULL,
                 mdec_status NVARCHAR(50) NULL,
                 blob_container NVARCHAR(255) NULL,
@@ -383,10 +382,16 @@ def _ensure_returns_tables(conn):
         "UPDATE search.Returns SET bcso_status = 'Uploaded' WHERE bcso_status = 'Uploaded to MDEC'"
     )
     cur.execute(
+        "UPDATE search.Returns SET signature_status = 'Signed' WHERE signature_status IS NULL OR signature_status = 'Needs Signature'"
+    )
+    cur.execute(
+        "UPDATE search.Returns SET bcso_status = 'Signed' WHERE bcso_status IS NULL OR bcso_status = 'Needs Signature'"
+    )
+    cur.execute(
         """
         ALTER TABLE search.Returns WITH NOCHECK
-        ADD CONSTRAINT CK_mdec_returns_bcso_status_v2
-        CHECK (bcso_status IS NULL OR bcso_status IN ('Needs Signature', 'Signed', 'Uploaded', 'Hold', 'Pending'))
+        ADD CONSTRAINT CK_mdec_returns_bcso_status_v3
+        CHECK (bcso_status IS NULL OR bcso_status IN ('Signed', 'Uploaded', 'Hold', 'Pending'))
         """
     )
 
