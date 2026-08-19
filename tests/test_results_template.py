@@ -46,6 +46,13 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('toggleReturnDetailRow(tr, row, headers.length);', self.template)
         self.assertNotIn('placeholder="Search returns"', self.template)
 
+    def test_returns_queue_loads_collapsed_and_hides_uploaded_only_by_default(self):
+        self.assertIn('department: "Returns",', self.template)
+        self.assertIn('returnsQueue: true,', self.template)
+        self.assertIn('preserveExistingSections: true,', self.template)
+        self.assertIn('params.set("returns_queue", "1");', self.template)
+        self.assertIn('summaryRow.bcso_status === "Uploaded"', self.template)
+
 
 if __name__ == "__main__":
     unittest.main()
