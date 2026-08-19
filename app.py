@@ -1528,7 +1528,11 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
     )
     if service_match:
         service_disposition = re.sub(r"\s+", " ", service_match.group(1)).strip()
-    elif re.search(r"\bI\s+attest\s+that\s+I\s+served\s+this\s+document\b", compact, flags=re.IGNORECASE):
+    elif re.search(
+        r"\bI\s+attest\s+that\s+I\s+(?:personally\s+)?served\b",
+        compact,
+        flags=re.IGNORECASE,
+    ):
         service_disposition = "Served"
     elif re.search(
         r"\b(?:unable\s+to\s+(?:make\s+)?service|non\s*[- ]?\s*est|not\s+served)\b",
