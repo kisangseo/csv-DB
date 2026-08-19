@@ -771,7 +771,7 @@
           if (headerLabel === "Petitioner") return row.petitioner_name || "";
           if (headerLabel === "Service Disposition") return row.service_disposition || "";
           if (headerLabel === "Status") return row.bcso_status || row.signature_status || "";
-          if (headerLabel === "Date Attempted") return row.attempt_date || "";
+          if (headerLabel === "Date Attempted / Served") return row.attempt_date || "";
           if (headerLabel === "Deputy Reporting") return row.member_reporting || row.return_deputy || "";
         }
         if (dept.toLowerCase() === "civil papers" && headerLabel === "Served By") {
@@ -1266,7 +1266,7 @@
           ["Respondent", "respondent_name"],
           ["Address", "service_address"],
           ["Unit", "service_unit"],
-          ["Date Attempted", "attempt_date"],
+          ["Date Attempted / Served", "attempt_date"],
           ["Service Disposition", "service_disposition"],
           ["Method of Service", "method_of_service"],
           ["Prior Attempt Date", "prior_attempt_date"],
@@ -2190,7 +2190,7 @@
             } else if (dept.toLowerCase() === "daily logs") {
               headers = ["Event Number","Arrival Time","Event Status","Activity Type","Address","Notes","Additional Report","Deputy Name","Radio ID"];
             } else if (dept.toLowerCase() === "returns") {
-              headers = ["Case Number","Respondent","Petitioner","Service Disposition","Status","Date Attempted","Deputy Reporting"];
+              headers = ["Case Number","Respondent","Petitioner","Service Disposition","Status","Date Attempted / Served","Deputy Reporting"];
             } else {
               headers = ["Name","Case Number","Address","APT/Unit","Court Document Type","Event Date","Current Disposition"];            }
             const showActions = dept.toLowerCase() !== "daily logs";

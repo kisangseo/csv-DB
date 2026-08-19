@@ -42,6 +42,7 @@ from returns import (
     upsert_return,
 )
 from datetime import timedelta, datetime, date, UTC
+from zoneinfo import ZoneInfo
 from werkzeug.utils import secure_filename
 
 
@@ -1460,6 +1461,17 @@ def parse_graph_datetime(value):
         return None
 
 
+def civil_return_email_cutoff_utc(now=None):
+    """Return midnight yesterday in Baltimore, converted to UTC."""
+    eastern = ZoneInfo("America/New_York")
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    yesterday = current.astimezone(eastern).date() - timedelta(days=1)
+    local_midnight = datetime.combine(yesterday, datetime.min.time(), tzinfo=eastern)
+    return local_midnight.astimezone(UTC)
+
+
 def parse_civil_return_date(value):
     text = str(value or "").strip()
     if not text:
@@ -1485,9 +1497,32 @@ def extract_pdf_text_from_bytes(pdf_bytes):
     return "\n".join(pages)
 
 
+def pdf_has_captured_signature(pdf_bytes):
+    """Detect the signature image embedded by Cognito in a generated return PDF."""
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    for page in reader.pages:
+        try:
+            resources = page.get("/Resources") or {}
+            xobjects_ref = resources.get("/XObject")
+            xobjects = xobjects_ref.get_object() if xobjects_ref else {}
+            image_sizes = []
+            for value in xobjects.values():
+                obj = value.get_object()
+                if obj.get("/Subtype") == "/Image":
+                    image_sizes.append((int(obj.get("/Width") or 0), int(obj.get("/Height") or 0)))
+            # Cognito's letterhead seal is one fixed-size image. A captured
+            # handwritten signature is embedded as a separate variable-size image.
+            if any(size != (1641, 392) for size in image_sizes):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
     text = extract_pdf_text_from_bytes(pdf_bytes)
     compact = re.sub(r"\s+", " ", text or " ").strip()
+    signature_captured = pdf_has_captured_signature(pdf_bytes)
 
     case_number = extract_civil_return_case_number(compact, fallback_case_number)
 
@@ -1555,6 +1590,14 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
         )
         if direct_date_signed:
             date_signed = parse_civil_return_date(direct_date_signed.group(1))
+    if not date_signed:
+        reordered_date_signed = re.search(
+            r"Date\s+Signed\b.{0,250}?(\d{1,2}/\d{1,2}/20\d{2}|20\d{2}-\d{2}-\d{2})",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        if reordered_date_signed:
+            date_signed = parse_civil_return_date(reordered_date_signed.group(1))
     return_sequence = between("Deputy Sequence", ["Intake Date", "Court Issue Date", "Court"])
     court_issue_date = parse_civil_return_date(between("Court Issue Date", ["Court"]))
 
@@ -1573,6 +1616,7 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
         "date_issued": date_issued,
         "attempt_date": attempt_date,
         "date_signed": date_signed,
+        "signature_captured": signature_captured,
         "return_sequence": return_sequence,
         "court_issue_date": court_issue_date,
     }
@@ -1615,7 +1659,7 @@ def build_return_email_payload(message, attachment, parsed_pdf, blob_name, mailb
     ):
         if parsed_pdf.get(key):
             entry_payload[key] = parsed_pdf[key]
-    if parsed_pdf.get("date_signed"):
+    if parsed_pdf.get("signature_captured"):
         entry_payload["signature_value"] = "Captured"
     entry_payload.update({
         "blob_container": CIVIL_PAPERS_CONTAINER_NAME,
@@ -1873,10 +1917,13 @@ def _ingest_civil_return_email_payloads_for_run(source_folder="inbox", move_to_p
         source_folder_name = str(source_folder or "inbox").strip().lower()
         source_folder_path = "inbox" if source_folder_name == "inbox" else processed_folder_id
         messages = []
+        email_cutoff_utc = civil_return_email_cutoff_utc()
+        cutoff_graph = email_cutoff_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         messages_url = (
             f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{source_folder_path}/messages"
             "?$top=200"
             "&$select=id,subject,receivedDateTime,from,conversationId,hasAttachments,body"
+            f"&$filter=receivedDateTime%20ge%20{cutoff_graph}"
         )
         while messages_url:
             msg_resp = requests.get(messages_url, headers=headers, timeout=30)
@@ -1887,9 +1934,15 @@ def _ingest_civil_return_email_payloads_for_run(source_folder="inbox", move_to_p
             messages.extend(data.get("value", []))
             messages_url = data.get("@odata.nextLink")
 
-        candidates = [m for m in messages if subject_marker.lower() in (m.get("subject") or "").lower()]
+        candidates = [
+            m for m in messages
+            if subject_marker.lower() in (m.get("subject") or "").lower()
+            and (parse_graph_datetime(m.get("receivedDateTime")) or datetime.min) >= email_cutoff_utc.replace(tzinfo=None)
+        ]
         candidates.sort(key=lambda m: m.get("receivedDateTime") or "")
-        print(f"[CIVIL RETURN EMAIL] Return candidates found: {len(candidates)}")
+        print(
+            f"[CIVIL RETURN EMAIL] Return candidates found since {cutoff_graph}: {len(candidates)}"
+        )
 
         conn = get_conn()
         ensure_civil_return_pdfs_table(conn)
