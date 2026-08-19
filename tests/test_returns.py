@@ -43,6 +43,12 @@ class ReturnsParsingTests(unittest.TestCase):
     def test_unsigned_return_needs_signature(self):
         self.assertEqual(derived_signature_status({"signature_value": None}), "Needs Signature")
 
+    def test_date_signed_is_sufficient_signature_evidence(self):
+        self.assertEqual(
+            derived_signature_status({"signature_value": None, "date_signed": "2026-08-19"}),
+            "Signed",
+        )
+
     def test_normalizes_non_est_variants(self):
         self.assertEqual(normalize_service_disposition("NON-EST"), "Non Est")
 

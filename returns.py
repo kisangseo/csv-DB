@@ -158,7 +158,7 @@ def signature_is_captured(value):
 
 
 def derived_signature_status(payload):
-    if signature_is_captured(payload.get("signature_value")):
+    if signature_is_captured(payload.get("signature_value")) or clean_value(payload.get("date_signed")):
         return "Signed"
     return "Needs Signature"
 

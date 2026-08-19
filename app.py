@@ -1509,9 +1509,21 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
         respondent_name = re.sub(r"\s+", " ", respondent_match.group(1)).strip()
 
     service_disposition = ""
-    service_match = re.search(r"Service\s+Disp\s+([A-Za-z ]+?)(?:\s+Method\s+of\s+Service\b|\n|$)", compact, flags=re.IGNORECASE)
+    service_match = re.search(
+        r"Service\s+Disp(?:osition)?\s*:?\s*(Served|Non\s*[- ]?\s*Est)\b",
+        compact,
+        flags=re.IGNORECASE,
+    )
     if service_match:
         service_disposition = re.sub(r"\s+", " ", service_match.group(1)).strip()
+    elif re.search(r"\bI\s+attest\s+that\s+I\s+served\s+this\s+document\b", compact, flags=re.IGNORECASE):
+        service_disposition = "Served"
+    elif re.search(
+        r"\b(?:unable\s+to\s+(?:make\s+)?service|non\s*[- ]?\s*est|not\s+served)\b",
+        compact,
+        flags=re.IGNORECASE,
+    ):
+        service_disposition = "Non Est"
 
     deputy = ""
     deputy_match = re.search(r"Deputy\s+Reporting\s+(.+?)(?:\s+Deputy\s+Sequence\b|\n|$)", compact, flags=re.IGNORECASE)
@@ -1535,6 +1547,14 @@ def parse_civil_return_pdf(pdf_bytes, fallback_case_number=""):
     date_issued = parse_civil_return_date(between("Date Issued", ["Type of RFS", "Petitioner", "Respondent"]))
     attempt_date = parse_civil_return_date(between("Date Attempted", ["Service Disp", "Method of Service", "Signature"]))
     date_signed = parse_civil_return_date(between("Date Signed", ["Deputy Reporting", "Deputy Sequence", "Intake Date"]))
+    if not date_signed:
+        direct_date_signed = re.search(
+            r"Date\s+Signed\s*:?\s*(\d{1,2}/\d{1,2}/20\d{2}|20\d{2}-\d{2}-\d{2})",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        if direct_date_signed:
+            date_signed = parse_civil_return_date(direct_date_signed.group(1))
     return_sequence = between("Deputy Sequence", ["Intake Date", "Court Issue Date", "Court"])
     court_issue_date = parse_civil_return_date(between("Court Issue Date", ["Court"]))
 
@@ -1580,6 +1600,23 @@ def build_return_email_payload(message, attachment, parsed_pdf, blob_name, mailb
     for key, value in fallback_payload.items():
         if value and not entry_payload.get(key):
             entry_payload[key] = value
+    # The generated return PDF is the authoritative signed document. Prefer its
+    # core service fields over incomplete or concatenated Cognito email details.
+    for key in (
+        "respondent_name",
+        "petitioner_name",
+        "service_address",
+        "attempt_date",
+        "service_disposition",
+        "method_of_service",
+        "date_signed",
+        "member_reporting",
+        "return_sequence",
+    ):
+        if parsed_pdf.get(key):
+            entry_payload[key] = parsed_pdf[key]
+    if parsed_pdf.get("date_signed"):
+        entry_payload["signature_value"] = "Captured"
     entry_payload.update({
         "blob_container": CIVIL_PAPERS_CONTAINER_NAME,
         "blob_name": blob_name,
