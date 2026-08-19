@@ -42,6 +42,55 @@ def safe_blob_part(value, fallback):
     return cleaned or fallback
 
 
+def workbook_disposition(xlsx_path):
+    frame = pd.read_excel(xlsx_path, dtype=object)
+    if "Service Disp" not in frame.columns:
+        return None
+    values = {
+        str(value).strip().lower()
+        for value in frame["Service Disp"].dropna()
+        if str(value).strip()
+    }
+    if values == {"served"}:
+        return "Served"
+    if values == {"non est"}:
+        return "Non Est"
+    return None
+
+
+def pair_matches(xlsx_path, zip_path):
+    frame = pd.read_excel(xlsx_path, dtype=object)
+    with ZipFile(zip_path) as archive:
+        pdf_infos = [item for item in archive.infolist() if not item.is_dir()]
+    if len(frame) != len(pdf_infos) or "Document" not in frame.columns:
+        return False
+    return all(
+        normalized_case(document) == normalized_case(case_from_pdf_filename(pdf_info.filename))
+        for document, pdf_info in zip(frame["Document"], pdf_infos)
+    )
+
+
+def discover_sources(source_dir):
+    source_dir = Path(source_dir)
+    xlsx_files = sorted(source_dir.glob("*.xlsx"), key=lambda path: path.stat().st_mtime, reverse=True)
+    zip_files = sorted(source_dir.glob("*.zip"), key=lambda path: path.stat().st_mtime, reverse=True)
+    sources = []
+    for expected_disposition in ("Served", "Non Est"):
+        workbooks = [path for path in xlsx_files if workbook_disposition(path) == expected_disposition]
+        matches = [
+            (xlsx_path, zip_path, expected_disposition)
+            for xlsx_path in workbooks
+            for zip_path in zip_files
+            if pair_matches(xlsx_path, zip_path)
+        ]
+        if not matches:
+            raise RuntimeError(
+                f"Could not find a matching {expected_disposition} XLSX and ZIP in {source_dir}."
+            )
+        sources.append(matches[0])
+    return sources
+
+
 def load_pairs(xlsx_path, zip_path, expected_disposition):
     frame = pd.read_excel(xlsx_path, dtype=object)
     with ZipFile(zip_path) as archive:
@@ -111,17 +160,25 @@ def upload_and_import(container, conn, row, pdf_filename, pdf_bytes):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--served-xlsx", required=True)
-    parser.add_argument("--served-zip", required=True)
-    parser.add_argument("--non-est-xlsx", required=True)
-    parser.add_argument("--non-est-zip", required=True)
+    parser.add_argument("--source-dir")
+    parser.add_argument("--served-xlsx")
+    parser.add_argument("--served-zip")
+    parser.add_argument("--non-est-xlsx")
+    parser.add_argument("--non-est-zip")
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
 
-    sources = [
-        (args.served_xlsx, args.served_zip, "Served"),
-        (args.non_est_xlsx, args.non_est_zip, "Non Est"),
-    ]
+    if args.source_dir:
+        sources = discover_sources(args.source_dir)
+    elif all((args.served_xlsx, args.served_zip, args.non_est_xlsx, args.non_est_zip)):
+        sources = [
+            (args.served_xlsx, args.served_zip, "Served"),
+            (args.non_est_xlsx, args.non_est_zip, "Non Est"),
+        ]
+    else:
+        parser.error(
+            "Use --source-dir, or provide all four explicit --served/--non-est XLSX and ZIP arguments."
+        )
     all_pairs = []
     for xlsx_path, zip_path, disposition in sources:
         all_pairs.extend(load_pairs(xlsx_path, zip_path, disposition))
