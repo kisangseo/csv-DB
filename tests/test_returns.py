@@ -3,7 +3,6 @@ from pathlib import Path
 
 from returns import (
     derived_signature_status,
-    is_hard_copy_return_type,
     normalize_service_disposition,
     parse_cognito_entry_details,
     payload_from_export_row,
@@ -63,16 +62,6 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertEqual(payload["member_reporting"], "Sergeant Christopher Tillery")
         self.assertEqual(payload["return_sequence"], "0399")
 
-    def test_hard_copy_type_is_read_from_export_and_email(self):
-        export_payload = payload_from_export_row({"Document": "24-P-24-000011", "Type": "CS - Child Support"})
-        email_payload = parse_cognito_entry_details("<table><tr><td>TYPE</td><td>JV - Juvenile</td></tr></table>")
-        self.assertEqual(export_payload["document_type"], "CS - Child Support")
-        self.assertEqual(email_payload["document_type"], "JV - Juvenile")
-        self.assertTrue(is_hard_copy_return_type(export_payload["document_type"]))
-        self.assertTrue(is_hard_copy_return_type(email_payload["document_type"]))
-        self.assertTrue(is_hard_copy_return_type("SP - Subpoena"))
-        self.assertFalse(is_hard_copy_return_type("RFS - Request for Service"))
-
     def test_every_ingested_return_is_signed(self):
         self.assertEqual(derived_signature_status({"signature_value": None}), "Signed")
 
@@ -101,8 +90,6 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertIn("pdfs_by_case = defaultdict(deque)", importer_source)
         self.assertIn("rows_without_pdf", importer_source)
         self.assertIn("pdfs_without_row", importer_source)
-        self.assertIn("BaltimoreCitySheriffsOfficeReturn2 hard copy.xlsx", importer_source)
-        self.assertIn("hard-copy/", importer_source)
 
     def test_existing_backfill_can_be_repaired_by_pdf_filename(self):
         returns_source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()

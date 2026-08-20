@@ -42,8 +42,7 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('"Returns",', self.template)
         self.assertIn('headers = ["Case Number","Respondent","Petitioner","Service Disposition","Status","Date Attempted / Served","Deputy Reporting"]', self.template)
         self.assertIn('title.textContent = "Activity Log";', self.template)
-        self.assertIn('["Signed", "Hard Copy Returned", "Hold", "Pending"]', self.template)
-        self.assertIn('badge.textContent = "HARD COPY REQUIRED";', self.template)
+        self.assertIn('["Signed", "Uploaded", "Hold", "Pending"]', self.template)
         self.assertIn('toggleReturnDetailRow(tr, row, headers.length);', self.template)
         self.assertNotIn('placeholder="Search returns"', self.template)
 

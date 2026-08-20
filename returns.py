@@ -9,8 +9,8 @@ from datetime import date, datetime
 from html.parser import HTMLParser
 
 
-RETURN_STATUS_VALUES = ("Signed", "Uploaded", "Hard Copy Returned", "Hold", "Pending")
-MANUAL_RETURN_STATUSES = {"Uploaded", "Hard Copy Returned", "Hold", "Pending"}
+RETURN_STATUS_VALUES = ("Signed", "Uploaded", "Hold", "Pending")
+MANUAL_RETURN_STATUSES = {"Uploaded", "Hold", "Pending"}
 _schema_lock = threading.Lock()
 _schema_ready = False
 
@@ -159,18 +159,6 @@ def normalize_service_disposition(value):
     return text
 
 
-def is_hard_copy_return_type(value):
-    """Return True for Cognito Types that require a physical return."""
-    text = clean_value(value)
-    if not text:
-        return False
-    normalized = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
-    first_token = normalized.split(" ", 1)[0].upper() if normalized else ""
-    return first_token in {"CS", "JV", "SP"} or any(
-        phrase in normalized for phrase in ("child support", "juvenile", "subpoena")
-    )
-
-
 def signature_is_captured(value):
     text = str(value or "").strip().lower()
     return text in {"captured", "signed", "yes", "true"} or bool(text and text not in {"no", "false", "none", "blank"})
@@ -258,20 +246,6 @@ def ensure_returns_tables(conn):
 
 def _ensure_returns_tables(conn):
     cur = conn.cursor()
-    # App Service can start multiple workers at once. Serialize schema upgrades
-    # across processes so two workers cannot drop/add the same constraint.
-    cur.execute(
-        """
-        DECLARE @lock_result INT;
-        EXEC @lock_result = sys.sp_getapplock
-            @Resource = 'bcso_returns_schema_upgrade_v4',
-            @LockMode = 'Exclusive',
-            @LockOwner = 'Session',
-            @LockTimeout = 30000;
-        IF @lock_result < 0
-            THROW 51000, 'Could not acquire Returns schema upgrade lock.', 1;
-        """
-    )
     cur.execute(
         """
         IF OBJECT_ID('search.Returns', 'U') IS NULL AND OBJECT_ID('search.mdec_returns', 'U') IS NOT NULL
@@ -402,40 +376,31 @@ def _ensure_returns_tables(conn):
 
     cur.execute(
         """
-        SELECT COUNT(*)
+        SELECT name
         FROM sys.check_constraints
         WHERE parent_object_id = OBJECT_ID('search.Returns')
-          AND name = 'CK_mdec_returns_bcso_status_v4'
+          AND definition LIKE '%bcso_status%'
         """
     )
-    if int(cur.fetchone()[0]) == 0:
-        cur.execute(
-            """
-            SELECT name
-            FROM sys.check_constraints
-            WHERE parent_object_id = OBJECT_ID('search.Returns')
-              AND definition LIKE '%bcso_status%'
-            """
-        )
-        for row in cur.fetchall():
-            constraint_name = str(row[0]).replace("]", "]]" )
-            cur.execute(f"ALTER TABLE search.Returns DROP CONSTRAINT [{constraint_name}]")
-        cur.execute(
-            "UPDATE search.Returns SET bcso_status = 'Uploaded' WHERE bcso_status = 'Uploaded to MDEC'"
-        )
-        cur.execute(
-            "UPDATE search.Returns SET signature_status = 'Signed' WHERE signature_status IS NULL OR signature_status = 'Needs Signature'"
-        )
-        cur.execute(
-            "UPDATE search.Returns SET bcso_status = 'Signed' WHERE bcso_status IS NULL OR bcso_status = 'Needs Signature'"
-        )
-        cur.execute(
-            """
-            ALTER TABLE search.Returns WITH NOCHECK
-            ADD CONSTRAINT CK_mdec_returns_bcso_status_v4
-            CHECK (bcso_status IS NULL OR bcso_status IN ('Signed', 'Uploaded', 'Hard Copy Returned', 'Hold', 'Pending'))
-            """
-        )
+    for row in cur.fetchall():
+        constraint_name = str(row[0]).replace("]", "]]" )
+        cur.execute(f"ALTER TABLE search.Returns DROP CONSTRAINT [{constraint_name}]")
+    cur.execute(
+        "UPDATE search.Returns SET bcso_status = 'Uploaded' WHERE bcso_status = 'Uploaded to MDEC'"
+    )
+    cur.execute(
+        "UPDATE search.Returns SET signature_status = 'Signed' WHERE signature_status IS NULL OR signature_status = 'Needs Signature'"
+    )
+    cur.execute(
+        "UPDATE search.Returns SET bcso_status = 'Signed' WHERE bcso_status IS NULL OR bcso_status = 'Needs Signature'"
+    )
+    cur.execute(
+        """
+        ALTER TABLE search.Returns WITH NOCHECK
+        ADD CONSTRAINT CK_mdec_returns_bcso_status_v3
+        CHECK (bcso_status IS NULL OR bcso_status IN ('Signed', 'Uploaded', 'Hold', 'Pending'))
+        """
+    )
 
     cur.execute(
         """
@@ -473,9 +438,6 @@ def _ensure_returns_tables(conn):
         """
     )
     conn.commit()
-    cur.execute(
-        "EXEC sys.sp_releaseapplock @Resource = 'bcso_returns_schema_upgrade_v4', @LockOwner = 'Session'"
-    )
 
 
 def log_return_activity(cur, return_id, activity_type, summary, actor_email, old_value=None, new_value=None):
@@ -569,10 +531,7 @@ def upsert_return(conn, payload, actor_email="system:cognito-email"):
     return_id, existing_status = _find_existing_return(cur, normalized)
     incoming_status = normalized.get("bcso_status") or normalized.get("signature_status")
     if existing_status in MANUAL_RETURN_STATUSES:
-        if is_hard_copy_return_type(normalized.get("document_type")) and existing_status == "Uploaded":
-            normalized["bcso_status"] = "Hard Copy Returned"
-        else:
-            normalized["bcso_status"] = existing_status
+        normalized["bcso_status"] = existing_status
     elif existing_status == "Signed" and incoming_status == "Needs Signature":
         normalized["bcso_status"] = existing_status
 
@@ -779,22 +738,17 @@ def fetch_return_activity(conn, return_id):
 
 def update_return_status(conn, return_id, status, actor_email, reason_for_hold=None):
     status = clean_value(status)
-    if status not in RETURN_STATUS_VALUES:
-        raise ValueError("Status must be Signed, Uploaded, Hard Copy Returned, Hold, or Pending.")
+    if status not in RETURN_STATUS_VALUES[1:]:
+        raise ValueError("Status must be Signed, Uploaded, Hold, or Pending.")
     cur = conn.cursor()
     cur.execute(
-        "SELECT bcso_status, document_type FROM search.Returns WHERE mdec_return_id = ? AND is_active = 1",
+        "SELECT bcso_status FROM search.Returns WHERE mdec_return_id = ? AND is_active = 1",
         int(return_id),
     )
     row = cur.fetchone()
     if not row:
         return False
     old_status = clean_value(row[0])
-    hard_copy_required = is_hard_copy_return_type(row[1])
-    if hard_copy_required and status == "Uploaded":
-        raise ValueError("This return requires a hard copy. Use Hard Copy Returned instead of Uploaded.")
-    if not hard_copy_required and status == "Hard Copy Returned":
-        raise ValueError("Hard Copy Returned is only available for Child Support, Juvenile, and Subpoena returns.")
     if old_status == status and (status != "Hold" or not clean_value(reason_for_hold)):
         return True
     cur.execute(
