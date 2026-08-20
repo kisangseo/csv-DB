@@ -932,3 +932,16 @@ textarea.modal-control {
   color: #1d4ed8;
   white-space: nowrap;
 }
+.return-hard-copy-badge {
+  background: #5b21b6;
+  border: 2px solid #3b0764;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.return-hard-copy-table-badge {
+  display: block;
+  margin-top: 0.25rem;
+  width: max-content;
+}

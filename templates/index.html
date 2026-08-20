@@ -1336,6 +1336,12 @@
         const statusBadge = createReturnBadge(record.bcso_status || record.signature_status, "status");
         statusBadge.classList.add("return-detail-status-badge");
         heading.appendChild(statusBadge);
+        if (record.hard_copy_required) {
+          const hardCopyBadge = document.createElement("span");
+          hardCopyBadge.className = "return-badge return-hard-copy-badge";
+          hardCopyBadge.textContent = "HARD COPY REQUIRED";
+          heading.appendChild(hardCopyBadge);
+        }
         if (record.blob_name || summaryRow.has_pdf) {
           const download = document.createElement("a");
           download.className = "table-action-btn return-download-link";
@@ -1406,7 +1412,10 @@
           const editor = document.createElement("div");
           editor.className = "return-status-editor";
           const select = document.createElement("select");
-          ["Signed", "Uploaded", "Hold", "Pending"].forEach((status) => {
+          const allowedStatuses = record.hard_copy_required
+            ? ["Signed", "Hard Copy Returned", "Hold", "Pending"]
+            : ["Signed", "Uploaded", "Hold", "Pending"];
+          allowedStatuses.forEach((status) => {
             const option = document.createElement("option");
             option.value = status;
             option.textContent = status;
@@ -2366,6 +2375,12 @@
                   const badge = createReturnBadge(val, "status");
                   badge.classList.add("return-table-status-badge");
                   td.appendChild(badge);
+                  if (row.hard_copy_required) {
+                    const hardCopyBadge = document.createElement("span");
+                    hardCopyBadge.className = "return-badge return-hard-copy-badge return-hard-copy-table-badge";
+                    hardCopyBadge.textContent = "HARD COPY";
+                    td.appendChild(hardCopyBadge);
+                  }
                 } else {
                   td.textContent = toCellText(val);
                 }

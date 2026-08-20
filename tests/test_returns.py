@@ -2,7 +2,9 @@ import unittest
 from pathlib import Path
 
 from returns import (
+    allowed_return_statuses,
     derived_signature_status,
+    is_hard_copy_return,
     normalize_service_disposition,
     parse_cognito_entry_details,
     payload_from_export_row,
@@ -73,6 +75,43 @@ class ReturnsParsingTests(unittest.TestCase):
 
     def test_normalizes_non_est_variants(self):
         self.assertEqual(normalize_service_disposition("NON-EST"), "Non Est")
+
+    def test_exact_hard_copy_filter_groups(self):
+        signed = {"signature_value": "Captured"}
+        positives = (
+            {**signed, "document_type": "JV - Juvenile", "case_number": "C-24-XX"},
+            {**signed, "type_of_child_support": "Show Cause", "case_number": "C-24-CV-1"},
+            {**signed, "case_number": "C-24-CR-1"},
+            {**signed, "case_number": "24-P-1"},
+            {**signed, "case_number": "24-D-1"},
+            {**signed, "case_number": "c-24-jv-1"},
+        )
+        for payload in positives:
+            with self.subTest(payload=payload):
+                self.assertTrue(is_hard_copy_return(payload))
+
+    def test_hard_copy_filter_requires_signature(self):
+        self.assertFalse(is_hard_copy_return({"case_number": "24-P-1"}))
+
+    def test_hard_copy_filter_rejects_nonmatching_returns(self):
+        self.assertFalse(is_hard_copy_return({
+            "signature_value": "Captured",
+            "document_type": "RFS - Request for Service",
+            "case_number": "D-01-CV-26-1",
+        }))
+        self.assertFalse(is_hard_copy_return({
+            "signature_value": "Captured",
+            "document_type": "JV - Juvenile",
+            "case_number": "D-01-CV-26-1",
+        }))
+
+    def test_status_choices_follow_hard_copy_filter(self):
+        hard_copy = {"signature_value": "Captured", "case_number": "24-P-1"}
+        normal = {"signature_value": "Captured", "case_number": "D-01-CV-26-1"}
+        self.assertIn("Hard Copy Returned", allowed_return_statuses(hard_copy))
+        self.assertNotIn("Uploaded", allowed_return_statuses(hard_copy))
+        self.assertIn("Uploaded", allowed_return_statuses(normal))
+        self.assertNotIn("Hard Copy Returned", allowed_return_statuses(normal))
 
     def test_system_activity_is_hidden_and_importer_supports_fresh_replace(self):
         root = Path(__file__).resolve().parents[1]

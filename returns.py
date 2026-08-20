@@ -9,8 +9,8 @@ from datetime import date, datetime
 from html.parser import HTMLParser
 
 
-RETURN_STATUS_VALUES = ("Signed", "Uploaded", "Hold", "Pending")
-MANUAL_RETURN_STATUSES = {"Uploaded", "Hold", "Pending"}
+RETURN_STATUS_VALUES = ("Signed", "Uploaded", "Hard Copy Returned", "Hold", "Pending")
+MANUAL_RETURN_STATUSES = {"Uploaded", "Hard Copy Returned", "Hold", "Pending"}
 _schema_lock = threading.Lock()
 _schema_ready = False
 
@@ -162,6 +162,34 @@ def normalize_service_disposition(value):
 def signature_is_captured(value):
     text = str(value or "").strip().lower()
     return text in {"captured", "signed", "yes", "true"} or bool(text and text not in {"no", "false", "none", "blank"})
+
+
+def is_hard_copy_return(payload):
+    """Apply the exact Cognito Hard Copy Returns filter to one return."""
+    signature_filled = signature_is_captured(payload.get("signature_value")) or bool(
+        clean_value(payload.get("date_signed"))
+    )
+    if not signature_filled:
+        return False
+
+    case_number = re.sub(r"\s+", "", str(payload.get("case_number") or "")).upper()
+    document_type = normalize_label(payload.get("document_type"))
+    child_support_type_filled = bool(clean_value(payload.get("type_of_child_support")))
+
+    return bool(
+        (document_type == "jv juvenile" and case_number.startswith("C-24"))
+        or (child_support_type_filled and case_number.startswith("C-24-CV"))
+        or case_number.startswith("C-24-CR")
+        or case_number.startswith("24-P")
+        or case_number.startswith("24-D")
+        or case_number.startswith("C-24-JV")
+    )
+
+
+def allowed_return_statuses(payload):
+    if is_hard_copy_return(payload):
+        return ("Signed", "Hard Copy Returned", "Hold", "Pending")
+    return ("Signed", "Uploaded", "Hold", "Pending")
 
 
 def derived_signature_status(payload):
@@ -375,17 +403,6 @@ def _ensure_returns_tables(conn):
         )
 
     cur.execute(
-        """
-        SELECT name
-        FROM sys.check_constraints
-        WHERE parent_object_id = OBJECT_ID('search.Returns')
-          AND definition LIKE '%bcso_status%'
-        """
-    )
-    for row in cur.fetchall():
-        constraint_name = str(row[0]).replace("]", "]]" )
-        cur.execute(f"ALTER TABLE search.Returns DROP CONSTRAINT [{constraint_name}]")
-    cur.execute(
         "UPDATE search.Returns SET bcso_status = 'Uploaded' WHERE bcso_status = 'Uploaded to MDEC'"
     )
     cur.execute(
@@ -394,14 +411,6 @@ def _ensure_returns_tables(conn):
     cur.execute(
         "UPDATE search.Returns SET bcso_status = 'Signed' WHERE bcso_status IS NULL OR bcso_status = 'Needs Signature'"
     )
-    cur.execute(
-        """
-        ALTER TABLE search.Returns WITH NOCHECK
-        ADD CONSTRAINT CK_mdec_returns_bcso_status_v3
-        CHECK (bcso_status IS NULL OR bcso_status IN ('Signed', 'Uploaded', 'Hold', 'Pending'))
-        """
-    )
-
     cur.execute(
         """
         IF OBJECT_ID('search.mdec_return_activity_log', 'U') IS NULL
@@ -704,14 +713,20 @@ def search_returns(conn, filters, exclude_uploaded=False):
         """,
         *params,
     )
-    return _format_rows(cur)
+    rows = _format_rows(cur)
+    for row in rows:
+        row["hard_copy_required"] = is_hard_copy_return(row)
+    return rows
 
 
 def get_return(conn, return_id):
     cur = conn.cursor()
     cur.execute("SELECT * FROM search.Returns WHERE mdec_return_id = ? AND is_active = 1", int(return_id))
     rows = _format_rows(cur)
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    rows[0]["hard_copy_required"] = is_hard_copy_return(rows[0])
+    return rows[0]
 
 
 def fetch_return_activity(conn, return_id):
@@ -738,17 +753,32 @@ def fetch_return_activity(conn, return_id):
 
 def update_return_status(conn, return_id, status, actor_email, reason_for_hold=None):
     status = clean_value(status)
-    if status not in RETURN_STATUS_VALUES[1:]:
-        raise ValueError("Status must be Signed, Uploaded, Hold, or Pending.")
     cur = conn.cursor()
     cur.execute(
-        "SELECT bcso_status FROM search.Returns WHERE mdec_return_id = ? AND is_active = 1",
+        """
+        SELECT bcso_status, case_number, document_type, type_of_child_support,
+               signature_value, date_signed
+        FROM search.Returns
+        WHERE mdec_return_id = ? AND is_active = 1
+        """,
         int(return_id),
     )
     row = cur.fetchone()
     if not row:
         return False
     old_status = clean_value(row[0])
+    record = {
+        "case_number": row[1],
+        "document_type": row[2],
+        "type_of_child_support": row[3],
+        "signature_value": row[4],
+        "date_signed": row[5],
+    }
+    allowed_statuses = allowed_return_statuses(record)
+    if status not in allowed_statuses:
+        if is_hard_copy_return(record):
+            raise ValueError("This return requires a hard copy and cannot be marked Uploaded.")
+        raise ValueError("Hard Copy Returned is only available for returns matching the hard-copy filter.")
     if old_status == status and (status != "Hold" or not clean_value(reason_for_hold)):
         return True
     cur.execute(
