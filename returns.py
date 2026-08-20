@@ -258,6 +258,20 @@ def ensure_returns_tables(conn):
 
 def _ensure_returns_tables(conn):
     cur = conn.cursor()
+    # App Service can start multiple workers at once. Serialize schema upgrades
+    # across processes so two workers cannot drop/add the same constraint.
+    cur.execute(
+        """
+        DECLARE @lock_result INT;
+        EXEC @lock_result = sys.sp_getapplock
+            @Resource = 'bcso_returns_schema_upgrade_v4',
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Session',
+            @LockTimeout = 30000;
+        IF @lock_result < 0
+            THROW 51000, 'Could not acquire Returns schema upgrade lock.', 1;
+        """
+    )
     cur.execute(
         """
         IF OBJECT_ID('search.Returns', 'U') IS NULL AND OBJECT_ID('search.mdec_returns', 'U') IS NOT NULL
@@ -388,31 +402,40 @@ def _ensure_returns_tables(conn):
 
     cur.execute(
         """
-        SELECT name
+        SELECT COUNT(*)
         FROM sys.check_constraints
         WHERE parent_object_id = OBJECT_ID('search.Returns')
-          AND definition LIKE '%bcso_status%'
+          AND name = 'CK_mdec_returns_bcso_status_v4'
         """
     )
-    for row in cur.fetchall():
-        constraint_name = str(row[0]).replace("]", "]]" )
-        cur.execute(f"ALTER TABLE search.Returns DROP CONSTRAINT [{constraint_name}]")
-    cur.execute(
-        "UPDATE search.Returns SET bcso_status = 'Uploaded' WHERE bcso_status = 'Uploaded to MDEC'"
-    )
-    cur.execute(
-        "UPDATE search.Returns SET signature_status = 'Signed' WHERE signature_status IS NULL OR signature_status = 'Needs Signature'"
-    )
-    cur.execute(
-        "UPDATE search.Returns SET bcso_status = 'Signed' WHERE bcso_status IS NULL OR bcso_status = 'Needs Signature'"
-    )
-    cur.execute(
-        """
-        ALTER TABLE search.Returns WITH NOCHECK
-        ADD CONSTRAINT CK_mdec_returns_bcso_status_v4
-        CHECK (bcso_status IS NULL OR bcso_status IN ('Signed', 'Uploaded', 'Hard Copy Returned', 'Hold', 'Pending'))
-        """
-    )
+    if int(cur.fetchone()[0]) == 0:
+        cur.execute(
+            """
+            SELECT name
+            FROM sys.check_constraints
+            WHERE parent_object_id = OBJECT_ID('search.Returns')
+              AND definition LIKE '%bcso_status%'
+            """
+        )
+        for row in cur.fetchall():
+            constraint_name = str(row[0]).replace("]", "]]" )
+            cur.execute(f"ALTER TABLE search.Returns DROP CONSTRAINT [{constraint_name}]")
+        cur.execute(
+            "UPDATE search.Returns SET bcso_status = 'Uploaded' WHERE bcso_status = 'Uploaded to MDEC'"
+        )
+        cur.execute(
+            "UPDATE search.Returns SET signature_status = 'Signed' WHERE signature_status IS NULL OR signature_status = 'Needs Signature'"
+        )
+        cur.execute(
+            "UPDATE search.Returns SET bcso_status = 'Signed' WHERE bcso_status IS NULL OR bcso_status = 'Needs Signature'"
+        )
+        cur.execute(
+            """
+            ALTER TABLE search.Returns WITH NOCHECK
+            ADD CONSTRAINT CK_mdec_returns_bcso_status_v4
+            CHECK (bcso_status IS NULL OR bcso_status IN ('Signed', 'Uploaded', 'Hard Copy Returned', 'Hold', 'Pending'))
+            """
+        )
 
     cur.execute(
         """
@@ -450,6 +473,9 @@ def _ensure_returns_tables(conn):
         """
     )
     conn.commit()
+    cur.execute(
+        "EXEC sys.sp_releaseapplock @Resource = 'bcso_returns_schema_upgrade_v4', @LockOwner = 'Session'"
+    )
 
 
 def log_return_activity(cur, return_id, activity_type, summary, actor_email, old_value=None, new_value=None):
