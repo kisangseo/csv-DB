@@ -71,9 +71,11 @@ LABEL_TO_FIELD = {
     "#": "cognito_entry_number",
     "entry": "cognito_entry_number",
     "entry number": "cognito_entry_number",
+    "baltimore city sheriffs office retu id": "cognito_entry_number",
     "document": "case_number",
     "case number": "case_number",
     "date submitted": "submitted_at",
+    "entry date submitted": "submitted_at",
     "type": "document_type",
     "date issued": "date_issued",
     "type of rfs": "type_of_rfs",
@@ -136,7 +138,12 @@ def clean_value(value):
 
 
 def normalize_label(value):
-    text = re.sub(r"\s+", " ", str(value or "")).strip().lower().rstrip(":")
+    text = str(value or "").strip().rstrip(":")
+    # Newer Cognito XLSX exports use compact field names such as RespName,
+    # DateAttempted, ServiceDisp, and Entry_DateSubmitted.
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+    text = re.sub(r"[_\-]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip().lower()
     return text
 
 
@@ -700,6 +707,7 @@ def fetch_return_activity(conn, return_id):
             FORMAT(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time', 'yyyy-MM-dd h:mm tt') AS created_at
         FROM search.mdec_return_activity_log
         WHERE mdec_return_id = ?
+          AND COALESCE(actor_email, '') NOT LIKE 'system:%'
         ORDER BY created_at DESC, activity_id DESC
         """,
         int(return_id),

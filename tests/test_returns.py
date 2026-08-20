@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from returns import (
     derived_signature_status,
@@ -40,6 +41,27 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertEqual(payload["signature_status"], "Signed")
         self.assertEqual(payload["bcso_status"], "Signed")
 
+    def test_maps_new_compact_cognito_export_headers(self):
+        payload = payload_from_export_row(
+            {
+                "BaltimoreCitySheriffsOfficeRetu_Id": 8123,
+                "Entry_DateSubmitted": "2026-08-20 08:30:00",
+                "Document": "D-01-CV-26-029285",
+                "RespName": "DATROWN BANKS",
+                "Petitioner": "LETECIA ROLLINS ESQUIRE",
+                "DateAttempted": "2026-08-19",
+                "ServiceDisp": "Served",
+                "MemberReporting": "Sergeant Christopher Tillery",
+                "ReturnSequence": "0399",
+            }
+        )
+        self.assertEqual(payload["cognito_entry_number"], "8123")
+        self.assertEqual(payload["respondent_name"], "DATROWN BANKS")
+        self.assertEqual(payload["attempt_date"], "2026-08-19")
+        self.assertEqual(payload["service_disposition"], "Served")
+        self.assertEqual(payload["member_reporting"], "Sergeant Christopher Tillery")
+        self.assertEqual(payload["return_sequence"], "0399")
+
     def test_every_ingested_return_is_signed(self):
         self.assertEqual(derived_signature_status({"signature_value": None}), "Signed")
 
@@ -51,6 +73,23 @@ class ReturnsParsingTests(unittest.TestCase):
 
     def test_normalizes_non_est_variants(self):
         self.assertEqual(normalize_service_disposition("NON-EST"), "Non Est")
+
+    def test_system_activity_is_hidden_and_importer_supports_fresh_replace(self):
+        root = Path(__file__).resolve().parents[1]
+        returns_source = (root / "returns.py").read_text()
+        importer_source = (root / "scripts" / "import_returns_initial.py").read_text()
+        self.assertIn("COALESCE(actor_email, '') NOT LIKE 'system:%'", returns_source)
+        self.assertIn('"--replace-all"', importer_source)
+        self.assertIn('DELETE FROM search.mdec_return_activity_log', importer_source)
+        self.assertIn('DELETE FROM search.Returns', importer_source)
+
+    def test_initial_import_skips_unmatched_rows_and_pdfs(self):
+        importer_source = (
+            Path(__file__).resolve().parents[1] / "scripts" / "import_returns_initial.py"
+        ).read_text()
+        self.assertIn("pdfs_by_case = defaultdict(deque)", importer_source)
+        self.assertIn("rows_without_pdf", importer_source)
+        self.assertIn("pdfs_without_row", importer_source)
 
 
 if __name__ == "__main__":
