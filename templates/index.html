@@ -540,7 +540,8 @@
       let activeEditContext = null;
       let lastSearchFilters = null;
       let exportPollTimer = null;
-      const INITIAL_DEPARTMENT_HEADERS = [
+      const RETURNS_FIRST = {{ returns_first | default(false) | tojson }};
+      const DEFAULT_DEPARTMENT_HEADERS = [
         "Bcso Active Warrants",
         "Warrants to Audit",
         "Civil Papers",
@@ -553,6 +554,9 @@
         "Returns",
         "Daily Logs"
       ];
+      const INITIAL_DEPARTMENT_HEADERS = RETURNS_FIRST
+        ? ["Returns", ...DEFAULT_DEPARTMENT_HEADERS.filter((label) => label !== "Returns")]
+        : DEFAULT_DEPARTMENT_HEADERS;
 
       function getFieldLabelForTable(tableName, field) {
         if (tableName === "Civil Papers") {
@@ -2193,6 +2197,12 @@
           const orderedEntries = Object.entries(data)
             .filter(([dept]) => !targetDepartment || dept.toLowerCase() === targetDepartment)
             .sort(([deptA], [deptB]) => {
+            if (RETURNS_FIRST) {
+              const aIsReturns = deptA.toLowerCase() === "returns";
+              const bIsReturns = deptB.toLowerCase() === "returns";
+              if (aIsReturns && !bIsReturns) return -1;
+              if (!aIsReturns && bIsReturns) return 1;
+            }
             const aIsDvPdf = deptA.toLowerCase() === "dv pdf";
             const bIsDvPdf = deptB.toLowerCase() === "dv pdf";
             if (aIsDvPdf && !bIsDvPdf) return -1;

@@ -13,6 +13,12 @@ class ResultsTemplateTests(unittest.TestCase):
     def test_initial_sections_show_zero_and_are_collapsed(self):
         self.assertIn('title.textContent = `▶ ${label} — 0 records`;', self.template)
 
+    def test_returns_can_be_first_for_the_designated_user_only(self):
+        self.assertIn('const RETURNS_FIRST = {{ returns_first | default(false) | tojson }};', self.template)
+        self.assertIn('["Returns", ...DEFAULT_DEPARTMENT_HEADERS.filter((label) => label !== "Returns")]', self.template)
+        self.assertIn('if (RETURNS_FIRST) {', self.template)
+        self.assertIn('const aIsReturns = deptA.toLowerCase() === "returns";', self.template)
+
     def test_search_results_start_collapsed_and_keep_count_in_heading(self):
         self.assertIn('content.className = "department-content collapsed";', self.template)
         self.assertIn('title.textContent = `▶ ${baseTitle} — ${recordLabel}`;', self.template)

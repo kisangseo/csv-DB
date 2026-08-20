@@ -537,6 +537,7 @@ def login():
     session.permanent = True
     session["user_id"] = user_id
     session["permission"] = (permission or "").strip().lower()
+    session["email"] = email.strip().lower()
 
     if must_change:
         return redirect("/change-password")
@@ -2248,9 +2249,19 @@ def home():
     if "user_id" not in session:
         return redirect("/login")
 
+    current_email = (session.get("email") or "").strip().lower()
+    if not current_email:
+        conn = get_conn()
+        try:
+            current_email = get_current_user_email(conn.cursor()).strip().lower()
+            session["email"] = current_email
+        finally:
+            conn.close()
+
     return render_template(
         "index.html",
         user_permission=get_current_permission(),
+        returns_first=current_email == "chaunna.lane@baltimorecity.gov",
         latest_lt_file_date=get_latest_landlord_tenant_file_date_label(),
         court_doc_type_options=COURT_DOC_TYPE_OPTIONS,
         admin_status_options=get_admin_status_options(),
