@@ -129,6 +129,10 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertIn("pdfs_by_case = defaultdict(deque)", importer_source)
         self.assertIn("rows_without_pdf", importer_source)
         self.assertIn("pdfs_without_row", importer_source)
+        self.assertIn('"--hard-copy-xlsx"', importer_source)
+        self.assertIn('"--hard-copy-zip"', importer_source)
+        self.assertIn("sources.append((args.hard_copy_xlsx, args.hard_copy_zip, None))", importer_source)
+        self.assertIn('disposition_folder = f"hard-copy/{disposition_folder}"', importer_source)
 
     def test_existing_backfill_can_be_repaired_by_pdf_filename(self):
         returns_source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
