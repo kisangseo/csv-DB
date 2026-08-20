@@ -478,7 +478,28 @@ def _find_existing_return(cur, payload):
         if row:
             return int(row[0]), clean_value(row[1])
 
+    # Initial imports performed before compact Cognito headers were supported
+    # did not retain the Cognito entry number. The original PDF filename and
+    # case number remain stable, so use them to repair those rows in place.
+    original_filename = clean_value(payload.get("original_filename"))
     case_number = clean_value(payload.get("case_number"))
+    if original_filename and case_number:
+        cur.execute(
+            """
+            SELECT TOP 1 mdec_return_id, bcso_status
+            FROM search.Returns
+            WHERE LOWER(LTRIM(RTRIM(COALESCE(original_filename, '')))) =
+                  LOWER(LTRIM(RTRIM(?)))
+              AND UPPER(REPLACE(REPLACE(COALESCE(case_number, ''), '-', ''), ' ', '')) =
+                  UPPER(REPLACE(REPLACE(?, '-', ''), ' ', ''))
+            ORDER BY updated_at DESC, mdec_return_id DESC
+            """,
+            original_filename, case_number,
+        )
+        row = cur.fetchone()
+        if row:
+            return int(row[0]), clean_value(row[1])
+
     respondent = clean_value(payload.get("respondent_name"))
     attempt_date = clean_value(payload.get("attempt_date"))
     if case_number:

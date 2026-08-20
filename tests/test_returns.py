@@ -91,6 +91,11 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertIn("rows_without_pdf", importer_source)
         self.assertIn("pdfs_without_row", importer_source)
 
+    def test_existing_backfill_can_be_repaired_by_pdf_filename(self):
+        returns_source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
+        self.assertIn("original_filename and case_number", returns_source)
+        self.assertIn("COALESCE(original_filename, '')", returns_source)
+
 
 if __name__ == "__main__":
     unittest.main()
