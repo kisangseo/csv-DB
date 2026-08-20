@@ -444,6 +444,98 @@
         th.appendChild(sortButton);
       }
 
+      const RETURNS_SORT_DIRECTIONS = { asc: "asc", desc: "desc" };
+
+      function compareReturnCellValues(aValue, bValue, headerLabel, direction) {
+        const sign = direction === RETURNS_SORT_DIRECTIONS.asc ? 1 : -1;
+        const aText = String(aValue || "").trim();
+        const bText = String(bValue || "").trim();
+
+        if (headerLabel === "Date Attempted / Served") {
+          const aDate = parseDateForSort(aText);
+          const bDate = parseDateForSort(bText);
+          const aHasDate = !Number.isNaN(aDate);
+          const bHasDate = !Number.isNaN(bDate);
+          if (aHasDate && bHasDate && aDate !== bDate) return (aDate - bDate) * sign;
+          if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
+        }
+
+        if (!aText && !bText) return 0;
+        if (!aText) return 1;
+        if (!bText) return -1;
+        return aText.localeCompare(bText, undefined, {
+          numeric: true,
+          sensitivity: "base"
+        }) * sign;
+      }
+
+      function sortReturnsTable(table, columnIndex, headerLabel, direction) {
+        const tbody = table.querySelector("tbody");
+        if (!tbody) return;
+        const groups = [];
+
+        Array.from(tbody.children).forEach((row) => {
+          if (row.classList.contains("return-detail-row") && groups.length) {
+            groups[groups.length - 1].detailRows.push(row);
+          } else {
+            groups.push({parentRow: row, detailRows: []});
+          }
+        });
+
+        groups.sort((a, b) => {
+          const aValue = a.parentRow.children[columnIndex]?.textContent || "";
+          const bValue = b.parentRow.children[columnIndex]?.textContent || "";
+          return compareReturnCellValues(aValue, bValue, headerLabel, direction);
+        });
+
+        groups.forEach(({parentRow, detailRows}) => {
+          tbody.appendChild(parentRow);
+          detailRows.forEach((detailRow) => tbody.appendChild(detailRow));
+        });
+      }
+
+      function wireReturnsHeaderSort(table, th, columnIndex, headerLabel) {
+        th.classList.add("returns-sort-header");
+        th.tabIndex = 0;
+        th.setAttribute("role", "button");
+        th.setAttribute("aria-sort", "none");
+        th.setAttribute("aria-label", `Sort ${headerLabel} ascending`);
+
+        const indicator = document.createElement("span");
+        indicator.className = "returns-sort-indicator";
+        indicator.textContent = " ↕";
+        th.appendChild(indicator);
+
+        const activate = () => {
+          const currentDirection = th.dataset.sortDirection;
+          const nextDirection = currentDirection === RETURNS_SORT_DIRECTIONS.asc
+            ? RETURNS_SORT_DIRECTIONS.desc
+            : RETURNS_SORT_DIRECTIONS.asc;
+
+          table.querySelectorAll("th.returns-sort-header").forEach((header) => {
+            header.dataset.sortDirection = "";
+            header.setAttribute("aria-sort", "none");
+            header.querySelector(".returns-sort-indicator").textContent = " ↕";
+          });
+
+          th.dataset.sortDirection = nextDirection;
+          th.setAttribute("aria-sort", nextDirection === RETURNS_SORT_DIRECTIONS.asc ? "ascending" : "descending");
+          th.setAttribute(
+            "aria-label",
+            `Sort ${headerLabel} ${nextDirection === RETURNS_SORT_DIRECTIONS.asc ? "descending" : "ascending"}`
+          );
+          indicator.textContent = nextDirection === RETURNS_SORT_DIRECTIONS.asc ? " ↑" : " ↓";
+          sortReturnsTable(table, columnIndex, headerLabel, nextDirection);
+        };
+
+        th.addEventListener("click", activate);
+        th.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          activate();
+        });
+      }
+
       let tableDefinitions = {};
       let activeEditContext = null;
       let lastSearchFilters = null;
@@ -2234,7 +2326,9 @@
             headers.forEach((h, headerIndex) => {
               const th = document.createElement("th");
               th.textContent = h;
-              if (/date/i.test(h) || h === "Arrival Time") {
+              if (dept.toLowerCase() === "returns") {
+                wireReturnsHeaderSort(table, th, headerIndex, h);
+              } else if (/date/i.test(h) || h === "Arrival Time") {
                 wireDateHeaderSort(table, th, headerIndex);
               }
               headerRow.appendChild(th);

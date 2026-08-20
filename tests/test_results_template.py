@@ -56,6 +56,13 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('params.set("include_uploaded", "1");', self.template)
         self.assertIn('uploadedCheckbox.checked = Boolean(options.includeUploaded);', self.template)
 
+    def test_every_returns_header_sorts_ascending_then_descending(self):
+        self.assertIn('wireReturnsHeaderSort(table, th, headerIndex, h);', self.template)
+        self.assertIn('function sortReturnsTable(table, columnIndex, headerLabel, direction)', self.template)
+        self.assertIn('currentDirection === RETURNS_SORT_DIRECTIONS.asc', self.template)
+        self.assertIn('numeric: true', self.template)
+        self.assertIn('row.classList.contains("return-detail-row")', self.template)
+
 
 if __name__ == "__main__":
     unittest.main()
