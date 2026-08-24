@@ -139,6 +139,16 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertIn("original_filename and case_number", returns_source)
         self.assertIn("COALESCE(original_filename, '')", returns_source)
 
+    def test_returns_default_to_latest_real_user_activity(self):
+        returns_source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
+        self.assertIn("OUTER APPLY (", returns_source)
+        self.assertIn("activity.mdec_return_id = returns_record.mdec_return_id", returns_source)
+        self.assertIn("COALESCE(activity.actor_email, '') NOT LIKE 'system:%'", returns_source)
+        self.assertIn(
+            "ORDER BY COALESCE(last_user_action.last_action_at, returns_record.created_at, submitted_at) DESC",
+            returns_source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

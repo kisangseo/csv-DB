@@ -485,7 +485,16 @@
         groups.sort((a, b) => {
           const aValue = a.parentRow.children[columnIndex]?.textContent || "";
           const bValue = b.parentRow.children[columnIndex]?.textContent || "";
-          return compareReturnCellValues(aValue, bValue, headerLabel, direction);
+          const primaryOrder = compareReturnCellValues(aValue, bValue, headerLabel, direction);
+          if (primaryOrder !== 0) return primaryOrder;
+          const aLastAction = Date.parse(a.parentRow.dataset.lastActionAt || "");
+          const bLastAction = Date.parse(b.parentRow.dataset.lastActionAt || "");
+          if (!Number.isNaN(aLastAction) && !Number.isNaN(bLastAction)) {
+            return bLastAction - aLastAction;
+          }
+          if (!Number.isNaN(aLastAction)) return -1;
+          if (!Number.isNaN(bLastAction)) return 1;
+          return 0;
         });
 
         groups.forEach(({parentRow, detailRows}) => {
@@ -496,6 +505,7 @@
 
       function wireReturnsHeaderSort(table, th, columnIndex, headerLabel) {
         th.classList.add("returns-sort-header");
+        th.dataset.sortLabel = headerLabel;
         th.tabIndex = 0;
         th.setAttribute("role", "button");
         th.setAttribute("aria-sort", "none");
@@ -1449,6 +1459,8 @@
               const result = await response.json();
               if (!response.ok) throw new Error(result.error || "Unable to update status.");
               summaryRow.bcso_status = result.record.bcso_status;
+              summaryRow.last_action_at = new Date().toISOString();
+              parentRow.dataset.lastActionAt = summaryRow.last_action_at;
               const tableBadge = parentRow.querySelector(".return-table-status-badge");
               if (tableBadge) tableBadge.replaceWith(createReturnBadge(summaryRow.bcso_status, "status"));
               const replacementBadge = parentRow.querySelector("td:nth-child(5) .return-badge");
@@ -1471,6 +1483,26 @@
                 return;
               }
               renderReturnDetailCell(detailTd, result, summaryRow, parentRow);
+              const returnsTable = parentRow.closest("table");
+              const activeSortHeader = returnsTable.querySelector(
+                'th.returns-sort-header[data-sort-direction="asc"], th.returns-sort-header[data-sort-direction="desc"]'
+              );
+              if (activeSortHeader) {
+                const columnIndex = Array.from(activeSortHeader.parentElement.children).indexOf(activeSortHeader);
+                sortReturnsTable(
+                  returnsTable,
+                  columnIndex,
+                  activeSortHeader.dataset.sortLabel,
+                  activeSortHeader.dataset.sortDirection
+                );
+              } else {
+                const tbody = returnsTable.querySelector("tbody");
+                const detailRow = parentRow.nextElementSibling?.classList.contains("return-detail-row")
+                  ? parentRow.nextElementSibling
+                  : null;
+                tbody.insertBefore(parentRow, tbody.firstChild);
+                if (detailRow) parentRow.after(detailRow);
+              }
             } catch (error) {
               alert(error.message || "Unable to update status.");
             } finally {
@@ -2361,6 +2393,9 @@
               : rows;
             rowsToRender.forEach(row => {
               const tr = document.createElement("tr");
+              if (dept.toLowerCase() === "returns") {
+                tr.dataset.lastActionAt = row.last_action_at || "";
+              }
               if (dept.toLowerCase() === "returns" && options.returnsQueue) {
                 tr.dataset.returnsQueue = "true";
                 tr.dataset.includeUploaded = options.includeUploaded ? "true" : "false";

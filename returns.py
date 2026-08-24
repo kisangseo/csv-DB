@@ -705,11 +705,22 @@ def search_returns(conn, filters, exclude_uploaded=False):
             reason_for_hold,
             mdec_status,
             CASE WHEN blob_name IS NULL OR LTRIM(RTRIM(blob_name)) = '' THEN 0 ELSE 1 END AS has_pdf,
-            FORMAT(updated_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time', 'yyyy-MM-dd h:mm tt') AS updated_at
-        FROM search.Returns
+            FORMAT(updated_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time', 'yyyy-MM-dd h:mm tt') AS updated_at,
+            FORMAT(
+                COALESCE(last_user_action.last_action_at, returns_record.created_at, submitted_at),
+                'yyyy-MM-ddTHH:mm:ss.fffffff'
+            ) + 'Z' AS last_action_at
+        FROM search.Returns AS returns_record
+        OUTER APPLY (
+            SELECT TOP 1 activity.created_at AS last_action_at
+            FROM search.mdec_return_activity_log AS activity
+            WHERE activity.mdec_return_id = returns_record.mdec_return_id
+              AND COALESCE(activity.actor_email, '') NOT LIKE 'system:%'
+            ORDER BY activity.created_at DESC, activity.activity_id DESC
+        ) AS last_user_action
         WHERE {' AND '.join(clauses)}
-        ORDER BY COALESCE(attempt_date, date_signed, CAST(submitted_at AS date), intake_date, court_issue_date) DESC,
-                 mdec_return_id DESC
+        ORDER BY COALESCE(last_user_action.last_action_at, returns_record.created_at, submitted_at) DESC,
+                 returns_record.mdec_return_id DESC
         """,
         *params,
     )

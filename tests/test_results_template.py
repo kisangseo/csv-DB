@@ -69,6 +69,16 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('numeric: true', self.template)
         self.assertIn('row.classList.contains("return-detail-row")', self.template)
 
+    def test_returns_column_sorts_use_latest_real_action_as_tiebreaker(self):
+        self.assertIn('tr.dataset.lastActionAt = row.last_action_at || "";', self.template)
+        self.assertIn("const primaryOrder = compareReturnCellValues(", self.template)
+        self.assertIn("if (primaryOrder !== 0) return primaryOrder;", self.template)
+        self.assertIn("return bLastAction - aLastAction;", self.template)
+
+    def test_return_status_updates_refresh_last_action_order(self):
+        self.assertIn("parentRow.dataset.lastActionAt = summaryRow.last_action_at;", self.template)
+        self.assertIn("tbody.insertBefore(parentRow, tbody.firstChild);", self.template)
+
 
 if __name__ == "__main__":
     unittest.main()
