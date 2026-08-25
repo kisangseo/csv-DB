@@ -1,3 +1,4 @@
+import ast
 import unittest
 from pathlib import Path
 
@@ -6,12 +7,49 @@ from returns import (
     derived_signature_status,
     is_hard_copy_return,
     normalize_service_disposition,
+    normalize_return_payload,
     parse_cognito_entry_details,
     payload_from_export_row,
 )
 
 
 class ReturnsParsingTests(unittest.TestCase):
+    def test_email_petitioner_is_not_overwritten_by_concatenated_pdf_fields(self):
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        module = ast.parse(app_path.read_text())
+        function = next(
+            node for node in module.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "build_return_email_payload"
+        )
+        namespace = {
+            "parse_cognito_entry_details": parse_cognito_entry_details,
+            "normalize_return_payload": normalize_return_payload,
+            "parse_graph_datetime": lambda value: value,
+            "CIVIL_PAPERS_CONTAINER_NAME": "civilpapers",
+        }
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(app_path), "exec"), namespace)
+        html = """
+        <table>
+          <tr><td>DOCUMENT</td><td>C-02-CR-26-000424</td></tr>
+          <tr><td>PETITIONER</td><td>STATE OF MARYLAND</td></tr>
+          <tr><td>RESP NAME</td><td>NAKEI HAWKINS</td></tr>
+        </table>
+        """
+        parsed_pdf = {
+            "case_number": "C-02-CR-26-000424",
+            "petitioner_name": (
+                "STATE OF MARYLAND Person Served NAKEI HAWKINS "
+                "Address 1037 Reverdy Rd, Baltimore, MD"
+            ),
+            "respondent_name": "NAKEI HAWKINS",
+        }
+        payload = namespace["build_return_email_payload"](
+            {"body": {"content": html}}, {}, parsed_pdf, "return.pdf", "records@example.com"
+        )
+        self.assertEqual(payload["petitioner_name"], "STATE OF MARYLAND")
+        self.assertEqual(payload["respondent_name"], "NAKEI HAWKINS")
+
     def test_parses_cognito_entry_details_table(self):
         html = """
         <table>

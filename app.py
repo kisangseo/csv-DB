@@ -1625,11 +1625,11 @@ def build_return_email_payload(message, attachment, parsed_pdf, blob_name, mailb
     for key, value in fallback_payload.items():
         if value and not entry_payload.get(key):
             entry_payload[key] = value
-    # The generated return PDF is the authoritative signed document. Prefer its
-    # core service fields over incomplete or concatenated Cognito email details.
+    # The generated return PDF is authoritative for core service details, but
+    # its petitioner extraction can include adjacent fields. Keep the exact
+    # Cognito PETITIONER value when available; the PDF remains a fallback above.
     for key in (
         "respondent_name",
-        "petitioner_name",
         "service_address",
         "attempt_date",
         "service_disposition",
