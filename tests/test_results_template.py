@@ -80,5 +80,10 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn("tbody.insertBefore(parentRow, tbody.firstChild);", self.template)
 
 
+    def test_return_status_editor_is_available_to_every_authenticated_user(self):
+        self.assertIn("const CAN_UPDATE_RETURN_STATUS = true;", self.template)
+        self.assertIn("if (CAN_UPDATE_RETURN_STATUS) {", self.template)
+
+
 if __name__ == "__main__":
     unittest.main()

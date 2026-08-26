@@ -4176,8 +4176,6 @@ def get_return_details(return_id):
 def patch_return_status(return_id):
     if "user_id" not in session:
         return jsonify({"error": "Unauthorized"}), 401
-    if not can_edit_records():
-        return jsonify({"error": "You do not have permission to update return status"}), 403
     payload = request.get_json(silent=True) or {}
     conn = get_conn()
     try:

@@ -212,6 +212,7 @@
     <script>
       const USER_PERMISSION = {{ (user_permission or "") | tojson }};
       const CAN_EDIT = ["admin", "edit"].includes((USER_PERMISSION || "").toLowerCase());
+      const CAN_UPDATE_RETURN_STATUS = true;
       const CAN_DELETE = (USER_PERMISSION || "").toLowerCase() === "admin";
 
       const FIELD_MAP = {
@@ -1422,7 +1423,7 @@
         });
         panel.appendChild(grid);
 
-        if (CAN_EDIT) {
+        if (CAN_UPDATE_RETURN_STATUS) {
           const editor = document.createElement("div");
           editor.className = "return-status-editor";
           const select = document.createElement("select");

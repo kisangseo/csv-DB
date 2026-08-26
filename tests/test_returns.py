@@ -188,5 +188,17 @@ class ReturnsParsingTests(unittest.TestCase):
         )
 
 
+    def test_any_authenticated_user_can_update_return_status(self):
+        app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text()
+        route_start = app_source.index("def patch_return_status(return_id):")
+        route_end = app_source.index(
+            '@app.route("/returns/<int:return_id>/download"', route_start
+        )
+        route_source = app_source[route_start:route_end]
+        self.assertIn('if "user_id" not in session:', route_source)
+        self.assertNotIn("can_edit_records()", route_source)
+        self.assertNotIn("permission to update return status", route_source)
+
+
 if __name__ == "__main__":
     unittest.main()
