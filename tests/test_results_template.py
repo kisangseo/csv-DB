@@ -79,6 +79,12 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn("parentRow.dataset.lastActionAt = summaryRow.last_action_at;", self.template)
         self.assertIn("tbody.insertBefore(parentRow, tbody.firstChild);", self.template)
 
+    def test_returns_actions_confirm_processing_takeover(self):
+        self.assertIn("function confirmReturnTakeover", self.template)
+        self.assertIn("function downloadReturnPdf", self.template)
+        self.assertIn("statusPayload.takeover = true", self.template)
+        self.assertIn("already being processed by", self.template)
+
 
     def test_return_status_editor_is_available_to_every_authenticated_user(self):
         self.assertIn("const CAN_UPDATE_RETURN_STATUS = true;", self.template)

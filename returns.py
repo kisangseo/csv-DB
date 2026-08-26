@@ -15,6 +15,28 @@ _schema_lock = threading.Lock()
 _schema_ready = False
 
 
+class ReturnProcessingConflict(Exception):
+    """Raised when another user holds an unexpired Returns processing lock."""
+
+    def __init__(self, processing_by, processing_started_at, processing_expires_at):
+        super().__init__("Record already being processed.")
+        self.processing_by = processing_by
+        self.processing_started_at = processing_started_at
+        self.processing_expires_at = processing_expires_at
+
+    def as_dict(self):
+        def serialize(value):
+            return value.isoformat() if hasattr(value, "isoformat") else value
+
+        return {
+            "error": "Record already being processed.",
+            "lock_conflict": True,
+            "processing_by": self.processing_by,
+            "processing_started_at": serialize(self.processing_started_at),
+            "processing_expires_at": serialize(self.processing_expires_at),
+        }
+
+
 RETURN_FIELDS = (
     "cognito_entry_number",
     "case_number",
@@ -333,6 +355,9 @@ def _ensure_returns_tables(conn):
                 source_payload_json NVARCHAR(MAX) NULL,
                 ingestion_status NVARCHAR(50) NOT NULL DEFAULT ('processed'),
                 ingestion_error NVARCHAR(MAX) NULL,
+                processing_by NVARCHAR(320) NULL,
+                processing_started_at DATETIME2 NULL,
+                processing_expires_at DATETIME2 NULL,
                 is_active BIT NOT NULL DEFAULT (1),
                 created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
                 updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
@@ -392,6 +417,9 @@ def _ensure_returns_tables(conn):
         "source_payload_json": "NVARCHAR(MAX) NULL",
         "ingestion_status": "NVARCHAR(50) NULL",
         "ingestion_error": "NVARCHAR(MAX) NULL",
+        "processing_by": "NVARCHAR(320) NULL",
+        "processing_started_at": "DATETIME2 NULL",
+        "processing_expires_at": "DATETIME2 NULL",
         "is_active": "BIT NULL",
         "created_at": "DATETIME2 NULL",
         "updated_at": "DATETIME2 NULL",
@@ -705,6 +733,9 @@ def search_returns(conn, filters, exclude_uploaded=False):
             reason_for_hold,
             mdec_status,
             CASE WHEN blob_name IS NULL OR LTRIM(RTRIM(blob_name)) = '' THEN 0 ELSE 1 END AS has_pdf,
+            processing_by,
+            FORMAT(processing_started_at, 'yyyy-MM-ddTHH:mm:ss') AS processing_started_at,
+            FORMAT(processing_expires_at, 'yyyy-MM-ddTHH:mm:ss') AS processing_expires_at,
             FORMAT(updated_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time', 'yyyy-MM-dd h:mm tt') AS updated_at,
             FORMAT(
                 COALESCE(last_user_action.last_action_at, returns_record.created_at, submitted_at),
@@ -760,6 +791,69 @@ def fetch_return_activity(conn, return_id):
         int(return_id),
     )
     return _format_rows(cur)
+
+
+def claim_return_processing(conn, return_id, actor_email, takeover=False):
+    """Atomically claim or refresh a 15-minute processing lock."""
+    actor_email = clean_value(actor_email)
+    if not actor_email:
+        raise ValueError("Unable to identify the current user.")
+
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT processing_by, processing_started_at, processing_expires_at
+        FROM search.Returns WITH (UPDLOCK, ROWLOCK)
+        WHERE mdec_return_id = ? AND is_active = 1
+        """,
+        int(return_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+
+    current_owner, started_at, expires_at = row
+    cur.execute("SELECT SYSUTCDATETIME()")
+    now = cur.fetchone()[0]
+    active_other_owner = (
+        clean_value(current_owner)
+        and str(current_owner).lower() != actor_email.lower()
+        and expires_at is not None
+        and expires_at > now
+    )
+    if active_other_owner and not takeover:
+        conn.rollback()
+        raise ReturnProcessingConflict(current_owner, started_at, expires_at)
+
+    is_same_active_owner = (
+        clean_value(current_owner)
+        and str(current_owner).lower() == actor_email.lower()
+        and expires_at is not None
+        and expires_at > now
+    )
+    new_started_at = started_at if is_same_active_owner else now
+    cur.execute(
+        """
+        UPDATE search.Returns
+        SET processing_by = ?,
+            processing_started_at = ?,
+            processing_expires_at = DATEADD(MINUTE, 15, SYSUTCDATETIME())
+        WHERE mdec_return_id = ? AND is_active = 1
+        """,
+        actor_email, new_started_at, int(return_id),
+    )
+
+    if active_other_owner and takeover:
+        log_return_activity(
+            cur,
+            return_id,
+            "processing_taken_over",
+            f"Processing taken over from {current_owner}.",
+            actor_email,
+            current_owner,
+            actor_email,
+        )
+    return True
 
 
 def update_return_status(conn, return_id, status, actor_email, reason_for_hold=None):

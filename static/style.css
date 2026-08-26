@@ -907,6 +907,25 @@ textarea.modal-control {
   opacity: 0.55;
 }
 
+.return-processing-indicator {
+  display: inline-block;
+  margin: 3px 7px 3px 0;
+  padding: 4px 8px;
+  border: 1px solid #d97706;
+  border-radius: 5px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.return-action-pending {
+  cursor: wait;
+  opacity: 0.65;
+  pointer-events: none;
+}
+
 @media (max-width: 800px) {
   .return-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

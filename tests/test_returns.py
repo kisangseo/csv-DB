@@ -187,6 +187,13 @@ class ReturnsParsingTests(unittest.TestCase):
             returns_source,
         )
 
+    def test_processing_lock_is_atomic_and_fifteen_minutes(self):
+        source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
+        self.assertIn("class ReturnProcessingConflict", source)
+        self.assertIn("WITH (UPDLOCK, ROWLOCK)", source)
+        self.assertIn("DATEADD(MINUTE, 15, SYSUTCDATETIME())", source)
+        self.assertIn('"processing_taken_over"', source)
+
 
     def test_any_authenticated_user_can_update_return_status(self):
         app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text()

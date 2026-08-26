@@ -30,6 +30,8 @@ from daily_logs import search_daily_logs
 from search_sql import search_by_name, build_search_sql
 from returns import (
     RETURN_STATUS_VALUES,
+    ReturnProcessingConflict,
+    claim_return_processing,
     ensure_returns_tables,
     fetch_return_activity,
     get_return,
@@ -4183,6 +4185,13 @@ def patch_return_status(return_id):
         cur = conn.cursor()
         actor_email = get_current_user_email(cur)
         try:
+            if not claim_return_processing(
+                conn,
+                return_id,
+                actor_email,
+                takeover=bool(payload.get("takeover")),
+            ):
+                return jsonify({"error": "Return not found"}), 404
             updated = update_return_status(
                 conn,
                 return_id,
@@ -4190,7 +4199,10 @@ def patch_return_status(return_id):
                 actor_email,
                 payload.get("reason_for_hold"),
             )
+        except ReturnProcessingConflict as exc:
+            return jsonify(exc.as_dict()), 409
         except ValueError as exc:
+            conn.rollback()
             return jsonify({"error": str(exc)}), 400
         if not updated:
             return jsonify({"error": "Return not found"}), 404
@@ -4209,6 +4221,18 @@ def download_return_pdf(return_id):
     try:
         ensure_returns_tables(conn)
         cur = conn.cursor()
+        actor_email = get_current_user_email(cur)
+        try:
+            claimed = claim_return_processing(
+                conn,
+                return_id,
+                actor_email,
+                takeover=request.args.get("takeover") == "1",
+            )
+        except ReturnProcessingConflict as exc:
+            return jsonify(exc.as_dict()), 409
+        if not claimed:
+            return jsonify({"error": "Return not found"}), 404
         cur.execute(
             "SELECT blob_name, original_filename FROM search.Returns WHERE mdec_return_id = ? AND is_active = 1",
             return_id,
@@ -4218,7 +4242,6 @@ def download_return_pdf(return_id):
             return jsonify({"error": "Return PDF not found"}), 404
         blob_name = row[0]
         filename = row[1] or "return.pdf"
-        actor_email = get_current_user_email(cur)
         log_return_activity(cur, return_id, "pdf_downloaded", "Return PDF downloaded.", actor_email)
         conn.commit()
     finally:

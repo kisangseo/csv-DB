@@ -1295,6 +1295,73 @@
         return badge;
       }
 
+      function parseReturnUtc(value) {
+        const text = String(value || "").trim();
+        if (!text) return null;
+        const parsed = new Date(/[zZ]|[+-]\d\d:\d\d$/.test(text) ? text : `${text}Z`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+
+      function returnLockIsActive(record) {
+        const expires = parseReturnUtc(record?.processing_expires_at);
+        return Boolean(record?.processing_by && expires && expires > new Date());
+      }
+
+      function createReturnProcessingIndicator(record) {
+        if (!returnLockIsActive(record)) return null;
+        const indicator = document.createElement("span");
+        indicator.className = "return-processing-indicator";
+        indicator.textContent = `Being processed by ${record.processing_by}`;
+        if (record.processing_expires_at) {
+          indicator.title = `Processing window expires ${parseReturnUtc(record.processing_expires_at)?.toLocaleString() || "soon"}`;
+        }
+        return indicator;
+      }
+
+      function confirmReturnTakeover(conflict) {
+        const owner = conflict.processing_by || "another user";
+        const expires = parseReturnUtc(conflict.processing_expires_at);
+        const until = expires ? ` until ${expires.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}` : "";
+        return window.confirm(
+          `This record is already being processed by ${owner}${until}.\n\nDo you want to take over and continue?`
+        );
+      }
+
+      async function downloadReturnPdf(event, link) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (link.classList.contains("disabled")) return;
+
+        link.classList.add("return-action-pending");
+        try {
+          let response = await fetch(link.href, {credentials: "same-origin"});
+          if (response.status === 409) {
+            const conflict = await response.json();
+            if (!confirmReturnTakeover(conflict)) return;
+            const takeoverUrl = new URL(link.href, window.location.origin);
+            takeoverUrl.searchParams.set("takeover", "1");
+            response = await fetch(takeoverUrl, {credentials: "same-origin"});
+          }
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || "Unable to download PDF.");
+          }
+          const blob = await response.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          const temporaryLink = document.createElement("a");
+          temporaryLink.href = objectUrl;
+          temporaryLink.download = "return.pdf";
+          document.body.appendChild(temporaryLink);
+          temporaryLink.click();
+          temporaryLink.remove();
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+        } catch (error) {
+          alert(error.message || "Unable to download PDF.");
+        } finally {
+          link.classList.remove("return-action-pending");
+        }
+      }
+
       function renderReturnActivity(container, activity) {
         container.innerHTML = "";
         const title = document.createElement("div");
@@ -1357,11 +1424,14 @@
           hardCopyBadge.textContent = "HARD COPY REQUIRED";
           heading.appendChild(hardCopyBadge);
         }
+        const processingIndicator = createReturnProcessingIndicator(record);
+        if (processingIndicator) heading.appendChild(processingIndicator);
         if (record.blob_name || summaryRow.has_pdf) {
           const download = document.createElement("a");
           download.className = "table-action-btn return-download-link";
           download.href = `/returns/${summaryRow.mdec_return_id}/download`;
           download.textContent = "Download PDF";
+          download.addEventListener("click", (event) => downloadReturnPdf(event, download));
           heading.appendChild(download);
         }
         panel.appendChild(heading);
@@ -1452,12 +1522,23 @@
           save.addEventListener("click", async () => {
             save.disabled = true;
             try {
-              const response = await fetch(`/returns/${summaryRow.mdec_return_id}/status`, {
+              const statusPayload = {status: select.value, reason_for_hold: reason.value};
+              let response = await fetch(`/returns/${summaryRow.mdec_return_id}/status`, {
                 method: "PATCH",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({status: select.value, reason_for_hold: reason.value})
+                body: JSON.stringify(statusPayload)
               });
-              const result = await response.json();
+              let result = await response.json();
+              if (response.status === 409) {
+                if (!confirmReturnTakeover(result)) return;
+                statusPayload.takeover = true;
+                response = await fetch(`/returns/${summaryRow.mdec_return_id}/status`, {
+                  method: "PATCH",
+                  headers: {"Content-Type": "application/json"},
+                  body: JSON.stringify(statusPayload)
+                });
+                result = await response.json();
+              }
               if (!response.ok) throw new Error(result.error || "Unable to update status.");
               summaryRow.bcso_status = result.record.bcso_status;
               summaryRow.last_action_at = new Date().toISOString();
@@ -2453,7 +2534,9 @@
                   downloadBtn.setAttribute("aria-disabled", "true");
                   downloadBtn.classList.add("disabled");
                 }
-                downloadBtn.addEventListener("click", (event) => event.stopPropagation());
+                downloadBtn.addEventListener("click", (event) => downloadReturnPdf(event, downloadBtn));
+                const processingIndicator = createReturnProcessingIndicator(row);
+                if (processingIndicator) actionsTd.appendChild(processingIndicator);
                 actionsTd.appendChild(downloadBtn);
               } else if (isDvPdf) {
                 const editBtn = document.createElement("button");
