@@ -72,6 +72,15 @@ def find_best_civil_record(cur, case_number, submission_at):
         return None
     submission_date = submission_at.date().isoformat()
     priority = civil_priority_sql()
+    issued_date = """
+        COALESCE(
+            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(50), issue_date))), '')),
+            TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(50), court_issued_date))), ''))
+        )
+    """
+    intake_date_value = """
+        TRY_CONVERT(date, NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(50), intake_date))), ''))
+    """
     cur.execute(
         f"""
         SELECT TOP 1 record_id
@@ -79,18 +88,18 @@ def find_best_civil_record(cur, case_number, submission_at):
         WHERE LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
           AND REPLACE(REPLACE(REPLACE(REPLACE(UPPER(COALESCE(case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '') = ?
           AND (
-                ABS(DATEDIFF(day, CAST(? AS date), CAST(COALESCE(issue_date, court_issued_date) AS date))) <= ?
-             OR ABS(DATEDIFF(day, CAST(? AS date), CAST(intake_date AS date))) <= ?
+                ABS(DATEDIFF(day, CAST(? AS date), {issued_date})) <= ?
+             OR ABS(DATEDIFF(day, CAST(? AS date), {intake_date_value})) <= ?
           )
         ORDER BY
           {priority},
           CASE
-            WHEN COALESCE(issue_date, court_issued_date) IS NULL THEN ABS(DATEDIFF(day, CAST(? AS date), CAST(intake_date AS date)))
-            WHEN intake_date IS NULL THEN ABS(DATEDIFF(day, CAST(? AS date), CAST(COALESCE(issue_date, court_issued_date) AS date)))
-            WHEN ABS(DATEDIFF(day, CAST(? AS date), CAST(COALESCE(issue_date, court_issued_date) AS date)))
-               <= ABS(DATEDIFF(day, CAST(? AS date), CAST(intake_date AS date)))
-              THEN ABS(DATEDIFF(day, CAST(? AS date), CAST(COALESCE(issue_date, court_issued_date) AS date)))
-            ELSE ABS(DATEDIFF(day, CAST(? AS date), CAST(intake_date AS date)))
+            WHEN {issued_date} IS NULL THEN ABS(DATEDIFF(day, CAST(? AS date), {intake_date_value}))
+            WHEN {intake_date_value} IS NULL THEN ABS(DATEDIFF(day, CAST(? AS date), {issued_date}))
+            WHEN ABS(DATEDIFF(day, CAST(? AS date), {issued_date}))
+               <= ABS(DATEDIFF(day, CAST(? AS date), {intake_date_value}))
+              THEN ABS(DATEDIFF(day, CAST(? AS date), {issued_date}))
+            ELSE ABS(DATEDIFF(day, CAST(? AS date), {intake_date_value}))
           END,
           COALESCE(date_time_served, date_time_attempted, prior_attempt_date, date_received,
                    intake_date, issue_date, court_issued_date, created_at) DESC,

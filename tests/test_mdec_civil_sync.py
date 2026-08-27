@@ -97,7 +97,10 @@ class MdecCivilSyncTests(unittest.TestCase):
     def test_match_checks_issue_or_intake_within_ten_days(self):
         cur = FakeCursor(None)
         self.assertIsNone(find_best_civil_record(cur, "C-24-CV-26-000001", datetime(2026, 8, 20)))
-        self.assertIn("COALESCE(issue_date, court_issued_date)", cur.sql)
+        self.assertIn("TRY_CONVERT(date, NULLIF", cur.sql)
+        self.assertIn("CONVERT(nvarchar(50), issue_date)", cur.sql)
+        self.assertIn("CONVERT(nvarchar(50), court_issued_date)", cur.sql)
+        self.assertNotIn("CAST(COALESCE(issue_date, court_issued_date) AS date)", cur.sql)
         self.assertIn("OR ABS(DATEDIFF", cur.sql)
 
     def test_extracts_relative_servedocument_link(self):
