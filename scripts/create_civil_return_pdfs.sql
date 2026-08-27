@@ -45,6 +45,34 @@ BEGIN
 END;
 GO
 
+IF COL_LENGTH('search.civil_return_pdfs', 'source_system') IS NULL
+    ALTER TABLE search.civil_return_pdfs ADD source_system NVARCHAR(50) NULL;
+GO
+
+IF COL_LENGTH('search.civil_return_pdfs', 'source_document_id') IS NULL
+    ALTER TABLE search.civil_return_pdfs ADD source_document_id NVARCHAR(200) NULL;
+GO
+
+IF COL_LENGTH('search.civil_return_pdfs', 'source_submission_at') IS NULL
+    ALTER TABLE search.civil_return_pdfs ADD source_submission_at DATETIME2 NULL;
+GO
+
+IF COL_LENGTH('search.civil_return_pdfs', 'source_download_url') IS NULL
+    ALTER TABLE search.civil_return_pdfs ADD source_download_url NVARCHAR(2000) NULL;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = 'UX_civil_return_pdfs_source_document'
+      AND object_id = OBJECT_ID('search.civil_return_pdfs')
+)
+BEGIN
+    CREATE UNIQUE INDEX UX_civil_return_pdfs_source_document
+        ON search.civil_return_pdfs(source_system, source_document_id)
+        WHERE source_system IS NOT NULL AND source_document_id IS NOT NULL;
+END;
+GO
+
 IF NOT EXISTS (
     SELECT 1
     FROM sys.indexes

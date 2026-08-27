@@ -43,6 +43,7 @@ from returns import (
     update_return_status,
     upsert_return,
 )
+from mdec_civil_sync import sync_mdec_civil_documents
 from datetime import timedelta, datetime, date, UTC
 from zoneinfo import ZoneInfo
 from werkzeug.utils import secure_filename
@@ -1413,6 +1414,28 @@ def ensure_civil_return_pdfs_table(conn):
         )
         CREATE INDEX IX_civil_return_pdfs_case_intake
             ON search.civil_return_pdfs(case_number, intake_date)
+    """)
+    for column_name, column_type in (
+        ("source_system", "NVARCHAR(100) NULL"),
+        ("source_document_id", "NVARCHAR(200) NULL"),
+        ("source_submission_at", "DATETIME2 NULL"),
+        ("source_download_url", "NVARCHAR(2000) NULL"),
+    ):
+        cur.execute(f"""
+            IF COL_LENGTH('search.civil_return_pdfs', '{column_name}') IS NULL
+                ALTER TABLE search.civil_return_pdfs
+                ADD {column_name} {column_type}
+        """)
+    cur.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE name = 'UX_civil_return_pdfs_source_document'
+              AND object_id = OBJECT_ID('search.civil_return_pdfs')
+        )
+        CREATE UNIQUE INDEX UX_civil_return_pdfs_source_document
+            ON search.civil_return_pdfs(source_system, source_document_id)
+            WHERE source_system IS NOT NULL
+              AND source_document_id IS NOT NULL
     """)
     cur.execute("""
         IF OBJECT_ID('search.civil_return_pdf_downloads', 'U') IS NULL
@@ -4260,6 +4283,28 @@ def ingest_returns_email_route():
         return jsonify({"error": "Unauthorized"}), 401
     result = ingest_civil_return_email_payloads_for_run(source_folder="inbox", move_to_processed=True)
     status_code = 200 if result.get("status") in {"ok", "skipped"} else 500
+    return jsonify(result), status_code
+
+
+@app.route("/sync-mdec-civil-documents", methods=["GET", "POST"])
+def sync_mdec_civil_documents_route():
+    expected_key = (os.getenv("RETURNS_INGEST_KEY") or "").strip()
+    supplied_key = (request.headers.get("X-Ingest-Key") or "").strip()
+    if not expected_key:
+        return jsonify({"error": "RETURNS_INGEST_KEY is not configured"}), 503
+    if supplied_key != expected_key:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    conn = get_conn()
+    try:
+        ensure_civil_return_pdfs_table(conn)
+        result = sync_mdec_civil_documents(conn, get_civil_files_container())
+    except Exception as exc:
+        app.logger.exception("MDEC Civil Papers sync failed")
+        return jsonify({"status": "failed", "error": str(exc)}), 500
+    finally:
+        conn.close()
+    status_code = 200 if result.get("status") in {"ok", "partial"} else 500
     return jsonify(result), status_code
 
 
