@@ -85,6 +85,12 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn("statusPayload.takeover = true", self.template)
         self.assertIn("already being processed by", self.template)
 
+    def test_returns_download_uses_server_filename(self):
+        self.assertIn("function responseDownloadFilename", self.template)
+        self.assertIn('response.headers.get("Content-Disposition")', self.template)
+        self.assertIn("temporaryLink.download = responseDownloadFilename(response);", self.template)
+        self.assertNotIn('temporaryLink.download = "return.pdf";', self.template)
+
 
     def test_return_status_editor_is_available_to_every_authenticated_user(self):
         self.assertIn("const CAN_UPDATE_RETURN_STATUS = true;", self.template)

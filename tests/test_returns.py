@@ -14,6 +14,21 @@ from returns import (
 
 
 class ReturnsParsingTests(unittest.TestCase):
+    def test_return_download_filename_uses_case_number(self):
+        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        module = ast.parse(app_path.read_text())
+        function = next(
+            node for node in module.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "safe_return_download_filename"
+        )
+        namespace = {"re": __import__("re")}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(app_path), "exec"), namespace)
+        self.assertEqual(
+            namespace["safe_return_download_filename"]("D-01-CV-26-029848"),
+            "Baltimore City Sheriff's Office Return - D-01-CV-26-029848.pdf",
+        )
+
     def test_email_petitioner_is_not_overwritten_by_concatenated_pdf_fields(self):
         app_path = Path(__file__).resolve().parents[1] / "app.py"
         module = ast.parse(app_path.read_text())

@@ -1327,6 +1327,18 @@
         );
       }
 
+      function responseDownloadFilename(response, fallback = "return.pdf") {
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utf8Match) {
+          try {
+            return decodeURIComponent(utf8Match[1].trim().replace(/^"|"$/g, ""));
+          } catch (_) {}
+        }
+        const filenameMatch = disposition.match(/filename="([^"]+)"/i);
+        return filenameMatch ? filenameMatch[1] : fallback;
+      }
+
       async function downloadReturnPdf(event, link) {
         event.preventDefault();
         event.stopPropagation();
@@ -1350,7 +1362,7 @@
           const objectUrl = URL.createObjectURL(blob);
           const temporaryLink = document.createElement("a");
           temporaryLink.href = objectUrl;
-          temporaryLink.download = "return.pdf";
+          temporaryLink.download = responseDownloadFilename(response);
           document.body.appendChild(temporaryLink);
           temporaryLink.click();
           temporaryLink.remove();

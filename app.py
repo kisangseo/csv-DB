@@ -3271,7 +3271,19 @@ def upload_civil_papers_file():
     return jsonify({"ok": True, "blob_name": blob_name}), 201
 
 
-def send_civil_blob_collection(container, blob_names, zip_download_name, empty_message="No files found"):
+def safe_return_download_filename(case_number):
+    safe_case_number = re.sub(r'[\\/:*?"<>|]+', "_", str(case_number or "").strip())
+    safe_case_number = safe_case_number or "Unknown Case"
+    return f"Baltimore City Sheriff's Office Return - {safe_case_number}.pdf"
+
+
+def send_civil_blob_collection(
+    container,
+    blob_names,
+    zip_download_name,
+    empty_message="No files found",
+    single_download_name=None,
+):
     unique_blob_names = []
     seen = set()
     for blob_name in blob_names:
@@ -3291,7 +3303,7 @@ def send_civil_blob_collection(container, blob_names, zip_download_name, empty_m
         except Exception as exc:
             return jsonify({"error": f"Unable to download file from blob storage: {exc}"}), 500
 
-        filename = (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
+        filename = single_download_name or (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
         content_type = (props.content_settings.content_type if props.content_settings else None) or "application/octet-stream"
         return send_file(
             io.BytesIO(data),
@@ -4285,20 +4297,26 @@ def download_return_pdf(return_id):
         if not claimed:
             return jsonify({"error": "Return not found"}), 404
         cur.execute(
-            "SELECT blob_name, original_filename FROM search.Returns WHERE mdec_return_id = ? AND is_active = 1",
+            "SELECT blob_name, case_number FROM search.Returns WHERE mdec_return_id = ? AND is_active = 1",
             return_id,
         )
         row = cur.fetchone()
         if not row or not row[0]:
             return jsonify({"error": "Return PDF not found"}), 404
         blob_name = row[0]
-        filename = row[1] or "return.pdf"
+        filename = safe_return_download_filename(row[1])
         log_return_activity(cur, return_id, "pdf_downloaded", "Return PDF downloaded.", actor_email)
         conn.commit()
     finally:
         conn.close()
     container = get_civil_files_container()
-    return send_civil_blob_collection(container, [blob_name], filename, "Return PDF not found")
+    return send_civil_blob_collection(
+        container,
+        [blob_name],
+        filename,
+        "Return PDF not found",
+        single_download_name=filename,
+    )
 
 
 @app.route("/ingest-returns-email", methods=["GET", "POST"])
