@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import time
 from datetime import datetime
 from html import unescape
 from html.parser import HTMLParser
@@ -10,6 +11,9 @@ MDEC_SOURCE_SYSTEM = "mdec"
 MDEC_MATCH_WINDOW_DAYS = 10
 MDEC_RETRY_MINUTES = 10
 MDEC_FAILED_RETRY_MINUTES = 30
+MDEC_BATCH_SIZE = 10
+MDEC_RUN_TIME_BUDGET_SECONDS = 150
+MDEC_DOWNLOAD_TIMEOUT_SECONDS = 15
 
 
 def normalize_case_number(value):
@@ -112,7 +116,7 @@ def fetch_mdec_documents(conn):
     cur = conn.cursor()
     priority = civil_priority_sql("r")
     cur.execute(f"""
-        SELECT cd.id, cd.case_number, cd.submission_datetime, cd.document_name,
+        SELECT TOP ({MDEC_BATCH_SIZE}) cd.id, cd.case_number, cd.submission_datetime, cd.document_name,
                cd.lead_document, cd.filing_description, cd.download_link
         FROM dbo.case_documents AS cd
         LEFT JOIN search.mdec_civil_sync_status AS sync
@@ -248,7 +252,7 @@ def _extract_document_links(page_url, html_text):
     return links
 
 
-def download_pdf(url, timeout=60, session=None, max_depth=3):
+def download_pdf(url, timeout=MDEC_DOWNLOAD_TIMEOUT_SECONDS, session=None, max_depth=3):
     if session is None:
         import requests
         session = requests.Session()
@@ -376,12 +380,16 @@ def sync_mdec_civil_documents(target_conn, container, source_conn=None, pdf_load
     # optional argument makes isolated tests possible without requiring a
     # second production database connection.
     source_conn = source_conn or target_conn
-    summary = {"status": "ok", "scanned": 0, "matched": 0, "inserted": 0, "updated": 0, "unmatched": 0, "failed": 0, "errors": []}
+    summary = {"status": "ok", "scanned": 0, "matched": 0, "inserted": 0, "updated": 0, "unmatched": 0, "failed": 0, "deferred": 0, "errors": []}
+    started_at = time.monotonic()
     try:
         documents = fetch_mdec_documents(source_conn)
         summary["scanned"] = len(documents)
         target_cur = target_conn.cursor()
-        for document in documents:
+        for index, document in enumerate(documents):
+            if time.monotonic() - started_at >= MDEC_RUN_TIME_BUDGET_SECONDS:
+                summary["deferred"] = len(documents) - index
+                break
             if not document.get("submission_at"):
                 summary["unmatched"] += 1
                 record_sync_status(target_conn, document, "unmatched", error="Missing or invalid submission date")

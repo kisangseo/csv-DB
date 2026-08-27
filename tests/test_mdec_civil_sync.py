@@ -4,6 +4,9 @@ from unittest.mock import patch
 
 from mdec_civil_sync import (
     MDEC_MATCH_WINDOW_DAYS,
+    MDEC_BATCH_SIZE,
+    MDEC_DOWNLOAD_TIMEOUT_SECONDS,
+    MDEC_RUN_TIME_BUDGET_SECONDS,
     MDEC_RETRY_MINUTES,
     _extract_document_links,
     _unwrap_secure_web_url,
@@ -120,11 +123,15 @@ class MdecCivilSyncTests(unittest.TestCase):
 
     def test_candidate_query_skips_terminal_matches_but_keeps_new_and_retryable_documents(self):
         self.assertEqual(MDEC_RETRY_MINUTES, 10)
+        self.assertEqual(MDEC_BATCH_SIZE, 10)
+        self.assertLessEqual(MDEC_DOWNLOAD_TIMEOUT_SECONDS, 15)
+        self.assertLessEqual(MDEC_RUN_TIME_BUDGET_SECONDS, 150)
         conn = FakeConnection()
         conn.cursor_value = FakeCursor(rows=[])
         self.assertEqual(fetch_mdec_documents(conn), [])
         sql = conn.cursor_value.sql
         self.assertIn("sync.source_document_id IS NULL AND pdf.id IS NULL", sql)
+        self.assertIn("SELECT TOP (10)", sql)
         self.assertIn("sync.sync_status IN ('unmatched', 'failed')", sql)
         self.assertIn("THEN 0", sql)
         self.assertIn("THEN 1", sql)
