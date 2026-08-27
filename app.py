@@ -1459,6 +1459,34 @@ def ensure_civil_return_pdfs_table(conn):
         CREATE INDEX IX_civil_return_pdf_downloads_return_pdf
             ON search.civil_return_pdf_downloads(return_pdf_id, downloaded_at DESC)
     """)
+    cur.execute("""
+        IF OBJECT_ID('search.mdec_civil_sync_status', 'U') IS NULL
+        BEGIN
+            CREATE TABLE search.mdec_civil_sync_status (
+                source_document_id NVARCHAR(200) NOT NULL PRIMARY KEY,
+                case_number NVARCHAR(100) NULL,
+                sync_status NVARCHAR(30) NOT NULL,
+                matched_record_id INT NULL,
+                matched_pdf_id INT NULL,
+                attempt_count INT NOT NULL DEFAULT (0),
+                last_attempt_at DATETIME2 NULL,
+                next_retry_at DATETIME2 NULL,
+                last_error NVARCHAR(2000) NULL,
+                completed_at DATETIME2 NULL,
+                updated_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+            )
+        END
+    """)
+    cur.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE name = 'IX_mdec_civil_sync_retry'
+              AND object_id = OBJECT_ID('search.mdec_civil_sync_status')
+        )
+        CREATE INDEX IX_mdec_civil_sync_retry
+            ON search.mdec_civil_sync_status(sync_status, next_retry_at)
+            INCLUDE (source_document_id, matched_record_id)
+    """)
     conn.commit()
 
 

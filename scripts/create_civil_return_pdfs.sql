@@ -45,6 +45,36 @@ BEGIN
 END;
 GO
 
+IF OBJECT_ID('search.mdec_civil_sync_status', 'U') IS NULL
+BEGIN
+    CREATE TABLE search.mdec_civil_sync_status (
+        source_document_id NVARCHAR(200) NOT NULL PRIMARY KEY,
+        case_number NVARCHAR(100) NULL,
+        sync_status NVARCHAR(30) NOT NULL,
+        matched_record_id INT NULL,
+        matched_pdf_id INT NULL,
+        attempt_count INT NOT NULL CONSTRAINT DF_mdec_civil_sync_attempt_count DEFAULT (0),
+        last_attempt_at DATETIME2 NULL,
+        next_retry_at DATETIME2 NULL,
+        last_error NVARCHAR(2000) NULL,
+        completed_at DATETIME2 NULL,
+        updated_at DATETIME2 NOT NULL CONSTRAINT DF_mdec_civil_sync_updated_at DEFAULT SYSUTCDATETIME()
+    );
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+    WHERE name = 'IX_mdec_civil_sync_retry'
+      AND object_id = OBJECT_ID('search.mdec_civil_sync_status')
+)
+BEGIN
+    CREATE INDEX IX_mdec_civil_sync_retry
+        ON search.mdec_civil_sync_status(sync_status, next_retry_at)
+        INCLUDE (source_document_id, matched_record_id);
+END;
+GO
+
 IF COL_LENGTH('search.civil_return_pdfs', 'source_system') IS NULL
     ALTER TABLE search.civil_return_pdfs ADD source_system NVARCHAR(50) NULL;
 GO

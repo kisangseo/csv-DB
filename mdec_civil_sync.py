@@ -8,6 +8,8 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 MDEC_SOURCE_SYSTEM = "mdec"
 MDEC_MATCH_WINDOW_DAYS = 10
+MDEC_RETRY_MINUTES = 10
+MDEC_FAILED_RETRY_MINUTES = 30
 
 
 def normalize_case_number(value):
@@ -37,22 +39,23 @@ def parse_submission_datetime(value):
     return None
 
 
-def civil_priority_sql():
-    return """
+def civil_priority_sql(alias=None):
+    prefix = f"{alias}." if alias else ""
+    return f"""
         CASE
-            WHEN LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%served%'
-             AND LOWER(COALESCE(administrative_status, service_disp, disposition, '')) NOT LIKE '%non est%'
-             AND LOWER(COALESCE(administrative_status, service_disp, disposition, '')) NOT LIKE '%not served%'
-             AND LOWER(COALESCE(administrative_status, service_disp, disposition, '')) NOT LIKE '%unserved%'
+            WHEN LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) LIKE '%served%'
+             AND LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) NOT LIKE '%non est%'
+             AND LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) NOT LIKE '%not served%'
+             AND LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) NOT LIKE '%unserved%'
                 THEN 0
-            WHEN LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%non est%'
-              OR LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%not served%'
-              OR LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%unserved%'
+            WHEN LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) LIKE '%non est%'
+              OR LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) LIKE '%not served%'
+              OR LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) LIKE '%unserved%'
                 THEN 1
-            WHEN LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%attempt%'
-              OR LOWER(COALESCE(source_file, '')) = 'civil-paper-attempts'
+            WHEN LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) LIKE '%attempt%'
+              OR LOWER(COALESCE({prefix}source_file, '')) = 'civil-paper-attempts'
                 THEN 2
-            WHEN LOWER(COALESCE(administrative_status, service_disp, disposition, '')) LIKE '%received%'
+            WHEN LOWER(COALESCE({prefix}administrative_status, {prefix}service_disp, {prefix}disposition, '')) LIKE '%received%'
                 THEN 3
             ELSE 4
         END
@@ -107,13 +110,29 @@ def find_best_civil_record(cur, case_number, submission_at):
 
 def fetch_mdec_documents(conn):
     cur = conn.cursor()
-    cur.execute("""
-        SELECT id, case_number, submission_datetime, document_name, lead_document,
-               filing_description, download_link
-        FROM dbo.case_documents
-        WHERE NULLIF(LTRIM(RTRIM(COALESCE(case_number, ''))), '') IS NOT NULL
-          AND NULLIF(LTRIM(RTRIM(COALESCE(download_link, ''))), '') IS NOT NULL
-        ORDER BY id
+    priority = civil_priority_sql("r")
+    cur.execute(f"""
+        SELECT cd.id, cd.case_number, cd.submission_datetime, cd.document_name,
+               cd.lead_document, cd.filing_description, cd.download_link
+        FROM dbo.case_documents AS cd
+        LEFT JOIN search.mdec_civil_sync_status AS sync
+          ON sync.source_document_id = CONVERT(NVARCHAR(200), cd.id)
+        LEFT JOIN search.civil_return_pdfs AS pdf
+          ON pdf.source_system = 'mdec'
+         AND pdf.source_document_id = CONVERT(NVARCHAR(200), cd.id)
+        LEFT JOIN search.records AS r
+          ON r.record_id = pdf.record_id
+        WHERE NULLIF(LTRIM(RTRIM(COALESCE(cd.case_number, ''))), '') IS NOT NULL
+          AND NULLIF(LTRIM(RTRIM(COALESCE(cd.download_link, ''))), '') IS NOT NULL
+          AND (
+                (sync.source_document_id IS NULL AND pdf.id IS NULL)
+             OR (sync.sync_status IN ('unmatched', 'failed')
+                 AND (sync.next_retry_at IS NULL OR sync.next_retry_at <= SYSUTCDATETIME()))
+             OR (pdf.id IS NOT NULL
+                 AND {priority} > 1
+                 AND (sync.next_retry_at IS NULL OR sync.next_retry_at <= SYSUTCDATETIME()))
+          )
+        ORDER BY cd.id
     """)
     documents = []
     for row in cur.fetchall():
@@ -127,6 +146,43 @@ def fetch_mdec_documents(conn):
             "download_url": str(row[6] or "").strip(),
         })
     return documents
+
+
+def get_civil_record_priority(cur, record_id):
+    priority = civil_priority_sql()
+    cur.execute(f"SELECT {priority} FROM search.records WHERE record_id = ?", record_id)
+    row = cur.fetchone()
+    return int(row[0]) if row else 4
+
+
+def record_sync_status(conn, document, status, record_id=None, pdf_id=None, error=None, terminal=False):
+    cur = conn.cursor()
+    retry_minutes = MDEC_FAILED_RETRY_MINUTES if status == "failed" else MDEC_RETRY_MINUTES
+    cur.execute("""
+        MERGE search.mdec_civil_sync_status AS target
+        USING (SELECT ? AS source_document_id) AS source
+           ON target.source_document_id = source.source_document_id
+        WHEN MATCHED THEN UPDATE SET
+            case_number = ?, sync_status = ?, matched_record_id = ?, matched_pdf_id = ?,
+            attempt_count = target.attempt_count + 1,
+            last_attempt_at = SYSUTCDATETIME(),
+            next_retry_at = CASE WHEN ? = 1 THEN NULL ELSE DATEADD(minute, ?, SYSUTCDATETIME()) END,
+            last_error = ?, completed_at = CASE WHEN ? = 1 THEN SYSUTCDATETIME() ELSE NULL END,
+            updated_at = SYSUTCDATETIME()
+        WHEN NOT MATCHED THEN INSERT (
+            source_document_id, case_number, sync_status, matched_record_id, matched_pdf_id,
+            attempt_count, last_attempt_at, next_retry_at, last_error, completed_at, updated_at
+        ) VALUES (
+            ?, ?, ?, ?, ?, 1, SYSUTCDATETIME(),
+            CASE WHEN ? = 1 THEN NULL ELSE DATEADD(minute, ?, SYSUTCDATETIME()) END,
+            ?, CASE WHEN ? = 1 THEN SYSUTCDATETIME() ELSE NULL END, SYSUTCDATETIME()
+        );
+    """,
+        document["source_document_id"], document.get("case_number"), status, record_id, pdf_id,
+        1 if terminal else 0, retry_minutes, error, 1 if terminal else 0,
+        document["source_document_id"], document.get("case_number"), status, record_id, pdf_id,
+        1 if terminal else 0, retry_minutes, error, 1 if terminal else 0,
+    )
 
 
 def source_filename(document):
@@ -328,18 +384,29 @@ def sync_mdec_civil_documents(target_conn, container, source_conn=None, pdf_load
         for document in documents:
             if not document.get("submission_at"):
                 summary["unmatched"] += 1
+                record_sync_status(target_conn, document, "unmatched", error="Missing or invalid submission date")
+                target_conn.commit()
                 continue
             try:
                 record_id = find_best_civil_record(target_cur, document["case_number"], document["submission_at"])
                 if not record_id:
                     summary["unmatched"] += 1
+                    record_sync_status(target_conn, document, "unmatched", error="No eligible Civil Papers record")
+                    target_conn.commit()
                     continue
-                _, inserted = upsert_mdec_document(target_conn, container, document, record_id, pdf_loader=pdf_loader)
+                pdf_id, inserted = upsert_mdec_document(target_conn, container, document, record_id, pdf_loader=pdf_loader)
+                priority = get_civil_record_priority(target_cur, record_id)
+                record_sync_status(
+                    target_conn, document, "matched", record_id=record_id, pdf_id=pdf_id,
+                    terminal=priority <= 1,
+                )
                 summary["matched"] += 1
                 summary["inserted" if inserted else "updated"] += 1
                 target_conn.commit()
             except Exception as exc:
                 target_conn.rollback()
+                record_sync_status(target_conn, document, "failed", error=str(exc))
+                target_conn.commit()
                 summary["failed"] += 1
                 summary["errors"].append({"source_document_id": document.get("source_document_id"), "error": str(exc)})
         if summary["failed"]:

@@ -4,9 +4,11 @@ from unittest.mock import patch
 
 from mdec_civil_sync import (
     MDEC_MATCH_WINDOW_DAYS,
+    MDEC_RETRY_MINUTES,
     _extract_document_links,
     _unwrap_secure_web_url,
     download_pdf,
+    fetch_mdec_documents,
     find_best_civil_record,
     normalize_case_number,
     parse_submission_datetime,
@@ -36,8 +38,9 @@ class FakeSession:
 
 
 class FakeCursor:
-    def __init__(self, row=None):
+    def __init__(self, row=None, rows=None):
         self.row = row
+        self.rows = rows or []
         self.sql = ""
         self.params = ()
 
@@ -47,6 +50,9 @@ class FakeCursor:
 
     def fetchone(self):
         return self.row
+
+    def fetchall(self):
+        return self.rows
 
 
 class FakeConnection:
@@ -112,6 +118,19 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertEqual(download_pdf(landing, session=session), b"%PDF-1.7 test")
         self.assertEqual(session.calls[1][1]["headers"], {"Referer": landing})
 
+    def test_candidate_query_skips_terminal_matches_but_keeps_new_and_retryable_documents(self):
+        self.assertEqual(MDEC_RETRY_MINUTES, 10)
+        conn = FakeConnection()
+        conn.cursor_value = FakeCursor(rows=[])
+        self.assertEqual(fetch_mdec_documents(conn), [])
+        sql = conn.cursor_value.sql
+        self.assertIn("sync.source_document_id IS NULL AND pdf.id IS NULL", sql)
+        self.assertIn("sync.sync_status IN ('unmatched', 'failed')", sql)
+        self.assertIn("THEN 0", sql)
+        self.assertIn("THEN 1", sql)
+        self.assertIn("> 1", sql)
+        self.assertIn("next_retry_at", sql)
+
     def test_sync_reads_mdec_documents_from_shared_target_database(self):
         conn = FakeConnection()
         document = {
@@ -122,13 +141,35 @@ class MdecCivilSyncTests(unittest.TestCase):
         with (
             patch("mdec_civil_sync.fetch_mdec_documents", return_value=[document]) as fetch,
             patch("mdec_civil_sync.find_best_civil_record", return_value=456),
+            patch("mdec_civil_sync.get_civil_record_priority", return_value=0),
             patch("mdec_civil_sync.upsert_mdec_document", return_value=(1, True)),
+            patch("mdec_civil_sync.record_sync_status") as record_status,
         ):
             result = sync_mdec_civil_documents(conn, object())
 
         fetch.assert_called_once_with(conn)
         self.assertEqual(result["inserted"], 1)
         self.assertEqual(conn.commits, 1)
+        self.assertTrue(record_status.call_args.kwargs["terminal"])
+
+    def test_nonterminal_match_is_recorded_for_future_priority_rechecks(self):
+        conn = FakeConnection()
+        document = {
+            "source_document_id": "8",
+            "case_number": "D-01-CV-26-029286",
+            "submission_at": datetime(2026, 8, 20),
+        }
+        with (
+            patch("mdec_civil_sync.fetch_mdec_documents", return_value=[document]),
+            patch("mdec_civil_sync.find_best_civil_record", return_value=789),
+            patch("mdec_civil_sync.get_civil_record_priority", return_value=2),
+            patch("mdec_civil_sync.upsert_mdec_document", return_value=(2, False)),
+            patch("mdec_civil_sync.record_sync_status") as record_status,
+        ):
+            result = sync_mdec_civil_documents(conn, object())
+
+        self.assertEqual(result["updated"], 1)
+        self.assertFalse(record_status.call_args.kwargs["terminal"])
 
 
 if __name__ == "__main__":
