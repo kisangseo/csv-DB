@@ -9,7 +9,9 @@ from mdec_civil_sync import (
     MDEC_RUN_TIME_BUDGET_SECONDS,
     MDEC_RETRY_MINUTES,
     _extract_document_links,
+    _is_probable_document_link,
     _unwrap_secure_web_url,
+    download_combined_pdf,
     download_pdf,
     fetch_mdec_documents,
     find_best_civil_record,
@@ -20,24 +22,37 @@ from mdec_civil_sync import (
 
 
 class FakeResponse:
-    def __init__(self, url, content, content_type):
+    def __init__(self, url, content, content_type, error=None, status_code=200, payload=None):
         self.url = url
         self.content = content
         self.headers = {"content-type": content_type}
         self.text = content.decode("utf-8", errors="ignore")
+        self.error = error
+        self.status_code = status_code
+        self.payload = payload
 
     def raise_for_status(self):
+        if self.error:
+            raise self.error
         return None
+
+    def json(self):
+        return self.payload
 
 
 class FakeSession:
-    def __init__(self, responses):
+    def __init__(self, responses, post_responses=None):
         self.responses = responses
+        self.post_responses = post_responses or {}
         self.calls = []
 
     def get(self, url, **kwargs):
         self.calls.append((url, kwargs))
         return self.responses[url]
+
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self.post_responses[url]
 
 
 class FakeCursor:
@@ -115,6 +130,21 @@ class MdecCivilSyncTests(unittest.TestCase):
         )
         self.assertEqual(links, ["https://efilemd.tylertech.cloud/ServeDocument.ashx?id=456"])
 
+    def test_document_filter_rejects_namespace_and_media_assets(self):
+        self.assertFalse(_is_probable_document_link("https://www.w3.org/1999/xhtml"))
+        self.assertFalse(_is_probable_document_link("https://www.w3.org/cms-uploads/animation.mp4"))
+        self.assertTrue(_is_probable_document_link("https://efilemd.tylertech.cloud/ServeDocument.ashx?id=456"))
+        links = _extract_document_links(
+            "https://efilemd.tylertech.cloud/view/123",
+            """
+            <html xmlns="https://www.w3.org/1999/xhtml">
+              <a href="https://www.w3.org/cms-uploads/animation.mp4">Animation</a>
+              <a href="/ServeDocument.ashx?id=456">Download document</a>
+            </html>
+            """,
+        )
+        self.assertEqual(links, ["https://efilemd.tylertech.cloud/ServeDocument.ashx?id=456"])
+
     def test_unwraps_cisco_secure_web_target(self):
         wrapped = "https://secure-web.cisco.com/1/abc?url=https%3A%2F%2Fefilemd.tylertech.cloud%2Fdoc%2F7"
         self.assertEqual(_unwrap_secure_web_url(wrapped), "https://efilemd.tylertech.cloud/doc/7")
@@ -129,6 +159,31 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertEqual(download_pdf(landing, session=session), b"%PDF-1.7 test")
         self.assertEqual(session.calls[1][1]["headers"], {"Referer": landing})
 
+    def test_download_pdf_skips_failed_child_and_continues_to_pdf(self):
+        landing = "https://efilemd.tylertech.cloud/view/123"
+        failed = "https://efilemd.tylertech.cloud/download?id=bad"
+        pdf_url = "https://efilemd.tylertech.cloud/ServeDocument.ashx?id=456"
+        session = FakeSession({
+            landing: FakeResponse(
+                landing,
+                f'<html><a href="{failed}">Download</a><a href="{pdf_url}">PDF</a></html>'.encode(),
+                "text/html",
+            ),
+            failed: FakeResponse(failed, b"rate limited", "text/plain", RuntimeError("429")),
+            pdf_url: FakeResponse(pdf_url, b"%PDF-1.7 test", "application/pdf"),
+        })
+        self.assertEqual(download_pdf(landing, session=session), b"%PDF-1.7 test")
+
+    def test_downloads_one_mdec_combined_pdf_job(self):
+        start_url = "https://mdec.example/download-case/C-24-CV-25-003100/combined/start"
+        file_url = "https://mdec.example/download-case/jobs/job-123/file"
+        session = FakeSession(
+            {file_url: FakeResponse(file_url, b"%PDF-1.7 combined", "application/pdf")},
+            {start_url: FakeResponse(start_url, b"", "application/json", payload={"ok": True, "job_id": "job-123"})},
+        )
+        self.assertEqual(download_combined_pdf(start_url, session=session), b"%PDF-1.7 combined")
+        self.assertEqual([call[0] for call in session.calls], [start_url, file_url])
+
     def test_candidate_query_skips_terminal_matches_but_keeps_new_and_retryable_documents(self):
         self.assertEqual(MDEC_RETRY_MINUTES, 10)
         self.assertEqual(MDEC_BATCH_SIZE, 10)
@@ -141,10 +196,25 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertIn("sync.source_document_id IS NULL AND pdf.id IS NULL", sql)
         self.assertIn("SELECT TOP (10)", sql)
         self.assertIn("sync.sync_status IN ('unmatched', 'failed')", sql)
+        self.assertIn("CONCAT('combined:', cd.normalized_case_number)", sql)
+        self.assertIn("JSON_VALUE(pdf.source_json, '$.source_version')", sql)
+        self.assertIn("ROW_NUMBER() OVER", sql)
         self.assertIn("THEN 0", sql)
         self.assertIn("THEN 1", sql)
         self.assertIn("> 1", sql)
         self.assertIn("next_retry_at", sql)
+
+    def test_fetches_one_combined_candidate_per_case(self):
+        conn = FakeConnection()
+        conn.cursor_value = FakeCursor(rows=[(
+            91, "C-24-CV-25-003100", "2026-08-27", "document.pdf",
+            "lead.pdf", "Sheriff Service", "C24CV25003100",
+        )])
+        documents = fetch_mdec_documents(conn)
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0]["source_document_id"], "combined:C24CV25003100")
+        self.assertEqual(documents[0]["source_version"], 91)
+        self.assertTrue(documents[0]["download_url"].endswith("/download-case/C-24-CV-25-003100/combined/start"))
 
     def test_sync_reads_mdec_documents_from_shared_target_database(self):
         conn = FakeConnection()

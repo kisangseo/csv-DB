@@ -14,6 +14,11 @@ MDEC_FAILED_RETRY_MINUTES = 30
 MDEC_BATCH_SIZE = 10
 MDEC_RUN_TIME_BUDGET_SECONDS = 150
 MDEC_DOWNLOAD_TIMEOUT_SECONDS = 15
+MDEC_COMBINED_JOB_TIMEOUT_SECONDS = 45
+MDEC_SERVICE_BASE_URL = os.getenv(
+    "MDEC_SERVICE_BASE_URL",
+    "https://bcso-service-case-docs-e7hfcmdva0gpgphd.centralus-01.azurewebsites.net",
+).rstrip("/")
 
 
 def normalize_case_number(value):
@@ -138,38 +143,54 @@ def fetch_mdec_documents(conn):
     cur = conn.cursor()
     priority = civil_priority_sql("r")
     cur.execute(f"""
-        SELECT TOP ({MDEC_BATCH_SIZE}) cd.id, cd.case_number, cd.submission_datetime, cd.document_name,
-               cd.lead_document, cd.filing_description, cd.download_link
-        FROM dbo.case_documents AS cd
+        WITH ranked_documents AS (
+            SELECT cd.*,
+                   REPLACE(REPLACE(REPLACE(REPLACE(UPPER(COALESCE(cd.case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '') AS normalized_case_number,
+                   MAX(cd.id) OVER (
+                       PARTITION BY REPLACE(REPLACE(REPLACE(REPLACE(UPPER(COALESCE(cd.case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '')
+                   ) AS source_version,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY REPLACE(REPLACE(REPLACE(REPLACE(UPPER(COALESCE(cd.case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '')
+                       ORDER BY cd.id DESC
+                   ) AS case_row_number
+            FROM dbo.case_documents AS cd
+            WHERE NULLIF(LTRIM(RTRIM(COALESCE(cd.case_number, ''))), '') IS NOT NULL
+        )
+        SELECT TOP ({MDEC_BATCH_SIZE}) cd.source_version, cd.case_number, cd.submission_datetime,
+               cd.document_name, cd.lead_document, cd.filing_description, cd.normalized_case_number
+        FROM ranked_documents AS cd
         LEFT JOIN search.mdec_civil_sync_status AS sync
-          ON sync.source_document_id = CONVERT(NVARCHAR(200), cd.id)
+          ON sync.source_document_id = CONCAT('combined:', cd.normalized_case_number)
         LEFT JOIN search.civil_return_pdfs AS pdf
           ON pdf.source_system = 'mdec'
-         AND pdf.source_document_id = CONVERT(NVARCHAR(200), cd.id)
+         AND pdf.source_document_id = CONCAT('combined:', cd.normalized_case_number)
         LEFT JOIN search.records AS r
           ON r.record_id = pdf.record_id
-        WHERE NULLIF(LTRIM(RTRIM(COALESCE(cd.case_number, ''))), '') IS NOT NULL
-          AND NULLIF(LTRIM(RTRIM(COALESCE(cd.download_link, ''))), '') IS NOT NULL
+        WHERE cd.case_row_number = 1
           AND (
                 (sync.source_document_id IS NULL AND pdf.id IS NULL)
+             OR (pdf.id IS NOT NULL
+                 AND COALESCE(TRY_CONVERT(BIGINT, JSON_VALUE(pdf.source_json, '$.source_version')), 0) < cd.source_version)
              OR (sync.sync_status IN ('unmatched', 'failed')
                  AND (sync.next_retry_at IS NULL OR sync.next_retry_at <= SYSUTCDATETIME()))
              OR (pdf.id IS NOT NULL
                  AND {priority} > 1
                  AND (sync.next_retry_at IS NULL OR sync.next_retry_at <= SYSUTCDATETIME()))
           )
-        ORDER BY cd.id
+        ORDER BY CASE WHEN sync.source_document_id IS NULL AND pdf.id IS NULL THEN 0 ELSE 1 END,
+                 cd.source_version
     """)
     documents = []
     for row in cur.fetchall():
         documents.append({
-            "source_document_id": str(row[0]),
+            "source_document_id": f"combined:{str(row[6] or '').strip()}",
+            "source_version": int(row[0]),
             "case_number": str(row[1] or "").strip(),
             "submission_at": parse_submission_datetime(row[2]),
             "document_name": str(row[3] or "").strip(),
             "lead_document": str(row[4] or "").strip(),
             "filing_description": str(row[5] or "").strip(),
-            "download_url": str(row[6] or "").strip(),
+            "download_url": f"{MDEC_SERVICE_BASE_URL}/download-case/{str(row[1] or '').strip()}/combined/start",
         })
     return documents
 
@@ -212,11 +233,7 @@ def record_sync_status(conn, document, status, record_id=None, pdf_id=None, erro
 
 
 def source_filename(document):
-    for value in (document.get("document_name"), document.get("lead_document")):
-        name = os.path.basename(urlparse(str(value or "")).path).strip()
-        if name:
-            return name if name.lower().endswith(".pdf") else f"{name}.pdf"
-    return f"mdec_{document['source_document_id']}.pdf"
+    return f"{document.get('case_number') or 'MDEC Case'}.pdf"
 
 
 class _DocumentLinkParser(HTMLParser):
@@ -244,13 +261,27 @@ def _unwrap_secure_web_url(url):
     return unquote(match.group(0)) if match else url
 
 
+def _is_probable_document_link(candidate):
+    parsed = urlparse(str(candidate or ""))
+    lowered = str(candidate or "").lower()
+    if any(token in lowered for token in ("servedocument", "download", "fileid", "docid")):
+        return True
+    extension = os.path.splitext(parsed.path.lower())[1]
+    return extension in {
+        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".txt",
+        ".rtf", ".zip", ".tif", ".tiff", ".png", ".jpg", ".jpeg",
+    }
+
+
 def _extract_document_links(page_url, html_text):
     parser = _DocumentLinkParser()
     parser.feed(html_text)
     candidates = list(parser.links)
     candidates.extend(re.findall(r"https?://[^\s\"'<>]+", html_text, re.IGNORECASE))
     candidates.extend(re.findall(r"(?:href|url)\s*[:=]\s*[\"']([^\"']+)", html_text, re.IGNORECASE))
-    candidates.extend(re.findall(r"(?:ServeDocument\.ashx|Download[^\s\"'<>]*)[^\s\"'<>]*", html_text, re.IGNORECASE))
+    candidates.extend(
+        re.findall(r"ServeDocument\.ashx\?[^\s\"'<>]+", html_text, re.IGNORECASE)
+    )
 
     links = []
     seen = set()
@@ -267,6 +298,8 @@ def _extract_document_links(page_url, html_text):
         parsed = urlparse(resolved)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             continue
+        if not _is_probable_document_link(resolved):
+            continue
         key = resolved.lower()
         if key not in seen:
             seen.add(key)
@@ -281,14 +314,21 @@ def download_pdf(url, timeout=MDEC_DOWNLOAD_TIMEOUT_SECONDS, session=None, max_d
     client = session
     queue = [(_unwrap_secure_web_url(url), 0, None)]
     visited = set()
+    child_errors = []
     while queue:
         current_url, depth, referer = queue.pop(0)
         if current_url.lower() in visited or depth > max_depth:
             continue
         visited.add(current_url.lower())
         headers = {"Referer": referer} if referer else None
-        response = client.get(current_url, timeout=timeout, allow_redirects=True, headers=headers)
-        response.raise_for_status()
+        try:
+            response = client.get(current_url, timeout=timeout, allow_redirects=True, headers=headers)
+            response.raise_for_status()
+        except Exception as exc:
+            if depth == 0:
+                raise
+            child_errors.append(f"{current_url}: {exc}")
+            continue
         content = response.content or b""
         content_type = (response.headers.get("content-type") or "").lower()
         if content.startswith(b"%PDF-") or "application/pdf" in content_type:
@@ -301,7 +341,42 @@ def download_pdf(url, timeout=MDEC_DOWNLOAD_TIMEOUT_SECONDS, session=None, max_d
             for link in _extract_document_links(page_url, text):
                 if link.lower() not in visited:
                     queue.append((link, depth + 1, page_url))
-    raise ValueError("MDEC download link did not resolve to a PDF")
+    detail = f" Tried child links: {'; '.join(child_errors[:3])}" if child_errors else ""
+    raise ValueError(f"MDEC download link did not resolve to a PDF.{detail}")
+
+
+def download_combined_pdf(start_url, timeout=MDEC_COMBINED_JOB_TIMEOUT_SECONDS, session=None):
+    if session is None:
+        import requests
+        session = requests.Session()
+    response = session.post(start_url, timeout=MDEC_DOWNLOAD_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    payload = response.json()
+    job_id = str(payload.get("job_id") or "").strip()
+    if not payload.get("ok") or not job_id:
+        raise ValueError("MDEC combined-PDF job did not return a job_id")
+
+    parsed = urlparse(start_url)
+    file_url = f"{parsed.scheme}://{parsed.netloc}/download-case/jobs/{job_id}/file"
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            file_response = session.get(
+                file_url,
+                timeout=MDEC_DOWNLOAD_TIMEOUT_SECONDS,
+                allow_redirects=True,
+            )
+            if file_response.status_code == 200:
+                content = file_response.content or b""
+                content_type = (file_response.headers.get("content-type") or "").lower()
+                if content.startswith(b"%PDF-") or "application/pdf" in content_type:
+                    return content
+            last_error = f"HTTP {file_response.status_code}"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(0.5)
+    raise TimeoutError(f"MDEC combined PDF was not ready within {timeout} seconds: {last_error}")
 
 
 def mdec_blob_name(document):
@@ -310,21 +385,27 @@ def mdec_blob_name(document):
     return f"mdec/{case_key}/{document['source_document_id']}_{filename}"
 
 
-def upsert_mdec_document(target_conn, container, document, record_id, pdf_loader=download_pdf):
+def upsert_mdec_document(target_conn, container, document, record_id, pdf_loader=download_combined_pdf):
     from azure.storage.blob import ContentSettings
 
     cur = target_conn.cursor()
     source_id = document["source_document_id"]
     cur.execute("""
-        SELECT id, blob_name
+        SELECT id, blob_name, source_json
         FROM search.civil_return_pdfs
         WHERE source_system = ? AND source_document_id = ?
     """, MDEC_SOURCE_SYSTEM, source_id)
     existing = cur.fetchone()
     blob_name = existing[1] if existing and existing[1] else mdec_blob_name(document)
+    existing_version = 0
+    if existing and len(existing) > 2 and existing[2]:
+        try:
+            existing_version = int(json.loads(existing[2]).get("source_version") or 0)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            existing_version = 0
 
     blob_client = container.get_blob_client(blob_name)
-    if not existing or not existing[1]:
+    if not existing or not existing[1] or int(document.get("source_version") or 0) > existing_version:
         pdf_bytes = pdf_loader(document["download_url"])
         blob_client.upload_blob(
             pdf_bytes,
@@ -340,6 +421,7 @@ def upsert_mdec_document(target_conn, container, document, record_id, pdf_loader
     source_json = {
         "source_system": MDEC_SOURCE_SYSTEM,
         "source_document_id": source_id,
+        "source_version": document.get("source_version"),
         "download_url": document.get("download_url"),
         "document_name": document.get("document_name"),
         "lead_document": document.get("lead_document"),
@@ -397,7 +479,7 @@ def upsert_mdec_document(target_conn, container, document, record_id, pdf_loader
     return int(cur.fetchone()[0]), True
 
 
-def sync_mdec_civil_documents(target_conn, container, source_conn=None, pdf_loader=download_pdf):
+def sync_mdec_civil_documents(target_conn, container, source_conn=None, pdf_loader=download_combined_pdf):
     # MDEC and the BCSO Search Portal share bcsodb.  Keeping source_conn as an
     # optional argument makes isolated tests possible without requiring a
     # second production database connection.
