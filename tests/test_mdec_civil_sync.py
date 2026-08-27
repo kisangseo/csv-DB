@@ -199,6 +199,7 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertIn("CONCAT('combined:', cd.normalized_case_number)", sql)
         self.assertIn("JSON_VALUE(pdf.source_json, '$.source_version')", sql)
         self.assertIn("ROW_NUMBER() OVER", sql)
+        self.assertIn("cd.source_version DESC", sql)
         self.assertIn("THEN 0", sql)
         self.assertIn("THEN 1", sql)
         self.assertIn("> 1", sql)

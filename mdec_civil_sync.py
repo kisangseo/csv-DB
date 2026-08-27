@@ -178,7 +178,7 @@ def fetch_mdec_documents(conn):
                  AND (sync.next_retry_at IS NULL OR sync.next_retry_at <= SYSUTCDATETIME()))
           )
         ORDER BY CASE WHEN sync.source_document_id IS NULL AND pdf.id IS NULL THEN 0 ELSE 1 END,
-                 cd.source_version
+                 cd.source_version DESC
     """)
     documents = []
     for row in cur.fetchall():

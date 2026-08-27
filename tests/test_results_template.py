@@ -79,6 +79,9 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn("parentRow.dataset.lastActionAt = summaryRow.last_action_at;", self.template)
         self.assertIn("tbody.insertBefore(parentRow, tbody.firstChild);", self.template)
 
+    def test_returns_activity_labels_times_as_eastern(self):
+        self.assertIn('"Date and Time (ET)"', self.template)
+
     def test_returns_actions_confirm_processing_takeover(self):
         self.assertIn("function confirmReturnTakeover", self.template)
         self.assertIn("function downloadReturnPdf", self.template)

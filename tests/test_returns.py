@@ -202,6 +202,13 @@ class ReturnsParsingTests(unittest.TestCase):
             returns_source,
         )
 
+    def test_return_activity_is_displayed_in_eastern_time(self):
+        returns_source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
+        self.assertIn(
+            "created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time'",
+            returns_source,
+        )
+
     def test_processing_lock_is_atomic_and_fifteen_minutes(self):
         source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
         self.assertIn("class ReturnProcessingConflict", source)
