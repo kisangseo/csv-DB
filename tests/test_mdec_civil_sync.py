@@ -81,6 +81,11 @@ class MdecCivilSyncTests(unittest.TestCase):
     def test_submission_datetime_formats(self):
         self.assertEqual(parse_submission_datetime("8/19/2026 1:49 PM"), datetime(2026, 8, 19, 13, 49))
         self.assertEqual(parse_submission_datetime("2026-08-19T13:49:00Z"), datetime(2026, 8, 19, 13, 49))
+        self.assertEqual(parse_submission_datetime("2026-03-16"), datetime(2026, 3, 16))
+        self.assertEqual(parse_submission_datetime("3/16/26"), datetime(2026, 3, 16))
+        self.assertEqual(parse_submission_datetime("3/16/2026"), datetime(2026, 3, 16))
+        self.assertEqual(parse_submission_datetime("3/16/2026 11:20 AM EST"), datetime(2026, 3, 16, 11, 20))
+        self.assertEqual(parse_submission_datetime("3/16/26 11:20:45 AM EDT"), datetime(2026, 3, 16, 11, 20, 45))
 
     def test_match_uses_priority_before_date_distance(self):
         cur = FakeCursor((456,))

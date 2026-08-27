@@ -24,20 +24,32 @@ def parse_submission_datetime(value):
     text = str(value or "").strip()
     if not text:
         return None
-    normalized = text.replace("Z", "+00:00")
+    normalized = re.sub(
+        r"\s+(?:EST|EDT|CST|CDT|MST|MDT|PST|PDT|UTC|GMT)$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    normalized = normalized.replace("Z", "+00:00")
     try:
         return datetime.fromisoformat(normalized).replace(tzinfo=None)
     except ValueError:
         pass
     for fmt in (
         "%m/%d/%Y %I:%M %p",
+        "%m/%d/%y %I:%M %p",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%y %I:%M:%S %p",
         "%m/%d/%Y %H:%M",
+        "%m/%d/%y %H:%M",
         "%m/%d/%Y",
+        "%m/%d/%y",
         "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
         "%Y-%m-%d",
     ):
         try:
-            return datetime.strptime(text, fmt)
+            return datetime.strptime(normalized, fmt)
         except ValueError:
             continue
     return None
@@ -70,6 +82,7 @@ def find_best_civil_record(cur, case_number, submission_at):
     normalized_case = normalize_case_number(case_number)
     if not normalized_case or not submission_at:
         return None
+    # Matching is calendar-date based; any source time or timezone is ignored.
     submission_date = submission_at.date().isoformat()
     priority = civil_priority_sql()
     issued_date = """
