@@ -166,6 +166,13 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertIn("Uploaded", allowed_return_statuses(normal))
         self.assertNotIn("Hard Copy Returned", allowed_return_statuses(normal))
 
+    def test_completed_returns_are_excluded_from_default_queue(self):
+        returns_source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
+        self.assertIn(
+            "COALESCE(bcso_status, '') NOT IN ('Uploaded', 'Hard Copy Returned')",
+            returns_source,
+        )
+
     def test_system_activity_is_hidden_and_importer_supports_fresh_replace(self):
         root = Path(__file__).resolve().parents[1]
         returns_source = (root / "returns.py").read_text()

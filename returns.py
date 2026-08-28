@@ -663,7 +663,7 @@ def search_returns(conn, filters, exclude_uploaded=False):
     clauses = ["is_active = 1"]
     params = []
     if exclude_uploaded:
-        clauses.append("COALESCE(bcso_status, '') <> 'Uploaded'")
+        clauses.append("COALESCE(bcso_status, '') NOT IN ('Uploaded', 'Hard Copy Returned')")
     query = clean_value(filters.get("query"))
     if query:
         clauses.append(

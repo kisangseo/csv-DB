@@ -52,12 +52,12 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('toggleReturnDetailRow(tr, row, headers.length);', self.template)
         self.assertNotIn('placeholder="Search returns"', self.template)
 
-    def test_returns_queue_loads_collapsed_and_hides_uploaded_only_by_default(self):
+    def test_returns_queue_loads_collapsed_and_hides_completed_returns_by_default(self):
         self.assertIn('department: "Returns",', self.template)
         self.assertIn('returnsQueue: true,', self.template)
         self.assertIn('preserveExistingSections: true,', self.template)
         self.assertIn('params.set("returns_queue", "1");', self.template)
-        self.assertIn('summaryRow.bcso_status === "Uploaded"', self.template)
+        self.assertIn('["Uploaded", "Hard Copy Returned"].includes(summaryRow.bcso_status)', self.template)
         self.assertIn('document.createTextNode(" Show uploaded")', self.template)
         self.assertIn('params.set("include_uploaded", "1");', self.template)
         self.assertIn('uploadedCheckbox.checked = Boolean(options.includeUploaded);', self.template)

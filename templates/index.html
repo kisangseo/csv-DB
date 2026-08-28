@@ -1560,7 +1560,7 @@
               const replacementBadge = parentRow.querySelector("td:nth-child(5) .return-badge");
               if (replacementBadge) replacementBadge.classList.add("return-table-status-badge");
               if (
-                summaryRow.bcso_status === "Uploaded"
+                ["Uploaded", "Hard Copy Returned"].includes(summaryRow.bcso_status)
                 && parentRow.dataset.returnsQueue === "true"
                 && parentRow.dataset.includeUploaded !== "true"
               ) {
