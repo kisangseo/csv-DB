@@ -441,6 +441,34 @@ def _ensure_returns_tables(conn):
     )
     cur.execute(
         """
+        DECLARE @legacy_status_constraint sysname;
+        SELECT TOP (1) @legacy_status_constraint = check_constraint.name
+        FROM sys.check_constraints AS check_constraint
+        WHERE check_constraint.parent_object_id = OBJECT_ID('search.Returns')
+          AND LOWER(check_constraint.definition) LIKE '%bcso_status%'
+          AND LOWER(check_constraint.definition) NOT LIKE '%hard copy returned%';
+
+        IF @legacy_status_constraint IS NOT NULL
+            EXEC (
+                'ALTER TABLE search.Returns DROP CONSTRAINT '
+                + QUOTENAME(@legacy_status_constraint)
+            );
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM sys.check_constraints AS check_constraint
+            WHERE check_constraint.parent_object_id = OBJECT_ID('search.Returns')
+              AND LOWER(check_constraint.definition) LIKE '%bcso_status%'
+        )
+        BEGIN
+            ALTER TABLE search.Returns WITH CHECK
+            ADD CONSTRAINT CK_Returns_bcso_status
+            CHECK (bcso_status IN ('Signed', 'Uploaded', 'Hard Copy Returned', 'Hold', 'Pending'));
+        END
+        """
+    )
+    cur.execute(
+        """
         IF OBJECT_ID('search.mdec_return_activity_log', 'U') IS NULL
         BEGIN
             CREATE TABLE search.mdec_return_activity_log (

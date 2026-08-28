@@ -166,6 +166,12 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertIn("Uploaded", allowed_return_statuses(normal))
         self.assertNotIn("Hard Copy Returned", allowed_return_statuses(normal))
 
+    def test_returns_schema_allows_hard_copy_returned(self):
+        returns_source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
+        self.assertIn("CK_Returns_bcso_status", returns_source)
+        self.assertIn("'Hard Copy Returned'", returns_source)
+        self.assertIn("DROP CONSTRAINT", returns_source)
+
     def test_system_activity_is_hidden_and_importer_supports_fresh_replace(self):
         root = Path(__file__).resolve().parents[1]
         returns_source = (root / "returns.py").read_text()
@@ -233,6 +239,7 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertIn('if "user_id" not in session:', route_source)
         self.assertNotIn("can_edit_records()", route_source)
         self.assertNotIn("permission to update return status", route_source)
+        self.assertIn('return jsonify({"error": f"Unable to update status: {exc}"}), 500', route_source)
 
 
 if __name__ == "__main__":

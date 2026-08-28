@@ -4310,6 +4310,10 @@ def patch_return_status(return_id):
             return jsonify({"error": "Return not found"}), 404
         record = get_return(conn, return_id)
         activity = fetch_return_activity(conn, return_id)
+    except Exception as exc:
+        conn.rollback()
+        app.logger.exception("Unable to update Return %s status", return_id)
+        return jsonify({"error": f"Unable to update status: {exc}"}), 500
     finally:
         conn.close()
     return jsonify({"status": "success", "record": json_safe_return(record), "activity": activity})
