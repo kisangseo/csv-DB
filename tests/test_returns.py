@@ -138,6 +138,7 @@ class ReturnsParsingTests(unittest.TestCase):
             {**signed, "case_number": "24-P-1"},
             {**signed, "case_number": "24-D-1"},
             {**signed, "case_number": "c-24-jv-1"},
+            {**signed, "case_number": "c-24-fm-26-000123"},
         )
         for payload in positives:
             with self.subTest(payload=payload):
@@ -160,9 +161,12 @@ class ReturnsParsingTests(unittest.TestCase):
 
     def test_status_choices_follow_hard_copy_filter(self):
         hard_copy = {"signature_value": "Captured", "case_number": "24-P-1"}
+        family_hard_copy = {"signature_value": "Captured", "case_number": "C-24-FM-26-000123"}
         normal = {"signature_value": "Captured", "case_number": "D-01-CV-26-1"}
         self.assertIn("Hard Copy Returned", allowed_return_statuses(hard_copy))
         self.assertNotIn("Uploaded", allowed_return_statuses(hard_copy))
+        self.assertIn("Hard Copy Returned", allowed_return_statuses(family_hard_copy))
+        self.assertNotIn("Uploaded", allowed_return_statuses(family_hard_copy))
         self.assertIn("Uploaded", allowed_return_statuses(normal))
         self.assertNotIn("Hard Copy Returned", allowed_return_statuses(normal))
 

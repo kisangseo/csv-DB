@@ -205,6 +205,7 @@ def is_hard_copy_return(payload):
         or case_number.startswith("24-P")
         or case_number.startswith("24-D")
         or case_number.startswith("C-24-JV")
+        or case_number.startswith("C-24-FM")
     )
 
 
