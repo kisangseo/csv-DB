@@ -233,7 +233,7 @@ def record_sync_status(conn, document, status, record_id=None, pdf_id=None, erro
 
 
 def source_filename(document):
-    return f"{document.get('case_number') or 'MDEC Case'}.pdf"
+    return f"Civil Papers {document.get('case_number') or 'MDEC Case'}.pdf"
 
 
 class _DocumentLinkParser(HTMLParser):
@@ -415,6 +415,7 @@ def upsert_mdec_document(target_conn, container, document, record_id, pdf_loader
                 "source_system": MDEC_SOURCE_SYSTEM,
                 "source_document_id": source_id,
                 "case_number": document["case_number"][:100],
+                "original_filename": source_filename(document),
             },
         )
 

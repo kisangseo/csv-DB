@@ -17,6 +17,7 @@ from mdec_civil_sync import (
     find_best_civil_record,
     normalize_case_number,
     parse_submission_datetime,
+    source_filename,
     sync_mdec_civil_documents,
 )
 
@@ -92,6 +93,12 @@ class FakeConnection:
 class MdecCivilSyncTests(unittest.TestCase):
     def test_case_number_normalization(self):
         self.assertEqual(normalize_case_number(" D-01-CV-26-029285 "), "D01CV26029285")
+
+    def test_combined_pdf_uses_civil_papers_filename(self):
+        self.assertEqual(
+            source_filename({"case_number": "C-24-CV-25-010055"}),
+            "Civil Papers C-24-CV-25-010055.pdf",
+        )
 
     def test_submission_datetime_formats(self):
         self.assertEqual(parse_submission_datetime("8/19/2026 1:49 PM"), datetime(2026, 8, 19, 13, 49))

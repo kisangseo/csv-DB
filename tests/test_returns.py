@@ -209,6 +209,12 @@ class ReturnsParsingTests(unittest.TestCase):
             returns_source,
         )
 
+    def test_civil_download_suppresses_legacy_mdec_duplicate(self):
+        app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text()
+        self.assertIn("return_pdf.source_document_id NOT LIKE 'combined:%'", app_source)
+        self.assertIn("combined_pdf.source_document_id LIKE 'combined:%'", app_source)
+        self.assertIn("download_names=download_names", app_source)
+
     def test_processing_lock_is_atomic_and_fifteen_minutes(self):
         source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
         self.assertIn("class ReturnProcessingConflict", source)

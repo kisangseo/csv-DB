@@ -2180,13 +2180,30 @@ def fetch_civil_return_pdf_history_for_records(record_ids):
                     id, record_id, case_number, FORMAT(intake_date, 'yyyy-MM-dd') AS intake_date,
                     email_subject, email_from,
                     FORMAT(email_received_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time', 'yyyy-MM-dd h:mm tt') AS email_received_at,
-                    original_filename, blob_name, parse_status, created_at,
+                    CASE
+                        WHEN return_pdf.source_system = 'mdec'
+                         AND return_pdf.source_document_id LIKE 'combined:%'
+                            THEN CONCAT('Civil Papers ', return_pdf.case_number, '.pdf')
+                        ELSE original_filename
+                    END AS original_filename,
+                    blob_name, parse_status, created_at,
                     ROW_NUMBER() OVER (
                         PARTITION BY record_id, LOWER(LTRIM(RTRIM(COALESCE(original_filename, blob_name))))
                         ORDER BY email_received_at DESC, created_at DESC, id DESC
                     ) AS rn
-                FROM search.civil_return_pdfs
+                FROM search.civil_return_pdfs AS return_pdf
                 WHERE record_id IN ({placeholders})
+                  AND NOT (
+                        return_pdf.source_system = 'mdec'
+                    AND return_pdf.source_document_id NOT LIKE 'combined:%'
+                    AND EXISTS (
+                        SELECT 1
+                        FROM search.civil_return_pdfs AS combined_pdf
+                        WHERE combined_pdf.record_id = return_pdf.record_id
+                          AND combined_pdf.source_system = 'mdec'
+                          AND combined_pdf.source_document_id LIKE 'combined:%'
+                    )
+                  )
             )
             SELECT id, record_id, case_number, intake_date, email_subject, email_from,
                    email_received_at, original_filename, blob_name, parse_status, created_at
@@ -3283,7 +3300,9 @@ def send_civil_blob_collection(
     zip_download_name,
     empty_message="No files found",
     single_download_name=None,
+    download_names=None,
 ):
+    download_names = download_names or {}
     unique_blob_names = []
     seen = set()
     for blob_name in blob_names:
@@ -3303,7 +3322,7 @@ def send_civil_blob_collection(
         except Exception as exc:
             return jsonify({"error": f"Unable to download file from blob storage: {exc}"}), 500
 
-        filename = single_download_name or (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
+        filename = single_download_name or download_names.get(blob_name) or (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
         content_type = (props.content_settings.content_type if props.content_settings else None) or "application/octet-stream"
         return send_file(
             io.BytesIO(data),
@@ -3320,7 +3339,7 @@ def send_civil_blob_collection(
                 blob_client = container.get_blob_client(blob_name)
                 data = blob_client.download_blob().readall()
                 props = blob_client.get_blob_properties()
-                filename = (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
+                filename = download_names.get(blob_name) or (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
                 candidate = filename
                 idx = 2
                 while candidate in used_names:
@@ -3373,6 +3392,7 @@ def download_civil_papers_files():
     try:
         container = get_civil_files_container()
         blob_names = []
+        download_names = {}
         case_key = normalize_case_number_for_blob(case_number) if case_number else "civil_papers"
         if case_number:
             prefix = f"{case_key}/"
@@ -3387,20 +3407,38 @@ def download_civil_papers_files():
                         SELECT
                             id,
                             blob_name,
+                            CASE
+                                WHEN return_pdf.source_system = 'mdec'
+                                 AND return_pdf.source_document_id LIKE 'combined:%'
+                                    THEN CONCAT('Civil Papers ', return_pdf.case_number, '.pdf')
+                                ELSE original_filename
+                            END AS original_filename,
                             ROW_NUMBER() OVER (
                                 PARTITION BY LOWER(LTRIM(RTRIM(COALESCE(original_filename, blob_name))))
                                 ORDER BY email_received_at DESC, created_at DESC, id DESC
                             ) AS rn
-                        FROM search.civil_return_pdfs
+                        FROM search.civil_return_pdfs AS return_pdf
                         WHERE record_id = ?
+                          AND NOT (
+                                return_pdf.source_system = 'mdec'
+                            AND return_pdf.source_document_id NOT LIKE 'combined:%'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM search.civil_return_pdfs AS combined_pdf
+                                WHERE combined_pdf.record_id = return_pdf.record_id
+                                  AND combined_pdf.source_system = 'mdec'
+                                  AND combined_pdf.source_document_id LIKE 'combined:%'
+                            )
+                          )
                     )
-                    SELECT id, blob_name
+                    SELECT id, blob_name, original_filename
                     FROM ranked_return_pdfs
                     WHERE rn = 1
                 """, int(record_id))
                 return_rows = cur.fetchall()
                 return_pdf_ids = [int(row[0]) for row in return_rows if row[0]]
                 blob_names.extend(row[1] for row in return_rows if row[1])
+                download_names.update({row[1]: row[2] for row in return_rows if row[1] and row[2]})
                 record_civil_return_pdf_downloads(conn, return_pdf_ids, "record_files")
             finally:
                 conn.close()
@@ -3412,6 +3450,7 @@ def download_civil_papers_files():
         blob_names,
         f"civil_papers_{case_key}_files.zip",
         "No files found for this record",
+        download_names=download_names,
     )
 
 
