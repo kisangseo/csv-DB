@@ -1234,7 +1234,25 @@
         return normalizeCivilText(value).replace(/[{}]/g, "");
       }
 
-      function getCivilGroupKey(row) {
+      function normalizeCivilDateKey(value) {
+        const text = String(value || "").trim();
+        if (!text) return "";
+
+        const isoMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        if (isoMatch) {
+          return `${isoMatch[1]}-${isoMatch[2].padStart(2, "0")}-${isoMatch[3].padStart(2, "0")}`;
+        }
+
+        const usMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})/);
+        if (usMatch) {
+          const year = usMatch[3].length === 2 ? `20${usMatch[3]}` : usMatch[3];
+          return `${year}-${usMatch[1].padStart(2, "0")}-${usMatch[2].padStart(2, "0")}`;
+        }
+
+        return "";
+      }
+
+      function getCivilGroupKeys(row) {
         const createdAt = row.created_at ? new Date(row.created_at) : null;
         const usesDocumentRelationship = createdAt
           && !Number.isNaN(createdAt.getTime())
@@ -1242,20 +1260,30 @@
 
         if (!usesDocumentRelationship) {
           const caseKey = normalizeCivilCaseKey(row.case_number);
-          return caseKey ? `legacy-case:${caseKey}` : "";
+          return caseKey ? [`legacy-case:${caseKey}`] : [];
         }
 
+        const keys = [];
         const sourceFile = normalizeCivilText(row.source_file);
         if (sourceFile === "civil-paper-attempts") {
           const parentDocument = normalizeCivilDocumentId(row.parent_document);
-          return parentDocument ? `document:${parentDocument}` : `record:${row.record_id}`;
-        }
-        if (sourceFile === "civil-paper-serves") {
+          keys.push(parentDocument ? `document:${parentDocument}` : `record:${row.record_id}`);
+        } else if (sourceFile === "civil-paper-serves") {
           const globalId = normalizeCivilDocumentId(row.globalid || row.global_id);
-          return globalId ? `document:${globalId}` : `record:${row.record_id}`;
+          keys.push(globalId ? `document:${globalId}` : `record:${row.record_id}`);
+        } else {
+          keys.push(`record:${row.record_id}`);
         }
 
-        return `record:${row.record_id}`;
+        const caseKey = normalizeCivilCaseKey(row.case_number);
+        if (caseKey) {
+          const intakeDate = normalizeCivilDateKey(row.intake_date);
+          const issuedDate = normalizeCivilDateKey(row.issue_date || row.court_issued_date);
+          if (intakeDate) keys.push(`case-intake:${caseKey}:${intakeDate}`);
+          if (issuedDate) keys.push(`case-issued:${caseKey}:${issuedDate}`);
+        }
+
+        return keys;
       }
 
       function getCivilDuplicateFingerprint(row) {
@@ -1705,16 +1733,34 @@
       }
 
       function buildCivilDisplayRows(rows) {
-        const groups = new Map();
+        const groups = [];
         rows.forEach((row) => {
-          const groupKey = getCivilGroupKey(row);
-          if (!groupKey) return;
-          if (!groups.has(groupKey)) groups.set(groupKey, []);
-          groups.get(groupKey).push({...row});
+          const rowKeys = new Set(getCivilGroupKeys(row));
+          if (!rowKeys.size) return;
+
+          const matches = [];
+          groups.forEach((group, index) => {
+            if ([...rowKeys].some((key) => group.keys.has(key))) matches.push(index);
+          });
+
+          if (!matches.length) {
+            groups.push({keys: rowKeys, rows: [{...row}]});
+            return;
+          }
+
+          const target = groups[matches[0]];
+          rowKeys.forEach((key) => target.keys.add(key));
+          target.rows.push({...row});
+          for (let index = matches.length - 1; index >= 1; index -= 1) {
+            const merged = groups[matches[index]];
+            merged.keys.forEach((key) => target.keys.add(key));
+            target.rows.push(...merged.rows);
+            groups.splice(matches[index], 1);
+          }
         });
 
         const parents = [];
-        groups.forEach((groupRows) => {
+        groups.forEach(({rows: groupRows}) => {
           const fingerprintedRows = new Map();
           groupRows.forEach((row) => {
             const fingerprint = getCivilDuplicateFingerprint(row);

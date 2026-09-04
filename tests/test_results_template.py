@@ -94,6 +94,13 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn("temporaryLink.download = responseDownloadFilename(response);", self.template)
         self.assertNotIn('temporaryLink.download = "return.pdf";', self.template)
 
+    def test_civil_rows_group_by_relationship_or_matching_case_and_date(self):
+        self.assertIn("function getCivilGroupKeys(row)", self.template)
+        self.assertIn("function normalizeCivilDateKey(value)", self.template)
+        self.assertIn("`case-intake:${caseKey}:${intakeDate}`", self.template)
+        self.assertIn("`case-issued:${caseKey}:${issuedDate}`", self.template)
+        self.assertIn("group.keys.has(key)", self.template)
+
 
     def test_return_status_editor_is_available_to_every_authenticated_user(self):
         self.assertIn("const CAN_UPDATE_RETURN_STATUS = true;", self.template)
