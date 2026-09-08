@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 MDEC_SOURCE_SYSTEM = "mdec"
 MDEC_MATCH_WINDOW_DAYS = 10
+MDEC_ACTIVE_LINK_DAYS = 60
 MDEC_RETRY_MINUTES = 10
 MDEC_FAILED_RETRY_MINUTES = 30
 MDEC_BATCH_SIZE = 10
@@ -143,18 +144,37 @@ def fetch_mdec_documents(conn):
     cur = conn.cursor()
     priority = civil_priority_sql("r")
     cur.execute(f"""
-        WITH ranked_documents AS (
+        WITH source_documents AS (
             SELECT cd.*,
                    REPLACE(REPLACE(REPLACE(REPLACE(UPPER(COALESCE(cd.case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '') AS normalized_case_number,
+                   COALESCE(
+                       TRY_CONVERT(date, cd.submission_datetime),
+                       TRY_CONVERT(date, parsed.submission_date_text, 23),
+                       TRY_CONVERT(date, parsed.submission_date_text, 101),
+                       TRY_CONVERT(date, parsed.submission_date_text, 1)
+                   ) AS parsed_submission_date
+            FROM dbo.case_documents AS cd
+            CROSS APPLY (
+                SELECT LEFT(
+                    LTRIM(RTRIM(CONVERT(nvarchar(100), cd.submission_datetime))),
+                    CHARINDEX(' ', LTRIM(RTRIM(CONVERT(nvarchar(100), cd.submission_datetime))) + ' ') - 1
+                ) AS submission_date_text
+            ) AS parsed
+            WHERE NULLIF(LTRIM(RTRIM(COALESCE(cd.case_number, ''))), '') IS NOT NULL
+        ),
+        ranked_documents AS (
+            SELECT cd.*,
                    MAX(cd.id) OVER (
-                       PARTITION BY REPLACE(REPLACE(REPLACE(REPLACE(UPPER(COALESCE(cd.case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '')
+                       PARTITION BY cd.normalized_case_number
                    ) AS source_version,
                    ROW_NUMBER() OVER (
-                       PARTITION BY REPLACE(REPLACE(REPLACE(REPLACE(UPPER(COALESCE(cd.case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '')
+                       PARTITION BY cd.normalized_case_number
                        ORDER BY cd.id DESC
                    ) AS case_row_number
-            FROM dbo.case_documents AS cd
-            WHERE NULLIF(LTRIM(RTRIM(COALESCE(cd.case_number, ''))), '') IS NOT NULL
+            FROM source_documents AS cd
+            WHERE cd.parsed_submission_date BETWEEN
+                  DATEADD(day, -{MDEC_ACTIVE_LINK_DAYS}, CAST(SYSUTCDATETIME() AS date))
+                  AND CAST(SYSUTCDATETIME() AS date)
         )
         SELECT TOP ({MDEC_BATCH_SIZE}) cd.source_version, cd.case_number, cd.submission_datetime,
                cd.document_name, cd.lead_document, cd.filing_description, cd.normalized_case_number
@@ -177,7 +197,7 @@ def fetch_mdec_documents(conn):
                  AND {priority} > 1
                  AND (sync.next_retry_at IS NULL OR sync.next_retry_at <= SYSUTCDATETIME()))
           )
-        ORDER BY CASE WHEN sync.source_document_id IS NULL AND pdf.id IS NULL THEN 0 ELSE 1 END,
+        ORDER BY cd.parsed_submission_date DESC,
                  cd.source_version DESC
     """)
     documents = []

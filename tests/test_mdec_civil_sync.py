@@ -211,6 +211,11 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertIn("THEN 1", sql)
         self.assertIn("> 1", sql)
         self.assertIn("next_retry_at", sql)
+        self.assertIn("DATEADD(day, -60, CAST(SYSUTCDATETIME() AS date))", sql)
+        self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 23)", sql)
+        self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 101)", sql)
+        self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 1)", sql)
+        self.assertIn("ORDER BY cd.parsed_submission_date DESC", sql)
 
     def test_fetches_one_combined_candidate_per_case(self):
         conn = FakeConnection()

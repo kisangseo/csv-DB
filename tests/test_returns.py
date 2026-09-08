@@ -224,6 +224,9 @@ class ReturnsParsingTests(unittest.TestCase):
         app_source = (Path(__file__).resolve().parents[1] / "app.py").read_text()
         self.assertIn("return_pdf.source_document_id NOT LIKE 'combined:%'", app_source)
         self.assertIn("combined_pdf.source_document_id LIKE 'combined:%'", app_source)
+        self.assertIn("preferred_pdf.source_document_id LIKE 'combined:%'", app_source)
+        self.assertIn("if has_combined_mdec:", app_source)
+        self.assertIn("blob_names = []", app_source)
         self.assertIn("download_names=download_names", app_source)
 
     def test_processing_lock_is_atomic_and_fifteen_minutes(self):
