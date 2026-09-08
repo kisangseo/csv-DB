@@ -10,7 +10,6 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 MDEC_SOURCE_SYSTEM = "mdec"
 MDEC_MATCH_WINDOW_DAYS = 10
 MDEC_ACTIVE_LINK_DAYS = 60
-MDEC_COMBINED_FORMAT_VERSION = 2
 MDEC_RETRY_MINUTES = 10
 MDEC_FAILED_RETRY_MINUTES = 30
 MDEC_BATCH_SIZE = 10
@@ -192,8 +191,6 @@ def fetch_mdec_documents(conn):
                 (sync.source_document_id IS NULL AND pdf.id IS NULL)
              OR (pdf.id IS NOT NULL
                  AND COALESCE(TRY_CONVERT(BIGINT, JSON_VALUE(pdf.source_json, '$.source_version')), 0) < cd.source_version)
-             OR (pdf.id IS NOT NULL
-                 AND COALESCE(TRY_CONVERT(INT, JSON_VALUE(pdf.source_json, '$.combined_format_version')), 0) < {MDEC_COMBINED_FORMAT_VERSION})
              OR (sync.sync_status IN ('unmatched', 'failed')
                  AND (sync.next_retry_at IS NULL OR sync.next_retry_at <= SYSUTCDATETIME()))
              OR (pdf.id IS NOT NULL
@@ -421,23 +418,14 @@ def upsert_mdec_document(target_conn, container, document, record_id, pdf_loader
     existing = cur.fetchone()
     blob_name = existing[1] if existing and existing[1] else mdec_blob_name(document)
     existing_version = 0
-    existing_format_version = 0
     if existing and len(existing) > 2 and existing[2]:
         try:
-            existing_source = json.loads(existing[2])
-            existing_version = int(existing_source.get("source_version") or 0)
-            existing_format_version = int(existing_source.get("combined_format_version") or 0)
+            existing_version = int(json.loads(existing[2]).get("source_version") or 0)
         except (TypeError, ValueError, json.JSONDecodeError):
             existing_version = 0
-            existing_format_version = 0
 
     blob_client = container.get_blob_client(blob_name)
-    if (
-        not existing
-        or not existing[1]
-        or int(document.get("source_version") or 0) > existing_version
-        or existing_format_version < MDEC_COMBINED_FORMAT_VERSION
-    ):
+    if not existing or not existing[1] or int(document.get("source_version") or 0) > existing_version:
         pdf_bytes = pdf_loader(document["download_url"])
         blob_client.upload_blob(
             pdf_bytes,
@@ -455,7 +443,6 @@ def upsert_mdec_document(target_conn, container, document, record_id, pdf_loader
         "source_system": MDEC_SOURCE_SYSTEM,
         "source_document_id": source_id,
         "source_version": document.get("source_version"),
-        "combined_format_version": MDEC_COMBINED_FORMAT_VERSION,
         "download_url": document.get("download_url"),
         "document_name": document.get("document_name"),
         "lead_document": document.get("lead_document"),
