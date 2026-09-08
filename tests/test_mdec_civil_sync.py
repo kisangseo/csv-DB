@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 
 from mdec_civil_sync import (
@@ -205,6 +206,7 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertIn("sync.sync_status IN ('unmatched', 'failed')", sql)
         self.assertIn("CONCAT('combined:', cd.normalized_case_number)", sql)
         self.assertIn("JSON_VALUE(pdf.source_json, '$.source_version')", sql)
+        self.assertIn("JSON_VALUE(pdf.source_json, '$.combined_format_version')", sql)
         self.assertIn("ROW_NUMBER() OVER", sql)
         self.assertIn("cd.source_version DESC", sql)
         self.assertIn("THEN 0", sql)
@@ -216,6 +218,12 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 101)", sql)
         self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 1)", sql)
         self.assertIn("ORDER BY cd.parsed_submission_date DESC", sql)
+
+    def test_combined_format_version_forces_one_time_pdf_refresh(self):
+        source = (Path(__file__).resolve().parents[1] / "mdec_civil_sync.py").read_text()
+        self.assertIn("MDEC_COMBINED_FORMAT_VERSION = 2", source)
+        self.assertIn("existing_format_version < MDEC_COMBINED_FORMAT_VERSION", source)
+        self.assertIn('"combined_format_version": MDEC_COMBINED_FORMAT_VERSION', source)
 
     def test_fetches_one_combined_candidate_per_case(self):
         conn = FakeConnection()
