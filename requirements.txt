@@ -14,3 +14,4 @@ Pillow==11.1.0
 pypdf 
 pdfplumber==0.11.4
 
+
