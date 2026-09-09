@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>BCSO Civil Papers Search</title>
+  <link rel="icon" type="image/webp" href="{{ url_for('static', filename='images/bcso-shield.webp') }}">
+  <style>
+    :root { color-scheme: light; font-family: Arial, sans-serif; --sheriff-green: #31582d; --sheriff-green-dark: #243f21; }
+    body { margin: 0; background: #f7f8f6; color: #202020; }
+    .site-header { background: #fff; border-bottom: 1px solid #dde2db; }
+    .brand { width: min(1100px, calc(100% - 32px)); min-height: 92px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+    .seal { width: 62px; height: 72px; object-fit: contain; }
+    .brand-text { color: var(--sheriff-green); font-weight: 800; letter-spacing: .12em; line-height: 1.35; text-transform: uppercase; }
+    .brand-text small { display: block; font-size: 11px; }
+    .brand-text strong { display: block; font-size: 16px; }
+    main { width: min(1100px, calc(100% - 32px)); margin: 42px auto; }
+    .panel { background: white; border: 1px solid #d8ded6; border-top: 5px solid var(--sheriff-green); border-radius: 8px; padding: 28px; box-shadow: 0 3px 12px rgba(30,55,27,.08); }
+    h1 { margin: 0 0 8px; color: #202020; }
+    p { margin: 0 0 20px; color: #4b5563; }
+    form { display: flex; gap: 10px; flex-wrap: wrap; }
+    label { width: 100%; font-weight: 700; }
+    input { flex: 1 1 320px; padding: 11px 12px; border: 1px solid #9ca89a; border-radius: 5px; font-size: 16px; }
+    input:focus { outline: 3px solid rgba(49,88,45,.2); border-color: var(--sheriff-green); }
+    button { padding: 11px 22px; border: 0; border-radius: 5px; background: var(--sheriff-green); color: white; font-weight: 700; cursor: pointer; }
+    button:hover { background: var(--sheriff-green-dark); }
+    .message { margin-top: 20px; padding: 12px; border-radius: 5px; background: #edf3eb; color: var(--sheriff-green-dark); }
+    .error { background: #fef2f2; color: #991b1b; }
+    .table-wrap { margin-top: 24px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: white; }
+    th, td { border: 1px solid #d1d5db; padding: 10px; text-align: left; vertical-align: top; }
+    th { background: var(--sheriff-green); color: white; white-space: nowrap; }
+    @media (max-width: 600px) { .brand { min-height: 76px; } .seal { width: 48px; height: 56px; } .brand-text strong { font-size: 13px; } main { margin: 20px auto; } .panel { padding: 16px; } button { width: 100%; } }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand" aria-label="Baltimore City Sheriff’s Office">
+      <img class="seal" src="{{ url_for('static', filename='images/bcso-shield.webp') }}" alt="Baltimore Sheriff shield">
+      <div class="brand-text"><small>Baltimore City</small><strong>Sheriff’s Office</strong></div>
+    </div>
+  </header>
+  <main>
+    <section class="panel">
+      <h1>Baltimore City Sheriff’s Office Civil Papers Search</h1>
+      <p>Enter a complete case number to view public Civil Papers status information.</p>
+      <form method="get" action="{{ url_for('public_civil_papers') }}">
+        <label for="case_number">Case Number</label>
+        <input id="case_number" name="case_number" value="{{ case_number }}" maxlength="100" autocomplete="off" required>
+        <button type="submit">Search</button>
+      </form>
+
+      {% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+      {% if searched and not error and not records %}<div class="message">No matching Civil Papers records found.</div>{% endif %}
+
+      {% if records %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Intake Date</th>
+              <th>Case Number</th>
+              <th>Court Document Type</th>
+              <th>Court Issued Date</th>
+              <th>Administrative Status</th>
+              <th>Served By</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for record in records %}
+            <tr>
+              <td>{{ record.intake_date or '—' }}</td>
+              <td>{{ record.case_number or '—' }}</td>
+              <td>{{ record.court_document_type or '—' }}</td>
+              <td>{{ record.court_issued_date or '—' }}</td>
+              <td>{{ record.administrative_status or '—' }}</td>
+              <td>{{ record.served_by or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

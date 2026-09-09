@@ -44,6 +44,7 @@ from returns import (
     upsert_return,
 )
 from mdec_civil_sync import sync_mdec_civil_documents
+from public_civil import PUBLIC_CIVIL_FIELDS, normalize_public_case_number, public_civil_record
 from datetime import timedelta, datetime, date, UTC
 from zoneinfo import ZoneInfo
 from werkzeug.utils import secure_filename
@@ -2336,6 +2337,76 @@ def home():
         court_doc_type_options=COURT_DOC_TYPE_OPTIONS,
         admin_status_options=get_admin_status_options(),
     )
+
+
+def add_public_civil_security_headers(response):
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; style-src 'unsafe-inline'; form-action 'self'; "
+        "frame-ancestors 'none'; base-uri 'none'"
+    )
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return response
+
+
+@app.route("/public/civil-papers")
+def public_civil_papers():
+    case_number = str(request.args.get("case_number") or "").strip()
+    normalized_case = normalize_public_case_number(case_number)
+    searched = bool(case_number)
+    records = []
+    error = ""
+
+    if searched and not 8 <= len(normalized_case) <= 40:
+        error = "Please enter a complete case number."
+    elif searched:
+        conn = None
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.timeout = 5
+            cur.execute(
+                """
+                SELECT TOP (50)
+                    intake_date,
+                    case_number,
+                    court_document_type,
+                    court_issued_date,
+                    administrative_status,
+                    served_by
+                FROM search.public_civil_papers
+                WHERE REPLACE(REPLACE(REPLACE(REPLACE(
+                    UPPER(COALESCE(case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '') = ?
+                ORDER BY intake_date DESC, court_issued_date DESC
+                """,
+                normalized_case,
+            )
+            records = [
+                public_civil_record(dict(zip(PUBLIC_CIVIL_FIELDS, row)))
+                for row in cur.fetchall()
+            ]
+        except Exception:
+            app.logger.exception("Public Civil Papers search failed")
+            error = "Unable to complete the search. Please try again later."
+        finally:
+            if conn is not None:
+                conn.close()
+
+    response = app.make_response(
+        render_template(
+            "public_civil_papers.html",
+            case_number=case_number,
+            searched=searched,
+            records=records,
+            error=error,
+        )
+    )
+    return add_public_civil_security_headers(response)
+
+
 @app.route("/change-password", methods=["GET","POST"])
 def change_password():
     if "user_id" not in session:
@@ -4655,6 +4726,8 @@ def export_download():
 
 @app.route("/search_all")
 def search_all():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
     global _apt_backfill_attempted
     filters = parse_search_filters(request.args)
     returns_queue = str(request.args.get("returns_queue") or "").strip().lower() in {"1", "true", "yes"}
