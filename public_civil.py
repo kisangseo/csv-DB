@@ -7,7 +7,7 @@ PUBLIC_CIVIL_FIELDS = (
     "court_document_type",
     "court_issued_date",
     "administrative_status",
-    "served_by",
+    "served_on",
 )
 
 

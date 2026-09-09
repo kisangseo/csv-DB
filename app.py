@@ -2375,7 +2375,15 @@ def public_civil_papers():
                     court_document_type,
                     court_issued_date,
                     administrative_status,
-                    served_by
+                    CASE
+                        WHEN CHARINDEX(' at ', COALESCE(served_by, '')) > 0
+                        THEN LTRIM(SUBSTRING(
+                            served_by,
+                            CHARINDEX(' at ', served_by) + 4,
+                            LEN(served_by)
+                        ))
+                        ELSE NULL
+                    END AS served_on
                 FROM search.public_civil_papers
                 WHERE REPLACE(REPLACE(REPLACE(REPLACE(
                     UPPER(COALESCE(case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '') = ?

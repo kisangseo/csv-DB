@@ -57,6 +57,7 @@ class PublicCivilTests(unittest.TestCase):
             "court_document_type": "WOS",
             "court_issued_date": "2026-09-01",
             "administrative_status": "Received",
+            "served_on": "09-03-2026 02:47 PM",
             "served_by": "Deputy Example",
             "respondent": "PRIVATE NAME",
             "address": "PRIVATE ADDRESS",
@@ -83,7 +84,7 @@ class PublicCivilTests(unittest.TestCase):
     def test_public_search_uses_exact_normalized_case_and_six_column_view(self):
         row = (
             "2026-09-01", "C-24-CV-26-001234", "WOS", "2026-08-30",
-            "Received", "Deputy Example",
+            "Received", "09-03-2026 02:47 PM",
         )
         connection = FakeConnection([row])
         with patch.object(application, "get_conn", return_value=connection):
@@ -92,8 +93,11 @@ class PublicCivilTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"C-24-CV-26-001234", response.data)
+        self.assertIn(b"09-03-2026 02:47 PM", response.data)
+        self.assertNotIn(b"Deputy", response.data)
         self.assertEqual(connection.cursor_instance.params, ("C24CV26001234",))
         self.assertIn("SELECT TOP (50)", connection.cursor_instance.sql)
+        self.assertIn("AS served_on", connection.cursor_instance.sql)
         self.assertNotIn("respondent", connection.cursor_instance.sql.lower())
         self.assertNotIn("address", connection.cursor_instance.sql.lower())
         self.assertTrue(connection.closed)
@@ -114,8 +118,11 @@ class PublicCivilTests(unittest.TestCase):
 
     def test_template_contains_no_sensitive_columns_or_actions(self):
         template = (ROOT / "templates" / "public_civil_papers.html").read_text()
-        for prohibited in ("Respondent", "Petitioner", "Address", "Download", "Edit"):
+        for prohibited in (
+            "Respondent", "Petitioner", "Address", "Download", "Edit", "Served By"
+        ):
             self.assertNotIn(prohibited, template)
+        self.assertIn("Served On", template)
 
     def test_public_brand_asset_is_present_and_referenced(self):
         template = (ROOT / "templates" / "public_civil_papers.html").read_text()
