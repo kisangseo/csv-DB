@@ -122,7 +122,7 @@ class PublicCivilTests(unittest.TestCase):
             "Respondent", "Petitioner", "Address", "Download", "Edit", "Served By"
         ):
             self.assertNotIn(prohibited, template)
-        self.assertIn("Served On", template)
+        self.assertIn("Action Taken On", template)
 
     def test_public_brand_asset_is_present_and_referenced(self):
         template = (ROOT / "templates" / "public_civil_papers.html").read_text()
