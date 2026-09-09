@@ -2367,7 +2367,6 @@ def public_civil_papers():
         try:
             conn = get_conn()
             cur = conn.cursor()
-            cur.timeout = 5
             cur.execute(
                 """
                 SELECT TOP (50)

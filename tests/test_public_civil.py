@@ -12,9 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeCursor:
+    __slots__ = ("rows", "sql", "params")
+
     def __init__(self, rows):
         self.rows = rows
-        self.timeout = None
         self.sql = ""
         self.params = ()
 
