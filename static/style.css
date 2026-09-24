@@ -51,8 +51,75 @@ form {
   justify-content: center;
   align-items: center;
   gap: 12px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   width: 100%;
+}
+
+.search-sections-menu {
+  position: relative;
+  min-width: 150px;
+  height: 40px;
+  z-index: 20;
+}
+
+.search-sections-menu > summary {
+  box-sizing: border-box;
+  height: 40px;
+  padding: 10px 34px 10px 14px;
+  border: 1px solid #cbd3e1;
+  border-radius: 6px;
+  background: #fafbff;
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-sections-menu > summary::-webkit-details-marker { display: none; }
+
+.search-sections-menu > summary::after {
+  content: "⌄";
+  position: absolute;
+  right: 12px;
+  top: 8px;
+  color: #666;
+}
+
+.search-sections-panel {
+  position: absolute;
+  right: 0;
+  top: 46px;
+  width: 285px;
+  padding: 10px;
+  border: 1px solid #cbd3e1;
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+}
+
+.search-sections-panel label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+
+.search-sections-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #e3e6ec;
+}
+
+.search-sections-actions button {
+  padding: 5px 9px;
+  border: 1px solid #b7bfcc;
+  border-radius: 5px;
+  background: #f5f6f8;
+  cursor: pointer;
 }
 
 /* ===== Modern Inputs ===== */

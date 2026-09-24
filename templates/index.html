@@ -32,6 +32,26 @@
         </select>
         <input type="text" id="intake_date" name="intake_date" placeholder="Select date(s) or type MM/DD/YYYY">
         <input type="hidden" id="intake_date_hidden" name="intake_date">
+        <details id="searchSectionsMenu" class="search-sections-menu">
+          <summary><span id="searchSectionsSummary">Search In: All</span></summary>
+          <div class="search-sections-panel">
+            <div class="search-sections-actions">
+              <button type="button" id="selectAllSearchSections">Select All</button>
+              <button type="button" id="clearAllSearchSections">Clear All</button>
+            </div>
+            <label><input type="checkbox" name="search_section" value="bcso_active_warrants" checked> BCSO Active Warrants</label>
+            <label><input type="checkbox" name="search_section" value="warrants_to_audit" checked> Warrants to Audit</label>
+            <label><input type="checkbox" name="search_section" value="civil_papers" checked> Civil Papers</label>
+            <label><input type="checkbox" name="search_section" value="baltimore_jail_population" checked> Baltimore Jail Population</label>
+            <label><input type="checkbox" name="search_section" value="doc_jail_population" checked> DoC Jail Population</label>
+            <label><input type="checkbox" name="search_section" value="landlord_tenant" checked> Landlord Tenant</label>
+            <label><input type="checkbox" name="search_section" value="warrant_of_restitution" checked> Warrant Of Restitution</label>
+            <label><input type="checkbox" name="search_section" value="warrant_of_restitution_status" checked> Warrant of Restitution - Status</label>
+            <label><input type="checkbox" name="search_section" value="dv_pdf" checked> DV PDF</label>
+            <label><input type="checkbox" name="search_section" value="returns" checked> Returns</label>
+            <label><input type="checkbox" name="search_section" value="daily_logs" checked> Daily Logs</label>
+          </div>
+        </details>
         <input type="file" id="dvPdfFile" accept="application/pdf" style="display:none;">
         <button type="submit">Search</button>
       </div>
@@ -2179,6 +2199,8 @@
 
 
       function getCurrentSearchFilters() {
+        const sectionCheckboxes = Array.from(document.querySelectorAll('input[name="search_section"]'));
+        const selectedSections = sectionCheckboxes.filter((box) => box.checked).map((box) => box.value);
         return {
           name: document.getElementById("name").value,
           case_number: document.getElementById("case_number").value,
@@ -2190,12 +2212,15 @@
           race: document.getElementById("race").value,
           issuing_county: document.getElementById("issuing_county").value,
           sid: document.getElementById("sid").value,
-          dob: document.getElementById("dob").value
+          dob: document.getElementById("dob").value,
+          search_sections: selectedSections.length ? selectedSections.join(",") : "__none__"
         };
       }
 
       function hasAnySearchFilter(filters = {}) {
-        return Object.values(filters).some(value => String(value ?? "").trim() !== "");
+        return Object.entries(filters).some(([key, value]) => (
+          key !== "search_sections" && String(value ?? "").trim() !== ""
+        ));
       }
 
       async function startCsvExport(statusEl, linkEl) {
@@ -3004,7 +3029,35 @@
         }
       });
 
+      function updateSearchSectionsSummary() {
+        const boxes = Array.from(document.querySelectorAll('input[name="search_section"]'));
+        const checked = boxes.filter((box) => box.checked);
+        const summary = document.getElementById("searchSectionsSummary");
+        if (checked.length === boxes.length) {
+          summary.textContent = "Search In: All";
+        } else if (checked.length === 0) {
+          summary.textContent = "Search In: None";
+        } else if (checked.length === 1) {
+          summary.textContent = `Search In: ${checked[0].parentElement.textContent.trim()}`;
+        } else {
+          summary.textContent = `Search In: ${checked.length} selected`;
+        }
+      }
+
+      document.querySelectorAll('input[name="search_section"]').forEach((box) => {
+        box.addEventListener("change", updateSearchSectionsSummary);
+      });
+      document.getElementById("selectAllSearchSections").addEventListener("click", () => {
+        document.querySelectorAll('input[name="search_section"]').forEach((box) => { box.checked = true; });
+        updateSearchSectionsSummary();
+      });
+      document.getElementById("clearAllSearchSections").addEventListener("click", () => {
+        document.querySelectorAll('input[name="search_section"]').forEach((box) => { box.checked = false; });
+        updateSearchSectionsSummary();
+      });
+
       window.addEventListener("DOMContentLoaded", async () => {
+        updateSearchSectionsSummary();
         await loadTableDefinitions();
         renderInitialDepartmentHeaders();
         await search({

@@ -14,6 +14,7 @@ def _build_filters_sql(
     sid: Optional[str] = None,
     court_doc_types: Optional[List[str]] = None,
     admin_status_values: Optional[List[str]] = None,
+    departments: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
     name_tokens = [t for t in (name_query or "").strip().split() if t]
     where_clauses = ["1=1"]
@@ -145,6 +146,22 @@ def _build_filters_sql(
             )
             params.extend(normalized_values)
 
+    if departments:
+        normalized_departments = []
+        seen_departments = set()
+        for value in departments:
+            text = str(value or "").strip().lower()
+            if not text or text in seen_departments:
+                continue
+            seen_departments.add(text)
+            normalized_departments.append(text)
+        if normalized_departments:
+            placeholders = ", ".join("?" for _ in normalized_departments)
+            where_clauses.append(
+                f"LOWER(LTRIM(RTRIM(COALESCE(department, '')))) IN ({placeholders})"
+            )
+            params.extend(normalized_departments)
+
     return "\n    AND ".join(where_clauses), params
 
 
@@ -163,6 +180,7 @@ def build_search_sql(
     sid: Optional[str] = None,
     court_doc_types: Optional[List[str]] = None,
     admin_status_values: Optional[List[str]] = None,
+    departments: Optional[List[str]] = None,
     order_by: str = "created_at DESC",
     extra_where: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
@@ -179,6 +197,7 @@ def build_search_sql(
         sid=sid,
         court_doc_types=court_doc_types,
         admin_status_values=admin_status_values,
+        departments=departments,
     )
 
     if extra_where:
@@ -194,7 +213,7 @@ def build_search_sql(
     return sql, params
 
 
-def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, admin_status_values=None, limit=100):
+def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, admin_status_values=None, departments=None, limit=100):
     cursor = conn.cursor()
 
     cursor.execute("SELECT COL_LENGTH('search.records', 'geocode_confidence')")
@@ -272,6 +291,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         sid=sid,
         court_doc_types=court_doc_types,
         admin_status_values=admin_status_values,
+        departments=departments,
     )
 
     cursor.execute(sql, params)

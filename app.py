@@ -2167,15 +2167,19 @@ def _ingest_civil_return_email_payloads_for_run(source_folder="inbox", move_to_p
 
 
 def fetch_civil_return_pdf_history_for_records(record_ids):
-    ids = [int(rid) for rid in record_ids if rid]
+    ids = list(dict.fromkeys(int(rid) for rid in record_ids if rid))
     if not ids:
         return {}
     conn = get_conn()
     try:
         ensure_civil_return_pdfs_table(conn)
         cur = conn.cursor()
-        placeholders = ", ".join("?" for _ in ids)
-        cur.execute(f"""
+        rows = []
+        columns = []
+        for offset in range(0, len(ids), 1000):
+            id_batch = ids[offset:offset + 1000]
+            placeholders = ", ".join("?" for _ in id_batch)
+            cur.execute(f"""
             WITH ranked_return_pdfs AS (
                 SELECT
                     id, record_id, case_number, FORMAT(intake_date, 'yyyy-MM-dd') AS intake_date,
@@ -2211,13 +2215,15 @@ def fetch_civil_return_pdf_history_for_records(record_ids):
             FROM ranked_return_pdfs
             WHERE rn = 1
             ORDER BY email_received_at DESC, created_at DESC, id DESC
-        """, *ids)
-        rows = cur.fetchall()
-        columns = [col[0] for col in cur.description]
-        return_pdf_ids = [int(row[0]) for row in rows if row and row[0]]
+            """, *id_batch)
+            rows.extend(cur.fetchall())
+            if not columns:
+                columns = [col[0] for col in cur.description]
+        return_pdf_ids = list(dict.fromkeys(int(row[0]) for row in rows if row and row[0]))
         download_history = {}
-        if return_pdf_ids:
-            download_placeholders = ", ".join("?" for _ in return_pdf_ids)
+        for offset in range(0, len(return_pdf_ids), 1000):
+            download_id_batch = return_pdf_ids[offset:offset + 1000]
+            download_placeholders = ", ".join("?" for _ in download_id_batch)
             cur.execute(f"""
                 SELECT
                     return_pdf_id,
@@ -2227,7 +2233,7 @@ def fetch_civil_return_pdf_history_for_records(record_ids):
                 FROM search.civil_return_pdf_downloads
                 WHERE return_pdf_id IN ({download_placeholders})
                 ORDER BY downloaded_at DESC, id DESC
-            """, *return_pdf_ids)
+            """, *download_id_batch)
             for download_row in cur.fetchall():
                 return_pdf_id, downloaded_by_email, download_route, downloaded_at = download_row
                 download_history.setdefault(int(return_pdf_id), []).append({
@@ -4291,6 +4297,43 @@ def ingest_wor_route():
     return jsonify(result)
 
 
+SEARCH_SECTION_KEYS = (
+    "bcso_active_warrants",
+    "warrants_to_audit",
+    "civil_papers",
+    "baltimore_jail_population",
+    "doc_jail_population",
+    "landlord_tenant",
+    "warrant_of_restitution",
+    "warrant_of_restitution_status",
+    "dv_pdf",
+    "returns",
+    "daily_logs",
+)
+
+SEARCH_SECTION_RECORD_DEPARTMENTS = {
+    "bcso_active_warrants": ("BCSO_ACTIVE_WARRANTS",),
+    "warrants_to_audit": ("Active Warrants",),
+    "civil_papers": ("Civil Papers",),
+    "baltimore_jail_population": ("Baltimore Jail Population",),
+    "doc_jail_population": ("DOC Jail Population",),
+    "landlord_tenant": ("Field Services Department",),
+    "warrant_of_restitution": ("Warrant of Restitution",),
+    "warrant_of_restitution_status": ("Warrant Of Restitution - Mdec",),
+}
+
+SEARCH_SECTION_RESPONSE_NAMES = {
+    "bcso_active_warrants": "Bcso Active Warrants",
+    "warrants_to_audit": "Active Warrants",
+    "civil_papers": "Civil Papers",
+    "baltimore_jail_population": "Baltimore Jail Population",
+    "doc_jail_population": "Doc Jail Population",
+    "landlord_tenant": "Field Services Department",
+    "warrant_of_restitution": "Warrant Of Restitution",
+    "warrant_of_restitution_status": "Warrant Of Restitution - Mdec",
+}
+
+
 def parse_search_filters(source):
     query = source.get("name", "").strip()
     case_number = source.get("case_number", "").strip()
@@ -4313,6 +4356,18 @@ def parse_search_filters(source):
     court_document_type = source.get("court_document_type", "").strip()
     admin_status = source.get("admin_status", "").strip()
 
+    raw_search_sections = source.get("search_sections")
+    if raw_search_sections is None or not str(raw_search_sections).strip():
+        search_sections = set(SEARCH_SECTION_KEYS)
+    elif str(raw_search_sections).strip() == "__none__":
+        search_sections = set()
+    else:
+        search_sections = {
+            item.strip()
+            for item in str(raw_search_sections).split(",")
+            if item.strip() in SEARCH_SECTION_KEYS
+        }
+
     return {
         "query": query,
         "case_number": case_number or None,
@@ -4328,6 +4383,7 @@ def parse_search_filters(source):
         "court_document_type_values": get_court_doc_type_values(court_document_type),
         "admin_status": admin_status or None,
         "admin_status_values": get_admin_status_values(admin_status),
+        "search_sections": search_sections,
     }
 
 
@@ -4739,6 +4795,15 @@ def search_all():
     filters = parse_search_filters(request.args)
     returns_queue = str(request.args.get("returns_queue") or "").strip().lower() in {"1", "true", "yes"}
     include_uploaded_returns = str(request.args.get("include_uploaded") or "").strip().lower() in {"1", "true", "yes"}
+    selected_sections = filters["search_sections"]
+    selected_record_sections = [
+        key for key in SEARCH_SECTION_RECORD_DEPARTMENTS if key in selected_sections
+    ]
+    selected_departments = [
+        department
+        for key in selected_record_sections
+        for department in SEARCH_SECTION_RECORD_DEPARTMENTS[key]
+    ]
 
     conn = get_conn()
     try:
@@ -4750,7 +4815,7 @@ def search_all():
                 print(f"WARN apt backfill skipped due to error: {exc}")
             finally:
                 _apt_backfill_attempted = True
-        records = [] if returns_queue else search_by_name(
+        records = [] if returns_queue or not selected_departments else search_by_name(
             conn,
             filters["query"],
             date_start=filters["date_start"],
@@ -4764,13 +4829,22 @@ def search_all():
             last_x_days=filters["last_x_days"],
             court_doc_types=filters["court_document_type_values"],
             admin_status_values=filters["admin_status_values"],
+            departments=selected_departments,
             limit=None
         )
-        daily_logs = [] if returns_queue or filters["admin_status"] else search_daily_logs(conn, filters)
-        return_records = search_returns(
-            conn,
-            filters,
-            exclude_uploaded=returns_queue and not include_uploaded_returns,
+        daily_logs = (
+            search_daily_logs(conn, filters)
+            if not returns_queue and "daily_logs" in selected_sections and not filters["admin_status"]
+            else []
+        )
+        return_records = (
+            search_returns(
+                conn,
+                filters,
+                exclude_uploaded=returns_queue and not include_uploaded_returns,
+            )
+            if returns_queue or "returns" in selected_sections
+            else []
         )
     finally:
         conn.close()
@@ -4783,14 +4857,7 @@ def search_all():
         grouped.setdefault(dept, []).append(r)
 
     default_departments = [
-        "Civil Papers",
-        "Bcso Active Warrants",
-        "Active Warrants",
-        "Baltimore Jail Population",
-        "Doc Jail Population",
-        "Field Services Department",
-        "Warrant Of Restitution - Mdec",
-        "Returns",
+        SEARCH_SECTION_RESPONSE_NAMES[key] for key in selected_record_sections
     ]
 
     response = {}
@@ -4803,19 +4870,22 @@ def search_all():
     for dept in default_departments:
         response.setdefault(dept, {"count": 0, "records": []})
 
-    dv_records = filter_dv_pdf_records(read_dv_pdf_records(), filters)
-    response["DV PDF"] = {
-        "count": len(dv_records),
-        "records": dv_records,
-    }
-    response["Daily Logs"] = {
-        "count": len(daily_logs),
-        "records": daily_logs,
-    }
-    response["Returns"] = {
-        "count": len(return_records),
-        "records": return_records,
-    }
+    if "dv_pdf" in selected_sections:
+        dv_records = filter_dv_pdf_records(read_dv_pdf_records(), filters)
+        response["DV PDF"] = {
+            "count": len(dv_records),
+            "records": dv_records,
+        }
+    if "daily_logs" in selected_sections:
+        response["Daily Logs"] = {
+            "count": len(daily_logs),
+            "records": daily_logs,
+        }
+    if returns_queue or "returns" in selected_sections:
+        response["Returns"] = {
+            "count": len(return_records),
+            "records": return_records,
+        }
 
     return jsonify(response)
 
