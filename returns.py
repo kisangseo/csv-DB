@@ -676,6 +676,12 @@ def search_returns(conn, filters, exclude_uploaded=False):
     if case_number:
         clauses.append("LOWER(COALESCE(case_number, '')) LIKE ?")
         params.append(f"%{case_number.lower()}%")
+    from search_sql import ADDRESS_TOKEN_ALTERNATIVES, address_search_tokens
+    for token in address_search_tokens(filters.get("address")):
+        alternatives = ADDRESS_TOKEN_ALTERNATIVES.get(token, (token,))
+        haystack = "LOWER(CONCAT_WS(' ', COALESCE(service_address, ''), COALESCE(service_unit, '')))"
+        clauses.append("(" + " OR ".join(f"{haystack} LIKE ?" for _ in alternatives) + ")")
+        params.extend(f"%{alternative}%" for alternative in alternatives)
     date_start = clean_value(filters.get("date_start"))
     date_end = clean_value(filters.get("date_end"))
     if date_start and date_end:

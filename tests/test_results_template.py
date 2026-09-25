@@ -19,6 +19,12 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('if (RETURNS_FIRST) {', self.template)
         self.assertIn('const aIsReturns = deptA.toLowerCase() === "returns";', self.template)
 
+    def test_address_search_and_details_are_conditional(self):
+        self.assertIn('id="address"', self.template)
+        self.assertIn('if (data["Address Details"] && !options.returnsQueue)', self.template)
+        self.assertIn('.filter(([dept]) => dept !== "Address Details")', self.template)
+        self.assertIn('`${window.location.origin}/address-notes`', self.template)
+
     def test_search_results_start_collapsed_and_keep_count_in_heading(self):
         self.assertIn('content.className = "department-content collapsed";', self.template)
         self.assertIn('title.textContent = `▶ ${baseTitle} — ${recordLabel}`;', self.template)

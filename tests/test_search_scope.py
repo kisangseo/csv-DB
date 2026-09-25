@@ -36,6 +36,28 @@ class SearchScopeTests(unittest.TestCase):
         self.assertIn("IN (?, ?)", where_sql)
         self.assertEqual(params, ["civil papers", "doc jail population"])
 
+    def test_address_filter_is_tokenized_parameterized_and_suffix_aware(self):
+        where_sql, params = _build_filters_sql("", address_query="123 Main Street Apt 4")
+
+        self.assertIn("CONCAT_WS", where_sql)
+        self.assertNotIn("123 Main", where_sql)
+        self.assertIn("%123%", params)
+        self.assertIn("%street%", params)
+        self.assertIn("%st%", params)
+        self.assertIn("%4%", params)
+
+    def test_address_identity_normalizes_but_keeps_units_separate(self):
+        first = application.address_identity("123 Main Street", "2", "Baltimore", "MD", "21201")
+        same = application.address_identity("123 MAIN ST.", "#2", "baltimore", "md", "21201")
+        other_unit = application.address_identity("123 Main St", "4", "Baltimore", "MD", "21201")
+
+        self.assertEqual(first["address_key"], same["address_key"])
+        self.assertNotEqual(first["address_key"], other_unit["address_key"])
+
+    def test_parse_search_filters_includes_address(self):
+        filters = application.parse_search_filters({"address": "123 Main St Apt 2"})
+        self.assertEqual(filters["address"], "123 Main St Apt 2")
+
     @patch.object(application, "ENABLE_APT_BACKFILL_ON_SEARCH", False)
     @patch.object(application, "read_dv_pdf_records")
     @patch.object(application, "search_returns")
@@ -67,6 +89,26 @@ class SearchScopeTests(unittest.TestCase):
         search_returns.assert_not_called()
         read_dv_pdf_records.assert_not_called()
         self.assertEqual(response.get_json(), {"Civil Papers": {"count": 0, "records": []}})
+
+    @patch.object(application, "ENABLE_APT_BACKFILL_ON_SEARCH", False)
+    @patch.object(application, "build_address_details")
+    @patch.object(application, "search_by_name")
+    @patch.object(application, "enrich_civil_return_pdf_history")
+    @patch.object(application, "get_conn")
+    def test_address_details_only_appear_for_address_search(
+        self, get_conn, enrich_history, search_by_name, build_address_details
+    ):
+        get_conn.return_value = MagicMock()
+        search_by_name.return_value = []
+        enrich_history.return_value = []
+        build_address_details.return_value = {"count": 0, "records": []}
+
+        normal = self.client.get("/search_all?search_sections=civil_papers&name=test")
+        addressed = self.client.get("/search_all?search_sections=civil_papers&address=123%20Main%20St")
+
+        self.assertNotIn("Address Details", normal.get_json())
+        self.assertIn("Address Details", addressed.get_json())
+        build_address_details.assert_called_once()
 
     def test_template_has_all_search_section_controls(self):
         template = (Path(__file__).resolve().parents[1] / "templates" / "index.html").read_text()
