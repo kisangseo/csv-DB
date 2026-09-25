@@ -66,6 +66,12 @@
 
           <input
             type="text"
+            id="address"
+            placeholder="Street address, unit, city, state or ZIP"
+          />
+
+          <input
+            type="text"
             id="sid"
             placeholder="SID"
           />
@@ -2213,6 +2219,7 @@
           issuing_county: document.getElementById("issuing_county").value,
           sid: document.getElementById("sid").value,
           dob: document.getElementById("dob").value,
+          address: document.getElementById("address").value,
           search_sections: selectedSections.length ? selectedSections.join(",") : "__none__"
         };
       }
@@ -2337,6 +2344,94 @@
         URL.revokeObjectURL(downloadUrl);
       }
 
+      function formatAddressGroup(group) {
+        const street = [group.address, group.apt ? `Unit ${group.apt}` : ""].filter(Boolean).join(", ");
+        const locality = [group.city, group.state, group.postal_code].filter(Boolean).join(", ");
+        return [street, locality].filter(Boolean).join(" — ");
+      }
+
+      function renderAddressDetails(info) {
+        const section = document.createElement("section");
+        section.className = "address-details";
+        const heading = document.createElement("h2");
+        heading.textContent = `Address Details — ${info.count || 0} address${info.count === 1 ? "" : "es"}`;
+        section.appendChild(heading);
+
+        if (!info.records || !info.records.length) {
+          const empty = document.createElement("p");
+          empty.textContent = "No matching addresses were found.";
+          section.appendChild(empty);
+          return section;
+        }
+
+        info.records.forEach((group) => {
+          const card = document.createElement("article");
+          card.className = "address-detail-card";
+          const title = document.createElement("h3");
+          title.textContent = formatAddressGroup(group);
+          card.appendChild(title);
+
+          const list = document.createElement("ol");
+          list.className = "address-note-list";
+          (group.notes || []).forEach((item) => {
+            const li = document.createElement("li");
+            const text = document.createElement("span");
+            text.textContent = item.note;
+            li.appendChild(text);
+            const metaParts = [item.source, item.created_by, item.created_at].filter(Boolean);
+            if (metaParts.length) {
+              const meta = document.createElement("small");
+              meta.textContent = metaParts.join(" · ");
+              li.appendChild(meta);
+            }
+            list.appendChild(li);
+          });
+          if (!group.notes || !group.notes.length) {
+            const empty = document.createElement("p");
+            empty.className = "address-notes-empty";
+            empty.textContent = "No notes for this exact address and unit.";
+            card.appendChild(empty);
+          } else {
+            card.appendChild(list);
+          }
+
+          const form = document.createElement("form");
+          form.className = "address-note-form";
+          const textarea = document.createElement("textarea");
+          textarea.placeholder = "Add a note for this exact address and unit";
+          textarea.maxLength = 4000;
+          textarea.required = true;
+          const button = document.createElement("button");
+          button.type = "submit";
+          button.textContent = "Add Note";
+          const message = document.createElement("span");
+          message.className = "address-note-message";
+          form.append(textarea, button, message);
+          form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            button.disabled = true;
+            message.textContent = "Saving...";
+            try {
+              const response = await fetch(`${window.location.origin}/address-notes`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({...group, note: textarea.value})
+              });
+              const payload = await response.json().catch(() => ({}));
+              if (!response.ok) throw new Error(payload.error || "Unable to save note.");
+              message.textContent = "Saved.";
+              await search({silent: true});
+            } catch (error) {
+              message.textContent = error.message;
+              button.disabled = false;
+            }
+          });
+          card.appendChild(form);
+          section.appendChild(card);
+        });
+        return section;
+      }
+
       async function search(eventOrOptions) {
         const options = (eventOrOptions && typeof eventOrOptions === "object" && typeof eventOrOptions.preventDefault !== "function")
           ? eventOrOptions
@@ -2390,8 +2485,13 @@
           if (!options.silent) status.textContent = "Search complete.";
           let renderedDepartments = 0;
 
+          if (data["Address Details"] && !options.returnsQueue) {
+            resultsDiv.appendChild(renderAddressDetails(data["Address Details"]));
+          }
+
           const targetDepartment = (options.department || "").toLowerCase().trim();
           const orderedEntries = Object.entries(data)
+            .filter(([dept]) => dept !== "Address Details")
             .filter(([dept]) => !targetDepartment || dept.toLowerCase() === targetDepartment)
             .sort(([deptA], [deptB]) => {
             if (RETURNS_FIRST) {
