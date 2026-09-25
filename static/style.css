@@ -43,7 +43,7 @@ form {
   gap: 12px;
   flex-wrap: wrap;
   margin: 20px auto 30px;
-  max-width: 1180px;
+  max-width: 1500px;
 }
 
 .search-top-row {
@@ -51,8 +51,14 @@ form {
   justify-content: center;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   width: 100%;
+}
+
+@media (max-width: 1400px) {
+  .search-top-row {
+    flex-wrap: wrap;
+  }
 }
 
 .search-sections-menu {
