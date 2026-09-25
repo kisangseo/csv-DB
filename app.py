@@ -27,7 +27,7 @@ from azure.storage.blob import (
 )
 from db_connect import get_conn
 from daily_logs import search_daily_logs
-from search_sql import search_by_name, build_search_sql
+from search_sql import ADDRESS_TOKEN_ALTERNATIVES, search_by_name, build_search_sql
 from returns import (
     RETURN_STATUS_VALUES,
     ReturnProcessingConflict,
@@ -442,6 +442,153 @@ def split_address_and_apt(address):
     street = re.sub(r"\s{2,}", " ", suffix_match.group(1)).strip(" ,")
     trailing = suffix_match.group(2).strip(" ,")
     return (street or None), (trailing or None)
+
+
+ADDRESS_SUFFIX_CANONICAL = {
+    "street": "st", "avenue": "ave", "road": "rd", "boulevard": "blvd",
+    "drive": "dr", "lane": "ln", "court": "ct", "place": "pl",
+    "parkway": "pkwy", "highway": "hwy",
+}
+INLINE_UNIT_RE = re.compile(r"(?i)\b(?:apt\.?|apartment|unit|#)\s*#?\s*([A-Za-z0-9-]+)\b")
+
+
+def normalize_address_piece(value):
+    tokens = re.findall(r"[A-Za-z0-9]+", str(value or "").lower())
+    return " ".join(ADDRESS_SUFFIX_CANONICAL.get(token, token) for token in tokens)
+
+
+def address_identity(address, apt=None, city=None, state=None, postal_code=None):
+    street = str(address or "").strip()
+    unit = str(apt or "").strip().lstrip("#")
+    inline_unit = INLINE_UNIT_RE.search(street)
+    if inline_unit:
+        if not unit:
+            unit = inline_unit.group(1)
+        street = (street[:inline_unit.start()] + " " + street[inline_unit.end():]).strip(" ,")
+    pieces = [
+        normalize_address_piece(street), normalize_address_piece(unit),
+        normalize_address_piece(city), normalize_address_piece(state),
+        normalize_address_piece(postal_code),
+    ]
+    key = "|".join(pieces)
+    return {
+        "address_key": key,
+        "address": street or None,
+        "apt": unit or None,
+        "city": str(city or "").strip() or None,
+        "state": str(state or "").strip() or None,
+        "postal_code": str(postal_code or "").strip() or None,
+    }
+
+
+def ensure_address_notes_table(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        IF OBJECT_ID('search.address_notes', 'U') IS NULL
+        BEGIN
+            CREATE TABLE search.address_notes (
+                address_note_id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                address_key NVARCHAR(1000) NOT NULL,
+                street_address NVARCHAR(1000) NOT NULL,
+                apt_unit NVARCHAR(255) NULL,
+                city NVARCHAR(255) NULL,
+                state NVARCHAR(100) NULL,
+                postal_code NVARCHAR(50) NULL,
+                note NVARCHAR(4000) NOT NULL,
+                created_by NVARCHAR(320) NULL,
+                created_at DATETIME2 NOT NULL CONSTRAINT DF_address_notes_created_at DEFAULT SYSUTCDATETIME(),
+                is_active BIT NOT NULL CONSTRAINT DF_address_notes_is_active DEFAULT (1)
+            );
+            CREATE INDEX IX_address_notes_key ON search.address_notes(address_key, is_active, created_at);
+        END
+    """)
+    conn.commit()
+
+
+def record_address_identity(record, source):
+    if source == "Returns":
+        return address_identity(record.get("service_address"), record.get("service_unit"))
+    return address_identity(
+        record.get("address"), record.get("apt"), record.get("city"),
+        record.get("state"), record.get("postal_code"),
+    )
+
+
+def build_address_details(conn, source_rows):
+    groups = {}
+    seen_notes = set()
+    note_fields = {
+        "Records": ("notes",),
+        "Daily Logs": ("notes_or_narrative", "additional_report"),
+        "Returns": ("attempt_notes",),
+    }
+    for source, rows in source_rows:
+        for row in rows:
+            identity = record_address_identity(row, source)
+            if not identity["address"] or not normalize_address_piece(identity["address"]):
+                continue
+            group = groups.setdefault(identity["address_key"], {**identity, "notes": []})
+            for field in note_fields.get(source, ()):
+                note = str(row.get(field) or "").strip()
+                marker = (identity["address_key"], source, note.lower())
+                if note and marker not in seen_notes:
+                    seen_notes.add(marker)
+                    group["notes"].append({"note": note, "source": source, "created_by": None, "created_at": None})
+
+    if not groups:
+        return {"count": 0, "records": []}
+
+    ensure_address_notes_table(conn)
+    keys = list(groups)
+    cur = conn.cursor()
+    placeholders = ", ".join("?" for _ in keys)
+    cur.execute(f"""
+        SELECT address_key, note, created_by,
+               FORMAT(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Eastern Standard Time', 'yyyy-MM-dd h:mm tt')
+        FROM search.address_notes
+        WHERE is_active = 1 AND address_key IN ({placeholders})
+        ORDER BY created_at ASC, address_note_id ASC
+    """, keys)
+    for key, note, created_by, created_at in cur.fetchall():
+        if key in groups:
+            groups[key]["notes"].append({
+                "note": note, "source": "Address note", "created_by": created_by, "created_at": created_at,
+            })
+    return {"count": len(groups), "records": list(groups.values())}
+
+
+@app.route("/address-notes", methods=["POST"])
+def add_address_note():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    payload = request.get_json(silent=True) or {}
+    note = str(payload.get("note") or "").strip()
+    identity = address_identity(
+        payload.get("address"), payload.get("apt"), payload.get("city"),
+        payload.get("state"), payload.get("postal_code"),
+    )
+    if not identity["address"] or not normalize_address_piece(identity["address"]):
+        return jsonify({"error": "Address is required."}), 400
+    if not note:
+        return jsonify({"error": "Note is required."}), 400
+    if len(note) > 4000:
+        return jsonify({"error": "Note must be 4,000 characters or fewer."}), 400
+
+    conn = get_conn()
+    try:
+        ensure_address_notes_table(conn)
+        cur = conn.cursor()
+        actor = get_current_user_email(cur)
+        cur.execute("""
+            INSERT INTO search.address_notes (
+                address_key, street_address, apt_unit, city, state, postal_code, note, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, identity["address_key"], identity["address"], identity["apt"], identity["city"],
+             identity["state"], identity["postal_code"], note, actor)
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"status": "ok"}), 201
 
 
 def backfill_landlord_tenant_apt(conn):
@@ -2278,6 +2425,7 @@ def filter_dv_pdf_records(records, filters):
         for value in (filters.get("admin_status_values") or [])
         if str(value or "").strip()
     }
+    address_tokens = re.findall(r"[A-Za-z0-9]+", str(filters.get("address") or "").lower())
 
     def parse_date_value(value):
         if not value:
@@ -2306,9 +2454,15 @@ def filter_dv_pdf_records(records, filters):
         row_case = (row.get("case_number") or "").lower()
         row_name = (row.get("respondent_name") or "").lower()
         issue_date = parse_date_value(row.get("issue_date"))
+        row_address = normalize_address_piece(row.get("reverse_geocode_output") or row.get("address"))
         if case_number and case_number not in row_case:
             continue
         if query and query not in row_name:
+            continue
+        if address_tokens and not all(
+            any(alternative in row_address.split() or alternative in row_address for alternative in ADDRESS_TOKEN_ALTERNATIVES.get(token, (token,)))
+            for token in address_tokens
+        ):
             continue
         if start_date and end_date:
             if not issue_date or issue_date < start_date or issue_date > end_date:
@@ -4355,6 +4509,7 @@ def parse_search_filters(source):
     dob = source.get("dob", "").strip()
     court_document_type = source.get("court_document_type", "").strip()
     admin_status = source.get("admin_status", "").strip()
+    address = source.get("address", "").strip()
 
     raw_search_sections = source.get("search_sections")
     if raw_search_sections is None or not str(raw_search_sections).strip():
@@ -4383,6 +4538,7 @@ def parse_search_filters(source):
         "court_document_type_values": get_court_doc_type_values(court_document_type),
         "admin_status": admin_status or None,
         "admin_status_values": get_admin_status_values(admin_status),
+        "address": address or None,
         "search_sections": search_sections,
     }
 
@@ -4830,6 +4986,7 @@ def search_all():
             court_doc_types=filters["court_document_type_values"],
             admin_status_values=filters["admin_status_values"],
             departments=selected_departments,
+            address_query=filters["address"],
             limit=None
         )
         daily_logs = (
@@ -4845,6 +5002,14 @@ def search_all():
             )
             if returns_queue or "returns" in selected_sections
             else []
+        )
+        address_details = (
+            build_address_details(conn, [
+                ("Records", records),
+                ("Daily Logs", daily_logs),
+                ("Returns", return_records),
+            ])
+            if filters["address"] else None
         )
     finally:
         conn.close()
@@ -4886,6 +5051,8 @@ def search_all():
             "count": len(return_records),
             "records": return_records,
         }
+    if address_details is not None:
+        response = {"Address Details": address_details, **response}
 
     return jsonify(response)
 

@@ -1,3 +1,6 @@
+from search_sql import ADDRESS_TOKEN_ALTERNATIVES, address_search_tokens
+
+
 ARRIVAL_TIME_EASTERN_SQL = """
 CAST(
     DATEADD(SECOND, TRY_CONVERT(INT, TRY_CONVERT(BIGINT, e.arrival_time) / 1000), '1970-01-01')
@@ -32,6 +35,12 @@ def search_daily_logs(conn, filters, limit=2000):
     if filters["case_number"]:
         where_clauses.append(f"LOWER(COALESCE({EVENT_NUMBER_DISPLAY_SQL}, '')) LIKE ?")
         params.append(f"%{filters['case_number'].lower()}%")
+
+    for token in address_search_tokens(filters.get("address")):
+        alternatives = ADDRESS_TOKEN_ALTERNATIVES.get(token, (token,))
+        haystack = "LOWER(CONCAT_WS(' ', COALESCE(e.address, ''), COALESCE(e.city, ''), COALESCE(e.state, ''), COALESCE(e.postal_code, '')))"
+        where_clauses.append("(" + " OR ".join(f"{haystack} LIKE ?" for _ in alternatives) + ")")
+        params.extend(f"%{alternative}%" for alternative in alternatives)
 
     if filters["date_start"] and filters["date_end"]:
         where_clauses.append(f"CAST({ARRIVAL_TIME_EASTERN_SQL} AS date) BETWEEN CAST(? AS date) AND CAST(? AS date)")

@@ -1,4 +1,26 @@
+import re
 from typing import List, Optional, Tuple
+
+
+ADDRESS_TOKEN_ALTERNATIVES = {
+    "street": ("street", "st"), "st": ("street", "st"),
+    "avenue": ("avenue", "ave"), "ave": ("avenue", "ave"),
+    "road": ("road", "rd"), "rd": ("road", "rd"),
+    "boulevard": ("boulevard", "blvd"), "blvd": ("boulevard", "blvd"),
+    "drive": ("drive", "dr"), "dr": ("drive", "dr"),
+    "lane": ("lane", "ln"), "ln": ("lane", "ln"),
+    "court": ("court", "ct"), "ct": ("court", "ct"),
+    "place": ("place", "pl"), "pl": ("place", "pl"),
+    "parkway": ("parkway", "pkwy"), "pkwy": ("parkway", "pkwy"),
+    "highway": ("highway", "hwy"), "hwy": ("highway", "hwy"),
+    "apartment": ("apartment", "apt", "unit"),
+    "apt": ("apartment", "apt", "unit"),
+    "unit": ("apartment", "apt", "unit"),
+}
+
+
+def address_search_tokens(value):
+    return [token.lower() for token in re.findall(r"[A-Za-z0-9]+", str(value or ""))]
 
 
 def _build_filters_sql(
@@ -15,6 +37,7 @@ def _build_filters_sql(
     court_doc_types: Optional[List[str]] = None,
     admin_status_values: Optional[List[str]] = None,
     departments: Optional[List[str]] = None,
+    address_query: Optional[str] = None,
 ) -> Tuple[str, List[object]]:
     name_tokens = [t for t in (name_query or "").strip().split() if t]
     where_clauses = ["1=1"]
@@ -162,6 +185,21 @@ def _build_filters_sql(
             )
             params.extend(normalized_departments)
 
+    address_tokens = address_search_tokens(address_query)
+    if address_tokens:
+        address_haystack = """
+            LOWER(CONCAT_WS(' ',
+                COALESCE(address, tenant_defendant_or_respondent_address, doc_address, location_of_prior_attempt, ''),
+                COALESCE(apt, unit, apartment_unit_or_secondary_address, ''),
+                COALESCE(city, ''), COALESCE(state, ''), COALESCE(postal_code, '')
+            ))
+        """.strip()
+        for token in address_tokens:
+            alternatives = ADDRESS_TOKEN_ALTERNATIVES.get(token, (token,))
+            token_clauses = " OR ".join(f"{address_haystack} LIKE ?" for _ in alternatives)
+            where_clauses.append(f"({token_clauses})")
+            params.extend(f"%{alternative}%" for alternative in alternatives)
+
     return "\n    AND ".join(where_clauses), params
 
 
@@ -181,6 +219,7 @@ def build_search_sql(
     court_doc_types: Optional[List[str]] = None,
     admin_status_values: Optional[List[str]] = None,
     departments: Optional[List[str]] = None,
+    address_query: Optional[str] = None,
     order_by: str = "created_at DESC",
     extra_where: Optional[List[str]] = None,
 ) -> Tuple[str, List[object]]:
@@ -198,6 +237,7 @@ def build_search_sql(
         court_doc_types=court_doc_types,
         admin_status_values=admin_status_values,
         departments=departments,
+        address_query=address_query,
     )
 
     if extra_where:
@@ -213,7 +253,7 @@ def build_search_sql(
     return sql, params
 
 
-def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, admin_status_values=None, departments=None, limit=100):
+def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=None, date_start=None, date_end=None, issuing_county=None, last_x_days=None, sid=None, court_doc_types=None, admin_status_values=None, departments=None, address_query=None, limit=100):
     cursor = conn.cursor()
 
     cursor.execute("SELECT COL_LENGTH('search.records', 'geocode_confidence')")
@@ -292,6 +332,7 @@ def search_by_name(conn, name_query, case_number=None, dob=None, sex=None, race=
         court_doc_types=court_doc_types,
         admin_status_values=admin_status_values,
         departments=departments,
+        address_query=address_query,
     )
 
     cursor.execute(sql, params)
