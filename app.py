@@ -554,7 +554,8 @@ def build_address_details(conn, source_rows):
             groups[key]["notes"].append({
                 "note": note, "source": "Address note", "created_by": created_by, "created_at": created_at,
             })
-    return {"count": len(groups), "records": list(groups.values())}
+    records_with_notes = [group for group in groups.values() if group["notes"]]
+    return {"count": len(records_with_notes), "records": records_with_notes}
 
 
 @app.route("/address-notes", methods=["POST"])

@@ -25,6 +25,15 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('.filter(([dept]) => dept !== "Address Details")', self.template)
         self.assertIn('`${window.location.origin}/address-notes`', self.template)
 
+    def test_address_details_start_collapsed_and_hide_empty_note_cards(self):
+        self.assertIn('heading.textContent = `▶ Address Details — ${addressLabel}`;', self.template)
+        self.assertIn(
+            'content.className = "department-content collapsed address-details-content";',
+            self.template,
+        )
+        self.assertIn('heading.textContent = `${collapsed ? "▶" : "▼"} Address Details — ${addressLabel}`;', self.template)
+        self.assertNotIn('empty.textContent = "No notes for this exact address and unit.";', self.template)
+
     def test_search_results_start_collapsed_and_keep_count_in_heading(self):
         self.assertIn('content.className = "department-content collapsed";', self.template)
         self.assertIn('title.textContent = `▶ ${baseTitle} — ${recordLabel}`;', self.template)

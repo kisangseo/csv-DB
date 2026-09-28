@@ -2354,13 +2354,23 @@
         const section = document.createElement("section");
         section.className = "address-details";
         const heading = document.createElement("h2");
-        heading.textContent = `Address Details — ${info.count || 0} address${info.count === 1 ? "" : "es"}`;
+        const addressLabel = `${info.count || 0} address${info.count === 1 ? "" : "es"}`;
+        heading.textContent = `▶ Address Details — ${addressLabel}`;
+        heading.style.cursor = "pointer";
         section.appendChild(heading);
+
+        const content = document.createElement("div");
+        content.className = "department-content collapsed address-details-content";
+        heading.addEventListener("click", () => {
+          const collapsed = content.classList.toggle("collapsed");
+          heading.textContent = `${collapsed ? "▶" : "▼"} Address Details — ${addressLabel}`;
+        });
+        section.appendChild(content);
 
         if (!info.records || !info.records.length) {
           const empty = document.createElement("p");
-          empty.textContent = "No matching addresses were found.";
-          section.appendChild(empty);
+          empty.textContent = "No notes were found for the exact matching address and unit.";
+          content.appendChild(empty);
           return section;
         }
 
@@ -2386,14 +2396,7 @@
             }
             list.appendChild(li);
           });
-          if (!group.notes || !group.notes.length) {
-            const empty = document.createElement("p");
-            empty.className = "address-notes-empty";
-            empty.textContent = "No notes for this exact address and unit.";
-            card.appendChild(empty);
-          } else {
-            card.appendChild(list);
-          }
+          card.appendChild(list);
 
           const form = document.createElement("form");
           form.className = "address-note-form";
@@ -2427,7 +2430,7 @@
             }
           });
           card.appendChild(form);
-          section.appendChild(card);
+          content.appendChild(card);
         });
         return section;
       }

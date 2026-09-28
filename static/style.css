@@ -610,7 +610,11 @@ td:nth-child(4) {
 }
 
 .address-details > h2 {
-  margin: 0 0 14px;
+  margin: 0;
+}
+
+.address-details-content {
+  padding-top: 14px;
 }
 
 .address-detail-card {

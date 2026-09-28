@@ -54,6 +54,24 @@ class SearchScopeTests(unittest.TestCase):
         self.assertEqual(first["address_key"], same["address_key"])
         self.assertNotEqual(first["address_key"], other_unit["address_key"])
 
+    @patch.object(application, "ensure_address_notes_table")
+    def test_address_details_omit_exact_addresses_without_notes(self, ensure_table):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        source_rows = [("Records", [
+            {"address": "123 Main St", "apt": "2", "city": "Baltimore", "state": "MD", "postal_code": "21201", "notes": ""},
+            {"address": "123 Main St", "apt": "4", "city": "Baltimore", "state": "MD", "postal_code": "21201", "notes": "Dangerous dog"},
+        ])]
+
+        details = application.build_address_details(connection, source_rows)
+
+        self.assertEqual(details["count"], 1)
+        self.assertEqual(details["records"][0]["apt"], "4")
+        self.assertEqual(details["records"][0]["notes"][0]["note"], "Dangerous dog")
+        ensure_table.assert_called_once_with(connection)
+
     def test_parse_search_filters_includes_address(self):
         filters = application.parse_search_filters({"address": "123 Main St Apt 2"})
         self.assertEqual(filters["address"], "123 Main St Apt 2")
