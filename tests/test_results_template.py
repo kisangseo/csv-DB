@@ -35,7 +35,8 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertNotIn('empty.textContent = "No notes for this exact address and unit.";', self.template)
 
     def test_dv_pdf_attempts_expand_from_the_parent_row(self):
-        self.assertIn('"Order Disposition","Attempts"', self.template)
+        self.assertIn('"Order Disposition","Status"', self.template)
+        self.assertIn('return servedDate ? `Attempts: ${count} — Served on ${servedDate}`', self.template)
         self.assertIn('createDvAttemptDetailRow(row, headers.length)', self.template)
         self.assertIn('tr.classList.add("dv-attempt-parent-row")', self.template)
         self.assertIn('link.textContent = "Download Attempt PDF"', self.template)

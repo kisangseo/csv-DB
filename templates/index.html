@@ -933,7 +933,7 @@
           if (headerLabel === "Respondent Address") return row.reverse_geocode_output || "";
           if (headerLabel === "Order Type") return row.order_type || row.type || "";
           if (headerLabel === "Order Disposition") return row.order_disposition || "";
-          if (headerLabel === "Attempts") return row.attempt_count || 0;
+          if (headerLabel === "Status") return getDvAttemptStatus(row);
         }
         if (dept.toLowerCase() === "daily logs" && headerLabel === "Name") {
           return row.event_name || row.name || "";
@@ -1055,6 +1055,19 @@
         const suffix = hour >= 12 ? "PM" : "AM";
         hour = hour % 12 || 12;
         return `${match[2]}/${match[3]}/${match[1]} ${hour}:${match[5]} ${suffix}`;
+      }
+
+      function getDvAttemptStatus(row) {
+        const attempts = Array.isArray(row.service_attempts) ? row.service_attempts : [];
+        const count = Number(row.attempt_count ?? attempts.length ?? 0);
+        const servedAttempt = attempts.find((attempt) => {
+          const disposition = toCellText(attempt.attempt_disposition).trim().toLowerCase();
+          return disposition === "served" || disposition.startsWith("served ") || disposition.startsWith("served-");
+        });
+        if (!servedAttempt) return `Attempts: ${count}`;
+        const servedDateTime = formatDvAttemptDateTime(servedAttempt.clear_at || servedAttempt.arrival_at);
+        const servedDate = servedDateTime === "—" ? "" : servedDateTime.split(" ")[0];
+        return servedDate ? `Attempts: ${count} — Served on ${servedDate}` : `Attempts: ${count} — Served`;
       }
 
       function createDvAttemptDetailRow(row, colspan) {
@@ -2707,7 +2720,7 @@
             } else if (dept.toLowerCase() === "field services department") {
               headers = ["Name","Case Number","Address","City/State","TenantZip","APT/Unit","Event Type","Event Date","Case Type"];
             } else if (dept.toLowerCase() === "dv pdf") {
-              headers = ["Case Number","Respondent Name","Issue Date","Respondent Address","Order Type","Order Disposition","Attempts"];
+              headers = ["Case Number","Respondent Name","Issue Date","Respondent Address","Order Type","Order Disposition","Status"];
             } else if (dept.toLowerCase() === "civil papers") {
               headers = ["Intake Date","Case Number","Court Document Type","Court Issued Date","Tenant, Defendant, or Respondent Name","Tenant, Defendant or Respondent Address","Petitioner or Plaintiff Name","Administrative Status","Served By","Comments"];
             } else if (dept.toLowerCase() === "daily logs") {
