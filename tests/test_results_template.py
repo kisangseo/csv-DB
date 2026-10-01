@@ -34,6 +34,12 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('heading.textContent = `${collapsed ? "▶" : "▼"} Address Details — ${addressLabel}`;', self.template)
         self.assertNotIn('empty.textContent = "No notes for this exact address and unit.";', self.template)
 
+    def test_dv_pdf_attempts_expand_from_the_parent_row(self):
+        self.assertIn('"Order Disposition","Attempts"', self.template)
+        self.assertIn('createDvAttemptDetailRow(row, headers.length)', self.template)
+        self.assertIn('tr.classList.add("dv-attempt-parent-row")', self.template)
+        self.assertIn('link.textContent = "Download Attempt PDF"', self.template)
+
     def test_search_results_start_collapsed_and_keep_count_in_heading(self):
         self.assertIn('content.className = "department-content collapsed";', self.template)
         self.assertIn('title.textContent = `▶ ${baseTitle} — ${recordLabel}`;', self.template)
