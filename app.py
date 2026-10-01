@@ -11,6 +11,8 @@ import uuid
 import io
 import zipfile
 import base64
+import hashlib
+import html
 import requests
 import time
 import subprocess
@@ -845,9 +847,9 @@ def fetch_dv_pdf_records_from_sql():
                     "uploaded_at": _format_sql_datetime(row.uploaded_at),
                 }
             )
-        return rows
     finally:
         conn.close()
+    return enrich_dv_service_attempts(rows)
 
 
 def read_dv_pdf_records():
@@ -1301,6 +1303,209 @@ def insert_dv_email_record_in_sql(payload):
         conn.close()
 
 
+def normalize_dv_case_number(value):
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def parse_service_attempt_email_fields(body_content):
+    rows = re.findall(
+        r"<tr[^>]*>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>\s*</tr>",
+        body_content or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    fields = {}
+    for raw_key, raw_value in rows:
+        key = html.unescape(re.sub(r"<[^>]+>", " ", raw_key or ""))
+        value = html.unescape(re.sub(r"<[^>]+>", " ", raw_value or ""))
+        key = re.sub(r"\s+", " ", key).strip()
+        value = re.sub(r"\s+", " ", value).strip()
+        if key:
+            fields[key] = value
+    if not fields:
+        body_text = html.unescape(re.sub(r"<[^>]+>", "\n", body_content or ""))
+        for line in body_text.splitlines():
+            text_line = re.sub(r"\s+", " ", line).strip()
+            if not text_line or ":" not in text_line:
+                continue
+            key, value = text_line.split(":", 1)
+            if key.strip() and value.strip():
+                fields[key.strip()] = value.strip()
+    return fields
+
+
+def _service_attempt_field(fields, *labels):
+    normalized = {re.sub(r"[^A-Z0-9]", "", str(k).upper()): v for k, v in (fields or {}).items()}
+    for label in labels:
+        value = normalized.get(re.sub(r"[^A-Z0-9]", "", label.upper()))
+        if value is not None:
+            return str(value).strip()
+    return ""
+
+
+def _parse_service_attempt_datetime(value):
+    text = str(value or "").strip()
+    for fmt in ("%m/%d/%Y %H:%M", "%m/%d/%Y %I:%M %p", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def service_attempt_dedupe_key(message_id, attachment_id):
+    source = f"{message_id or ''}|{attachment_id or ''}"
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def ensure_dv_service_attempts_table(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        IF OBJECT_ID('search.dv_service_attempts', 'U') IS NULL
+        BEGIN
+            CREATE TABLE search.dv_service_attempts (
+                id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                dv_pdf_record_id INT NULL,
+                normalized_case_number NVARCHAR(128) NOT NULL,
+                case_number NVARCHAR(128) NOT NULL,
+                order_type NVARCHAR(255) NULL,
+                respondent_name NVARCHAR(500) NULL,
+                reporting_member NVARCHAR(500) NULL,
+                reporting_member_email NVARCHAR(320) NULL,
+                address_attempted NVARCHAR(1000) NULL,
+                attempt_disposition NVARCHAR(255) NULL,
+                arrival_at DATETIME2 NULL,
+                clear_at DATETIME2 NULL,
+                details_json NVARCHAR(MAX) NOT NULL,
+                mailbox NVARCHAR(320) NULL,
+                dedupe_key CHAR(64) NOT NULL,
+                message_id NVARCHAR(1000) NOT NULL,
+                attachment_id NVARCHAR(1000) NOT NULL,
+                original_filename NVARCHAR(500) NULL,
+                blob_name NVARCHAR(1000) NOT NULL,
+                email_received_at DATETIME2 NULL,
+                created_at DATETIME2 NOT NULL CONSTRAINT DF_dv_service_attempts_created_at DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT UQ_dv_service_attempts_dedupe_key UNIQUE (dedupe_key)
+            );
+            CREATE INDEX IX_dv_service_attempts_case ON search.dv_service_attempts(normalized_case_number);
+            CREATE INDEX IX_dv_service_attempts_record ON search.dv_service_attempts(dv_pdf_record_id);
+        END
+    """)
+    conn.commit()
+
+
+def reconcile_dv_service_attempts(conn):
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE attempt
+        SET dv_pdf_record_id = matched.id
+        FROM search.dv_service_attempts AS attempt
+        CROSS APPLY (
+            SELECT TOP (1) dv.id
+            FROM search.dv_pdf_records AS dv
+            WHERE REPLACE(REPLACE(UPPER(LTRIM(RTRIM(dv.case_number))), '-', ''), ' ', '') = attempt.normalized_case_number
+            ORDER BY dv.is_reissue ASC, dv.uploaded_at DESC, dv.id DESC
+        ) AS matched
+        WHERE attempt.dv_pdf_record_id IS NULL
+    """)
+    conn.commit()
+
+
+def insert_dv_service_attempt(conn, payload):
+    ensure_dv_service_attempts_table(conn)
+    fields = payload.get("fields") or {}
+    case_number = _service_attempt_field(fields, "CASE NUMBER") or str(payload.get("case_number") or "").strip()
+    normalized_case = normalize_dv_case_number(case_number)
+    if not normalized_case:
+        raise RuntimeError("Service attempt email is missing a case number.")
+    dedupe_key = service_attempt_dedupe_key(payload.get("message_id"), payload.get("attachment_id"))
+
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT TOP (1) id
+        FROM search.dv_pdf_records
+        WHERE REPLACE(REPLACE(UPPER(LTRIM(RTRIM(case_number))), '-', ''), ' ', '') = ?
+        ORDER BY is_reissue ASC, uploaded_at DESC, id DESC
+    """, normalized_case)
+    match = cur.fetchone()
+    record_id = int(match[0]) if match else None
+    cur.execute("""
+        IF NOT EXISTS (
+            SELECT 1 FROM search.dv_service_attempts WHERE dedupe_key = ?
+        )
+        BEGIN
+            INSERT INTO search.dv_service_attempts (
+                dv_pdf_record_id, normalized_case_number, case_number, order_type, respondent_name,
+                reporting_member, reporting_member_email, address_attempted, attempt_disposition,
+                arrival_at, clear_at, details_json, mailbox, dedupe_key, message_id, attachment_id,
+                original_filename, blob_name, email_received_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        END
+    """,
+        dedupe_key, record_id, normalized_case, case_number,
+        _service_attempt_field(fields, "ORDER TYPE"), _service_attempt_field(fields, "RESPONDENT NAME"),
+        _service_attempt_field(fields, "REPORTING MEMBER"), _service_attempt_field(fields, "REPORTING MEMBER EMAIL"),
+        _service_attempt_field(fields, "ADDRESS ATTEMPTED"), _service_attempt_field(fields, "ATTEMPT DISPOSITION"),
+        _parse_service_attempt_datetime(_service_attempt_field(fields, "ARRIVAL DATE AND TIME")),
+        _parse_service_attempt_datetime(_service_attempt_field(fields, "CLEAR DATE AND TIME")),
+        json.dumps(fields, ensure_ascii=False), payload.get("mailbox"), dedupe_key, payload.get("message_id"),
+        payload.get("attachment_id"), payload.get("original_filename"), payload.get("blob_name"),
+        parse_graph_datetime(payload.get("email_received_at")) if isinstance(payload.get("email_received_at"), str) else payload.get("email_received_at"),
+    )
+    conn.commit()
+    return record_id
+
+
+def fetch_dv_service_attempts_for_records(record_ids):
+    ids = [int(value) for value in record_ids if value]
+    if not ids:
+        return {}
+    conn = get_conn()
+    try:
+        ensure_dv_service_attempts_table(conn)
+        reconcile_dv_service_attempts(conn)
+        cur = conn.cursor()
+        output = {}
+        for offset in range(0, len(ids), 1000):
+            batch = ids[offset:offset + 1000]
+            placeholders = ", ".join("?" for _ in batch)
+            cur.execute(f"""
+                SELECT id, dv_pdf_record_id, attempt_disposition, arrival_at, clear_at,
+                       reporting_member, reporting_member_email, address_attempted,
+                       original_filename, details_json
+                FROM search.dv_service_attempts
+                WHERE dv_pdf_record_id IN ({placeholders})
+                ORDER BY COALESCE(clear_at, arrival_at, email_received_at, created_at) DESC, id DESC
+            """, *batch)
+            for row in cur.fetchall():
+                try:
+                    fields = json.loads(row[9] or "{}")
+                except (TypeError, ValueError):
+                    fields = {}
+                item = {
+                    "id": int(row[0]), "attempt_disposition": row[2] or "Attempt",
+                    "arrival_at": _format_sql_datetime(row[3]), "clear_at": _format_sql_datetime(row[4]),
+                    "reporting_member": row[5] or "", "reporting_member_email": row[6] or "",
+                    "address_attempted": row[7] or "", "original_filename": row[8] or "Service Attempt.pdf",
+                    "fields": fields, "download_url": f"/dv-pdf/attempts/{int(row[0])}/download",
+                }
+                output.setdefault(int(row[1]), []).append(item)
+        return output
+    except Exception as exc:
+        print(f"[DV SERVICE ATTEMPTS] Unable to enrich DV PDF records: {exc}")
+        return {}
+    finally:
+        conn.close()
+
+
+def enrich_dv_service_attempts(records):
+    history = fetch_dv_service_attempts_for_records([row.get("record_id") for row in records])
+    for row in records:
+        attempts = history.get(row.get("record_id"), [])
+        row["service_attempts"] = attempts
+        row["attempt_count"] = len(attempts)
+    return records
+
+
 def ingest_dv_email_payloads_for_run():
     tenant_id = (os.getenv("MS_GRAPH_TENANT_ID") or "").strip()
     client_id = (os.getenv("MS_GRAPH_CLIENT_ID") or "").strip()
@@ -1511,6 +1716,157 @@ def ingest_dv_email():
     except Exception as exc:
         return jsonify({"status": "error", "error": str(exc)}), 400
     return jsonify({"status": "ok"}), 200
+
+
+def upload_dv_service_attempt_pdf(file_bytes, case_number, message_id, filename):
+    safe_filename = secure_filename(filename) or "service-attempt.pdf"
+    case_key = normalize_case_number_for_blob(case_number)
+    message_key = hashlib.sha256(str(message_id or "").encode("utf-8")).hexdigest()[:20]
+    blob_name = f"{DV_SERVICE_ATTEMPT_FILES_PREFIX}/{case_key}/{message_key}_{safe_filename}"
+    container = get_dv_files_container()
+    blob = container.get_blob_client(blob_name)
+    if not blob.exists():
+        blob.upload_blob(
+            file_bytes,
+            overwrite=False,
+            content_settings=ContentSettings(content_type="application/pdf"),
+            metadata={"case_number": str(case_number)[:128], "original_filename": safe_filename[:200]},
+        )
+    return blob_name
+
+
+def ingest_dv_service_attempt_emails_for_run():
+    tenant_id = (os.getenv("MS_GRAPH_TENANT_ID") or "").strip()
+    client_id = (os.getenv("MS_GRAPH_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("MS_GRAPH_CLIENT_SECRET") or "").strip()
+    mailbox = (os.getenv("DV_EMAIL_MAILBOX") or "sheriff.records@baltimorecitysheriff.gov").strip()
+    processed_folder = (os.getenv("DV_EMAIL_PROCESSED_FOLDER") or "processed").strip()
+    marker = DV_SERVICE_ATTEMPT_EMAIL_SUBJECT_MARKER
+    if not (tenant_id and client_id and client_secret):
+        return {"status": "skipped", "reason": "Microsoft Graph env vars not configured", "ingested": 0}
+
+    try:
+        token_response = requests.post(
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+            data={
+                "client_id": client_id, "client_secret": client_secret,
+                "scope": "https://graph.microsoft.com/.default", "grant_type": "client_credentials",
+            },
+            timeout=30,
+        )
+        token_response.raise_for_status()
+        access_token = token_response.json().get("access_token")
+        if not access_token:
+            raise RuntimeError("Failed to obtain Graph API access token.")
+        headers = {"Authorization": f"Bearer {access_token}", "Prefer": 'IdType="ImmutableId"'}
+        processed_folder_id = get_graph_processed_folder_id(headers, mailbox, processed_folder)
+        messages = []
+        escaped_marker = marker.replace("'", "''")
+        url = (
+            f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
+            f"?$top=200&$select=id,subject,body,receivedDateTime&$filter=startsWith(subject,'{escaped_marker}')"
+        )
+        while url:
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            page = response.json()
+            messages.extend(page.get("value", []))
+            url = page.get("@odata.nextLink")
+
+        ingested = moved = unmatched = failed = 0
+        errors = []
+        for message in sorted(messages, key=lambda item: item.get("receivedDateTime") or ""):
+            message_id = message.get("id")
+            try:
+                fields = parse_service_attempt_email_fields((message.get("body") or {}).get("content") or "")
+                case_number = _service_attempt_field(fields, "CASE NUMBER")
+                if not case_number:
+                    subject_suffix = (message.get("subject") or "")[len(marker):]
+                    case_number = subject_suffix.strip(" :-")
+                if not normalize_dv_case_number(case_number):
+                    raise RuntimeError("No case number found in email body or subject.")
+
+                attachments_response = requests.get(
+                    f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/attachments",
+                    headers=headers,
+                    timeout=30,
+                )
+                attachments_response.raise_for_status()
+                pdf_attachments = [
+                    item for item in attachments_response.json().get("value", [])
+                    if str(item.get("name") or "").lower().endswith(".pdf")
+                ]
+                if not pdf_attachments:
+                    raise RuntimeError("No PDF attachment found.")
+                attachment = pdf_attachments[0]
+                attachment_id = attachment.get("id")
+                dedupe_key = service_attempt_dedupe_key(message_id, attachment_id)
+
+                conn = get_conn()
+                try:
+                    ensure_dv_service_attempts_table(conn)
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT id FROM search.dv_service_attempts WHERE dedupe_key = ?",
+                        dedupe_key,
+                    )
+                    existing = cur.fetchone()
+                finally:
+                    conn.close()
+
+                if not existing:
+                    content_bytes = attachment.get("contentBytes")
+                    if not content_bytes:
+                        attachment_response = requests.get(
+                            f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/attachments/{attachment_id}",
+                            headers=headers,
+                            timeout=30,
+                        )
+                        attachment_response.raise_for_status()
+                        attachment = attachment_response.json()
+                        content_bytes = attachment.get("contentBytes")
+                    if not content_bytes:
+                        raise RuntimeError("PDF attachment content was unavailable from Microsoft Graph.")
+                    file_bytes = base64.b64decode(content_bytes)
+                    blob_name = upload_dv_service_attempt_pdf(
+                        file_bytes, case_number, message_id, attachment.get("name") or "service-attempt.pdf"
+                    )
+                    conn = get_conn()
+                    try:
+                        matched_record_id = insert_dv_service_attempt(conn, {
+                            "fields": fields, "case_number": case_number, "mailbox": mailbox,
+                            "message_id": message_id, "attachment_id": attachment_id,
+                            "original_filename": attachment.get("name") or "service-attempt.pdf",
+                            "blob_name": blob_name, "email_received_at": message.get("receivedDateTime"),
+                        })
+                    finally:
+                        conn.close()
+                    ingested += 1
+                    if not matched_record_id:
+                        unmatched += 1
+
+                move_response = requests.post(
+                    f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
+                    headers={**headers, "Content-Type": "application/json"},
+                    json={"destinationId": processed_folder_id},
+                    timeout=30,
+                )
+                move_response.raise_for_status()
+                moved += 1
+            except Exception as exc:
+                failed += 1
+                errors.append(f"id={message_id}: {exc}")
+                print(f"[DV SERVICE ATTEMPTS] Failed message id={message_id}: {exc}")
+
+        result = {
+            "status": "ok", "source": "graph", "candidates": len(messages), "ingested": ingested,
+            "unmatched": unmatched, "moved_to_processed": moved, "failed": failed, "errors": errors[:10],
+        }
+        print(f"[DV SERVICE ATTEMPTS] Summary: {result}")
+        return result
+    except Exception as exc:
+        print(f"[DV SERVICE ATTEMPTS] Ingest failed: {exc}")
+        return {"status": "failed", "source": "graph", "ingested": 0, "error": str(exc)}
 
 
 
@@ -2973,6 +3329,14 @@ DV_PDF_CSV_PATH = os.path.join("static", "uploads", "dv_pdf_records.csv")
 DV_PDF_BLOB_CONTAINER = os.environ.get("DV_PDF_BLOB_CONTAINER", "dvcsv").strip() or "dvcsv"
 DV_PDF_BLOB_PREFIX = os.environ.get("DV_PDF_BLOB_PREFIX", "dv_pdf").strip().strip("/") or "dv_pdf"
 DV_PDF_CASE_FILES_PREFIX = f"{DV_PDF_BLOB_PREFIX}/case_files"
+DV_SERVICE_ATTEMPT_FILES_PREFIX = f"{DV_PDF_BLOB_PREFIX}/service_attempts"
+DV_SERVICE_ATTEMPT_EMAIL_SUBJECT_MARKER = (
+    os.environ.get(
+        "DV_SERVICE_ATTEMPT_EMAIL_SUBJECT_MARKER",
+        "Baltimore City Sheriff's Office Service Attempts",
+    ).strip()
+    or "Baltimore City Sheriff's Office Service Attempts"
+)
 DV_PDF_BLOB_SAS_MINUTES = int(os.environ.get("DV_PDF_BLOB_SAS_MINUTES", "30"))
 DV_PDF_CSV_BLOB_NAME = (
     os.environ.get("DV_PDF_CSV_BLOB_NAME", f"{EXPORTS_BLOB_PREFIX}/dv_pdf_records.csv")
@@ -3813,6 +4177,34 @@ def download_dv_pdf_file(blob_name):
     )
 
 
+@app.route("/dv-pdf/attempts/<int:attempt_id>/download")
+def download_dv_service_attempt_pdf(attempt_id):
+    if "user_id" not in session:
+        return redirect("/login")
+    conn = get_conn()
+    try:
+        ensure_dv_service_attempts_table(conn)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT case_number, original_filename, blob_name FROM search.dv_service_attempts WHERE id = ?",
+            attempt_id,
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row or not row[2]:
+        return jsonify({"error": "Service attempt PDF not found"}), 404
+    try:
+        blob = get_dv_pdf_blob_client(row[2])
+        if not blob.exists():
+            return jsonify({"error": "Service attempt PDF not found in blob storage"}), 404
+        data = blob.download_blob().readall()
+    except Exception as exc:
+        return jsonify({"error": f"Unable to download service attempt PDF: {exc}"}), 500
+    filename = secure_filename(row[1] or "") or f"Service Attempt {normalize_case_number_for_blob(row[0])}.pdf"
+    return send_file(io.BytesIO(data), mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+
 @app.route("/downloads/dv-pdf.csv")
 def download_dv_pdf_csv():
     if "user_id" not in session:
@@ -4386,6 +4778,8 @@ def _run_ingest_pipeline_background():
         steps.append({"step": "ingest_all_odyssey_civil_blobs", "status": "ok"})
         dv_result = ingest_dv_email_payloads_for_run()
         steps.append({"step": "ingest_dv_email_payloads_for_run", **dv_result})
+        attempt_result = ingest_dv_service_attempt_emails_for_run()
+        steps.append({"step": "ingest_dv_service_attempt_emails_for_run", **attempt_result})
         civil_return_result = ingest_civil_return_email_payloads_for_run()
         steps.append({"step": "ingest_civil_return_email_payloads_for_run", **civil_return_result})
 

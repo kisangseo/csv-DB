@@ -901,6 +901,85 @@ textarea.modal-control {
   padding: 0;
 }
 
+.dv-attempt-parent-row {
+  cursor: pointer;
+}
+
+.dv-attempt-parent-row.expanded > td {
+  background: #eef4ff;
+}
+
+.dv-attempt-detail-row > td {
+  background: #f8fafc;
+  padding: 0;
+}
+
+.dv-attempt-panel {
+  padding: 18px;
+  border-left: 4px solid #2563eb;
+}
+
+.dv-attempt-panel h3 {
+  margin: 0 0 14px;
+}
+
+.dv-attempt-card {
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 6px;
+  padding: 16px;
+  margin-top: 12px;
+}
+
+.dv-attempt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.dv-attempt-head strong,
+.dv-attempt-head span {
+  display: block;
+}
+
+.dv-attempt-head span {
+  color: #52606d;
+  margin-top: 3px;
+}
+
+.dv-attempt-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 20px;
+  margin: 0;
+}
+
+.dv-attempt-fields > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dv-attempt-fields dt {
+  color: #52606d;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.dv-attempt-fields dd {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .dv-attempt-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 .return-detail-panel {
   padding: 18px;
   border-left: 4px solid #2563eb;
