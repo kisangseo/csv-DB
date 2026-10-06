@@ -3269,6 +3269,19 @@
         updateSearchSectionsSummary();
       });
 
+      const searchSectionsMenu = document.getElementById("searchSectionsMenu");
+      document.addEventListener("click", (event) => {
+        if (searchSectionsMenu.open && !searchSectionsMenu.contains(event.target)) {
+          searchSectionsMenu.open = false;
+        }
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && searchSectionsMenu.open) {
+          searchSectionsMenu.open = false;
+          searchSectionsMenu.querySelector("summary").focus();
+        }
+      });
+
       window.addEventListener("DOMContentLoaded", async () => {
         updateSearchSectionsSummary();
         await loadTableDefinitions();
