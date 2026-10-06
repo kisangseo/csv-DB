@@ -588,6 +588,7 @@
       let tableDefinitions = {};
       let activeEditContext = null;
       let lastSearchFilters = null;
+      let searchGeneration = 0;
       let exportPollTimer = null;
       const RETURNS_FIRST = {{ returns_first | default(false) | tojson }};
       const DEFAULT_DEPARTMENT_HEADERS = [
@@ -2539,6 +2540,13 @@
           return;
         }
 
+        // A preserving search (such as the automatic Returns queue load) may
+        // still be in flight when the user starts a new scoped search. Keep it
+        // from appending stale sections after the newer search has taken over.
+        const requestGeneration = options.preserveExistingSections
+          ? searchGeneration
+          : ++searchGeneration;
+
         const status = document.getElementById("statusMessage");
         const resultsDiv = document.getElementById("results");
         const controlDock = document.getElementById("headerControlDock");
@@ -2569,6 +2577,9 @@
         try {
           const response = await fetch(`${window.location.origin}/search_all?${params}`);
           const data = await response.json();
+          if (requestGeneration !== searchGeneration) {
+            return;
+          }
           if (!options.silent) status.classList.remove("loading");
 
           if (Object.keys(data).length === 0) {
@@ -3167,6 +3178,9 @@
             status.textContent = "No results found.";
           }
         } catch (err) {
+          if (requestGeneration !== searchGeneration) {
+            return;
+          }
           console.error(err);
           status.classList.remove("loading");
           status.textContent = "Error occurred during search.";

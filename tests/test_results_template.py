@@ -84,6 +84,14 @@ class ResultsTemplateTests(unittest.TestCase):
         self.assertIn('params.set("include_uploaded", "1");', self.template)
         self.assertIn('uploadedCheckbox.checked = Boolean(options.includeUploaded);', self.template)
 
+    def test_stale_preserved_search_cannot_reinsert_an_unselected_section(self):
+        self.assertIn("let searchGeneration = 0;", self.template)
+        self.assertIn(
+            "const requestGeneration = options.preserveExistingSections",
+            self.template,
+        )
+        self.assertIn("if (requestGeneration !== searchGeneration)", self.template)
+
     def test_every_returns_header_sorts_ascending_then_descending(self):
         self.assertIn('wireReturnsHeaderSort(table, th, headerIndex, h);', self.template)
         self.assertIn('function sortReturnsTable(table, columnIndex, headerLabel, direction)', self.template)
