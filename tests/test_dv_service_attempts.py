@@ -1,6 +1,6 @@
 import unittest
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.modules.setdefault("pyodbc", MagicMock())
 import app as application
@@ -51,6 +51,42 @@ class DvServiceAttemptTests(unittest.TestCase):
         response = client.get("/dv-pdf/attempts/1/download")
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.headers["Location"].endswith("/login"))
+
+    @patch.dict(application.os.environ, {"RETURNS_INGEST_KEY": "test-key"})
+    def test_attempt_ingest_endpoint_requires_key(self):
+        client = application.app.test_client()
+        response = client.get("/ingest-dv-service-attempts")
+        self.assertEqual(response.status_code, 401)
+
+    @patch.dict(application.os.environ, {"RETURNS_INGEST_KEY": "test-key"})
+    @patch.object(application, "ingest_dv_service_attempt_emails_for_run")
+    def test_attempt_ingest_endpoint_runs_synchronously(self, ingest_mock):
+        ingest_mock.return_value = {
+            "status": "ok",
+            "candidates": 2,
+            "ingested": 2,
+            "moved_to_processed": 2,
+            "failed": 0,
+        }
+        client = application.app.test_client()
+        response = client.post(
+            "/ingest-dv-service-attempts",
+            headers={"X-Ingest-Key": "test-key"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["ingested"], 2)
+        ingest_mock.assert_called_once_with()
+
+    @patch.dict(application.os.environ, {"RETURNS_INGEST_KEY": "test-key"})
+    @patch.object(application, "ingest_dv_service_attempt_emails_for_run")
+    def test_attempt_ingest_endpoint_reports_failure(self, ingest_mock):
+        ingest_mock.return_value = {"status": "failed", "error": "Graph failed", "ingested": 0}
+        client = application.app.test_client()
+        response = client.get(
+            "/ingest-dv-service-attempts",
+            headers={"X-Ingest-Key": "test-key"},
+        )
+        self.assertEqual(response.status_code, 500)
 
 
 if __name__ == "__main__":

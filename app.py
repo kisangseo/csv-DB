@@ -4778,8 +4778,6 @@ def _run_ingest_pipeline_background():
         steps.append({"step": "ingest_all_odyssey_civil_blobs", "status": "ok"})
         dv_result = ingest_dv_email_payloads_for_run()
         steps.append({"step": "ingest_dv_email_payloads_for_run", **dv_result})
-        attempt_result = ingest_dv_service_attempt_emails_for_run()
-        steps.append({"step": "ingest_dv_service_attempt_emails_for_run", **attempt_result})
         civil_return_result = ingest_civil_return_email_payloads_for_run()
         steps.append({"step": "ingest_civil_return_email_payloads_for_run", **civil_return_result})
 
@@ -5052,6 +5050,20 @@ def ingest_returns_email_route():
     if supplied_key != expected_key:
         return jsonify({"error": "Unauthorized"}), 401
     result = ingest_civil_return_email_payloads_for_run(source_folder="inbox", move_to_processed=True)
+    status_code = 200 if result.get("status") in {"ok", "skipped"} else 500
+    return jsonify(result), status_code
+
+
+@app.route("/ingest-dv-service-attempts", methods=["GET", "POST"])
+def ingest_dv_service_attempts_route():
+    expected_key = (os.getenv("RETURNS_INGEST_KEY") or "").strip()
+    supplied_key = (request.headers.get("X-Ingest-Key") or "").strip()
+    if not expected_key:
+        return jsonify({"error": "RETURNS_INGEST_KEY is not configured"}), 503
+    if supplied_key != expected_key:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    result = ingest_dv_service_attempt_emails_for_run()
     status_code = 200 if result.get("status") in {"ok", "skipped"} else 500
     return jsonify(result), status_code
 
