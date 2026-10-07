@@ -2770,7 +2770,7 @@ def enrich_civil_return_pdf_history(records):
 
 def filter_dv_pdf_records(records, filters):
     query = (filters.get("query") or "").strip().lower()
-    case_number = (filters.get("case_number") or "").strip().lower()
+    case_number = normalize_dv_case_number(filters.get("case_number"))
     date_start = (filters.get("date_start") or "").strip()
     date_end = (filters.get("date_end") or "").strip()
     last_x_days = (filters.get("last_x_days") or "").strip()
@@ -2808,7 +2808,7 @@ def filter_dv_pdf_records(records, filters):
 
     filtered = []
     for row in records:
-        row_case = (row.get("case_number") or "").lower()
+        row_case = normalize_dv_case_number(row.get("case_number"))
         row_name = (row.get("respondent_name") or "").lower()
         issue_date = parse_date_value(row.get("issue_date"))
         row_address = normalize_address_piece(row.get("reverse_geocode_output") or row.get("address"))
