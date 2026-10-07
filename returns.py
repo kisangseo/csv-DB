@@ -665,13 +665,13 @@ def search_returns(conn, filters, exclude_uploaded=False):
     params = []
     if exclude_uploaded:
         clauses.append("COALESCE(bcso_status, '') NOT IN ('Uploaded', 'Hard Copy Returned')")
-    query = clean_value(filters.get("query"))
-    if query:
+    from search_sql import name_search_tokens
+    for token in name_search_tokens(filters.get("query")):
         clauses.append(
             "LOWER(CONCAT(COALESCE(case_number, ''), ' ', COALESCE(respondent_name, ''), ' ', "
             "COALESCE(petitioner_name, ''), ' ', COALESCE(member_reporting, ''))) LIKE ?"
         )
-        params.append(f"%{query.lower()}%")
+        params.append(f"%{token}%")
     case_number = clean_value(filters.get("case_number"))
     if case_number:
         clauses.append("LOWER(COALESCE(case_number, '')) LIKE ?")

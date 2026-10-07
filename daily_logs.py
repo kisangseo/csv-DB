@@ -1,4 +1,4 @@
-from search_sql import ADDRESS_TOKEN_ALTERNATIVES, address_search_tokens
+from search_sql import ADDRESS_TOKEN_ALTERNATIVES, address_search_tokens, name_search_tokens
 
 
 ARRIVAL_TIME_EASTERN_SQL = """
@@ -28,9 +28,9 @@ def search_daily_logs(conn, filters, limit=2000):
     where_clauses = ["1 = 1"]
     params = []
 
-    if filters["query"]:
+    for token in name_search_tokens(filters["query"]):
         where_clauses.append("LOWER(COALESCE(e.[name], '')) LIKE ?")
-        params.append(f"%{filters['query'].lower()}%")
+        params.append(f"%{token}%")
 
     if filters["case_number"]:
         where_clauses.append(f"LOWER(COALESCE({EVENT_NUMBER_DISPLAY_SQL}, '')) LIKE ?")

@@ -127,6 +127,16 @@ class SearchDailyLogsTests(unittest.TestCase):
         self.assertIn("Eastern Standard Time", connection.cursor_instance.sql)
         self.assertEqual(connection.cursor_instance.params, [7])
 
+    def test_name_filter_matches_words_in_either_order(self):
+        filters = self.base_filters()
+        filters["query"] = "Green James"
+        connection = FakeConnection([])
+
+        search_daily_logs(connection, filters)
+
+        self.assertEqual(connection.cursor_instance.sql.count("LOWER(COALESCE(e.[name], '')) LIKE ?"), 2)
+        self.assertEqual(connection.cursor_instance.params, ["%green%", "%james%"])
+
 
 if __name__ == "__main__":
     unittest.main()

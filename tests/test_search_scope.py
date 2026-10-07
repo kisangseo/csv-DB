@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 sys.modules.setdefault("pyodbc", MagicMock())
 import app as application
-from search_sql import _build_filters_sql
+from search_sql import _build_filters_sql, name_search_tokens
 
 
 class SearchScopeTests(unittest.TestCase):
@@ -35,6 +35,15 @@ class SearchScopeTests(unittest.TestCase):
         self.assertIn("COALESCE(department, '')", where_sql)
         self.assertIn("IN (?, ?)", where_sql)
         self.assertEqual(params, ["civil papers", "doc jail population"])
+
+    def test_name_filter_is_order_independent_and_includes_deputy_fields(self):
+        where_sql, params = _build_filters_sql("Green, James")
+
+        self.assertEqual(name_search_tokens("Green, James"), ["green", "james"])
+        self.assertIn("served_by LIKE ?", where_sql)
+        self.assertIn("member_reporting LIKE ?", where_sql)
+        self.assertEqual(params.count("%green%"), 9)
+        self.assertEqual(params.count("%james%"), 9)
 
     def test_address_filter_is_tokenized_parameterized_and_suffix_aware(self):
         where_sql, params = _build_filters_sql("", address_query="123 Main Street Apt 4")

@@ -23,6 +23,10 @@ def address_search_tokens(value):
     return [token.lower() for token in re.findall(r"[A-Za-z0-9]+", str(value or ""))]
 
 
+def name_search_tokens(value):
+    return [token.lower() for token in re.findall(r"[A-Za-z0-9']+", str(value or ""))]
+
+
 def _build_filters_sql(
     name_query: str,
     case_number: Optional[str] = None,
@@ -39,7 +43,7 @@ def _build_filters_sql(
     departments: Optional[List[str]] = None,
     address_query: Optional[str] = None,
 ) -> Tuple[str, List[object]]:
-    name_tokens = [t for t in (name_query or "").strip().split() if t]
+    name_tokens = name_search_tokens(name_query)
     where_clauses = ["1=1"]
     params: List[object] = []
 
@@ -52,11 +56,15 @@ def _build_filters_sql(
                 OR resp_name LIKE ?
                 OR petitioner_name LIKE ?
                 OR petitioner_or_plaintiff_name LIKE ?
+                OR served_by LIKE ?
+                OR serving_or_attempting_deputy LIKE ?
+                OR member_reporting LIKE ?
+                OR return_deputy LIKE ?
             )
             """.strip()
         )
         like_token = f"%{token}%"
-        params.extend([like_token, like_token, like_token, like_token, like_token])
+        params.extend([like_token] * 9)
 
     if case_number:
         normalized_case_number = "".join(
