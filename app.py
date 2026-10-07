@@ -29,7 +29,7 @@ from azure.storage.blob import (
 )
 from db_connect import get_conn
 from daily_logs import search_daily_logs
-from search_sql import ADDRESS_TOKEN_ALTERNATIVES, search_by_name, build_search_sql
+from search_sql import ADDRESS_TOKEN_ALTERNATIVES, name_search_tokens, search_by_name, build_search_sql
 from returns import (
     RETURN_STATUS_VALUES,
     ReturnProcessingConflict,
@@ -2814,7 +2814,7 @@ def filter_dv_pdf_records(records, filters):
         row_address = normalize_address_piece(row.get("reverse_geocode_output") or row.get("address"))
         if case_number and case_number not in row_case:
             continue
-        if query and query not in row_name:
+        if query and not all(token in row_name for token in name_search_tokens(query)):
             continue
         if address_tokens and not all(
             any(alternative in row_address.split() or alternative in row_address for alternative in ADDRESS_TOKEN_ALTERNATIVES.get(token, (token,)))
