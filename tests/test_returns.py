@@ -182,6 +182,11 @@ class ReturnsParsingTests(unittest.TestCase):
         self.assertIn('for token in name_search_tokens(filters.get("query")):', returns_source)
         self.assertIn('params.append(f"%{token}%")', returns_source)
 
+    def test_returns_case_number_search_is_normalized(self):
+        returns_source = (Path(__file__).resolve().parents[1] / "returns.py").read_text()
+        self.assertIn("normalized_case_number", returns_source)
+        self.assertIn("LOWER(REPLACE(REPLACE(REPLACE(COALESCE(case_number, '')", returns_source)
+
     def test_system_activity_is_hidden_and_importer_supports_fresh_replace(self):
         root = Path(__file__).resolve().parents[1]
         returns_source = (root / "returns.py").read_text()

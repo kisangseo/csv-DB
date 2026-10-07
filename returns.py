@@ -674,8 +674,13 @@ def search_returns(conn, filters, exclude_uploaded=False):
         params.append(f"%{token}%")
     case_number = clean_value(filters.get("case_number"))
     if case_number:
-        clauses.append("LOWER(COALESCE(case_number, '')) LIKE ?")
-        params.append(f"%{case_number.lower()}%")
+        normalized_case_number = "".join(
+            ch for ch in str(case_number) if ch not in {"/", " ", "-"}
+        ).lower()
+        clauses.append(
+            "LOWER(REPLACE(REPLACE(REPLACE(COALESCE(case_number, ''), '/', ''), ' ', ''), '-', '')) LIKE ?"
+        )
+        params.append(f"%{normalized_case_number}%")
     from search_sql import ADDRESS_TOKEN_ALTERNATIVES, address_search_tokens
     for token in address_search_tokens(filters.get("address")):
         alternatives = ADDRESS_TOKEN_ALTERNATIVES.get(token, (token,))

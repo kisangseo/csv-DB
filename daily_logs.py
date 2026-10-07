@@ -33,8 +33,13 @@ def search_daily_logs(conn, filters, limit=2000):
         params.append(f"%{token}%")
 
     if filters["case_number"]:
-        where_clauses.append(f"LOWER(COALESCE({EVENT_NUMBER_DISPLAY_SQL}, '')) LIKE ?")
-        params.append(f"%{filters['case_number'].lower()}%")
+        normalized_event_number = "".join(
+            ch for ch in str(filters["case_number"]) if ch not in {"/", " ", "-"}
+        ).lower()
+        where_clauses.append(
+            f"LOWER(REPLACE(REPLACE(REPLACE(COALESCE({EVENT_NUMBER_DISPLAY_SQL}, ''), '/', ''), ' ', ''), '-', '')) LIKE ?"
+        )
+        params.append(f"%{normalized_event_number}%")
 
     for token in address_search_tokens(filters.get("address")):
         alternatives = ADDRESS_TOKEN_ALTERNATIVES.get(token, (token,))

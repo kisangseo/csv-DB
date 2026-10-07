@@ -106,15 +106,25 @@ class SearchDailyLogsTests(unittest.TestCase):
         search_daily_logs(connection, filters)
 
         self.assertIn("LOWER(COALESCE(e.[name], '')) LIKE ?", connection.cursor_instance.sql)
-        self.assertIn("LOWER(COALESCE(COALESCE(", connection.cursor_instance.sql)
+        self.assertIn("LOWER(REPLACE(REPLACE(REPLACE(COALESCE(COALESCE(", connection.cursor_instance.sql)
         self.assertIn("NULLIF(LTRIM(RTRIM(e.event_number)), '')", connection.cursor_instance.sql)
         self.assertIn("THEN e.generated_event_number", connection.cursor_instance.sql)
         self.assertIn("CAST(CAST(", connection.cursor_instance.sql)
         self.assertIn("AS date) BETWEEN CAST(? AS date) AND CAST(? AS date)", connection.cursor_instance.sql)
         self.assertEqual(
             connection.cursor_instance.params,
-            ["%smith%", "%event-9%", "2026-06-01", "2026-06-10"],
+            ["%smith%", "%event9%", "2026-06-01", "2026-06-10"],
         )
+
+    def test_event_number_search_ignores_dashes_and_spaces(self):
+        filters = self.base_filters()
+        filters["case_number"] = "26 10-00233"
+        connection = FakeConnection([])
+
+        search_daily_logs(connection, filters)
+
+        self.assertIn("REPLACE(REPLACE(REPLACE", connection.cursor_instance.sql)
+        self.assertEqual(connection.cursor_instance.params, ["%261000233%"])
 
     def test_applies_last_x_days_when_no_date_range_is_selected(self):
         filters = self.base_filters()
