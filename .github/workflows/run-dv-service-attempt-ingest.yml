@@ -28,7 +28,17 @@ jobs:
       - name: Backfill DV order PDFs from processed email
         if: github.event_name == 'workflow_dispatch'
         run: |
-          curl --fail-with-body --show-error --silent --location \
-            --max-time 1800 \
-            --header "X-Ingest-Key: $INGEST_KEY" \
-            "https://bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/ingest-dv-orders?backfill_processed=1"
+          batch_size=5
+          offset=0
+          while true; do
+            response="$(curl --fail-with-body --show-error --silent --location \
+              --max-time 300 \
+              --header "X-Ingest-Key: $INGEST_KEY" \
+              "https://bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/ingest-dv-orders?backfill_processed=1&backfill_limit=$batch_size&backfill_offset=$offset")"
+            echo "$response"
+            batch_count="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("processed_batch_count", 0))' <<< "$response")"
+            if [ "$batch_count" -lt "$batch_size" ]; then
+              break
+            fi
+            offset=$((offset + batch_count))
+          done
