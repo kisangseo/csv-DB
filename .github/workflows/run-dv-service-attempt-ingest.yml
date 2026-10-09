@@ -23,3 +23,12 @@ jobs:
           curl --fail --show-error --silent --location \
             --header "X-Ingest-Key: $INGEST_KEY" \
             "$ENDPOINT_URL"
+
+      # Temporary one-time backfill. Remove after the manual run is verified.
+      - name: Backfill DV order PDFs from processed email
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          curl --fail-with-body --show-error --silent --location \
+            --max-time 1800 \
+            --header "X-Ingest-Key: $INGEST_KEY" \
+            "https://bcso-cvdb-dwbnfmcjggf2f2a0.centralus-01.azurewebsites.net/ingest-dv-orders?backfill_processed=1"
