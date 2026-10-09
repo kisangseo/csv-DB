@@ -10,6 +10,17 @@ import app as application
 
 
 class DvEmailAttachmentTests(unittest.TestCase):
+    def test_processed_backfill_batch_is_stable_and_bounded(self):
+        messages = [
+            {"id": "c", "receivedDateTime": "2026-03-03T00:00:00Z"},
+            {"id": "a", "receivedDateTime": "2026-03-01T00:00:00Z"},
+            {"id": "b", "receivedDateTime": "2026-03-02T00:00:00Z"},
+        ]
+        batch = application.select_processed_dv_email_batch(
+            messages, limit=1, offset=1
+        )
+        self.assertEqual([message["id"] for message in batch], ["b"])
+
     def test_build_email_record_accepts_uppercase_field_labels(self):
         record, _ = application.build_dv_email_record({
             "subject": "DV Order",
@@ -88,7 +99,36 @@ class DvEmailAttachmentTests(unittest.TestCase):
             headers={"X-Ingest-Key": "test-key"},
         )
         self.assertEqual(response.status_code, 200)
-        ingest_mock.assert_called_once_with(include_processed=True)
+        ingest_mock.assert_called_once_with(
+            include_processed=True,
+            processed_limit=None,
+            processed_offset=0,
+            processed_only=True,
+        )
+
+    @patch.dict(application.os.environ, {"RETURNS_INGEST_KEY": "test-key"})
+    @patch.object(application, "ingest_dv_email_payloads_for_run")
+    def test_backfill_endpoint_passes_batch_parameters(self, ingest_mock):
+        ingest_mock.return_value = {"status": "ok", "processed_batch_count": 5}
+        response = application.app.test_client().post(
+            "/ingest-dv-orders?backfill_processed=1&backfill_limit=5&backfill_offset=10",
+            headers={"X-Ingest-Key": "test-key"},
+        )
+        self.assertEqual(response.status_code, 200)
+        ingest_mock.assert_called_once_with(
+            include_processed=True,
+            processed_limit=5,
+            processed_offset=10,
+            processed_only=True,
+        )
+
+    @patch.dict(application.os.environ, {"RETURNS_INGEST_KEY": "test-key"})
+    def test_backfill_endpoint_rejects_oversized_batch(self):
+        response = application.app.test_client().post(
+            "/ingest-dv-orders?backfill_processed=1&backfill_limit=100",
+            headers={"X-Ingest-Key": "test-key"},
+        )
+        self.assertEqual(response.status_code, 400)
 
     @patch.dict(application.os.environ, {"RETURNS_INGEST_KEY": "test-key"})
     def test_backfill_endpoint_requires_ingest_key(self):
