@@ -11,6 +11,7 @@ import uuid
 import io
 import zipfile
 import base64
+import binascii
 import hashlib
 import html
 import requests
@@ -788,6 +789,10 @@ def _ensure_dv_pdf_optional_columns(cur):
         """
         IF COL_LENGTH('search.dv_pdf_records', 'order_status') IS NULL
             ALTER TABLE search.dv_pdf_records ADD order_status NVARCHAR(255) NULL;
+        IF COL_LENGTH('search.dv_pdf_records', 'source_message_id') IS NULL
+            ALTER TABLE search.dv_pdf_records ADD source_message_id NVARCHAR(1000) NULL;
+        IF COL_LENGTH('search.dv_pdf_records', 'source_attachment_id') IS NULL
+            ALTER TABLE search.dv_pdf_records ADD source_attachment_id NVARCHAR(1000) NULL;
         """
     )
 
@@ -1246,17 +1251,19 @@ def build_dv_email_record(payload):
     subject = str(payload.get("subject") or "").strip()
 
     record = {
-        "case_number": str(entry_details.get("Case Number") or entry_details.get("Warrant Case Number") or "").strip(),
-        "respondent_name": str(entry_details.get("Respondent Name") or "").strip(),
-        "issue_date": str(entry_details.get("Date Order Was Issued") or "").strip(),
-        "order_type": str(entry_details.get("Order Type") or "").strip(),
-        "order_status": str(entry_details.get("Order Status") or "").strip(),
+        "case_number": _dv_email_field(entry_details, "Case Number", "Warrant Case Number"),
+        "respondent_name": _dv_email_field(entry_details, "Respondent Name"),
+        "issue_date": _dv_email_field(entry_details, "Date Order Was Issued"),
+        "order_type": _dv_email_field(entry_details, "Order Type"),
+        "order_status": _dv_email_field(entry_details, "Order Status"),
         "blob_name": str(payload.get("blob_name") or "").strip(),
         "pdf_download": str(payload.get("pdf_download") or "").strip(),
         "uploaded_at": datetime.now(UTC),
         "is_reissue": 1 if "reissue" in subject.lower() else 0,
         "source_row_json": json.dumps(payload, ensure_ascii=False),
         "source_csv_name": "email_dv_order",
+        "source_message_id": str(payload.get("source_message_id") or "").strip(),
+        "source_attachment_id": str(payload.get("source_attachment_id") or "").strip(),
     }
 
     alias_columns = {
@@ -1275,6 +1282,140 @@ def build_dv_email_record(payload):
     return record, csv_fields
 
 
+def _dv_email_field(entry_details, *labels):
+    normalized = {
+        re.sub(r"[^A-Z0-9]", "", str(key).upper()): value
+        for key, value in (entry_details or {}).items()
+    }
+    for label in labels:
+        value = normalized.get(re.sub(r"[^A-Z0-9]", "", label.upper()))
+        if value is not None:
+            return str(value).strip()
+    return ""
+
+
+def select_dv_order_pdf_attachment(attachments):
+    pdfs = [
+        item for item in (attachments or [])
+        if str(item.get("name") or "").lower().endswith(".pdf")
+        and item.get("id")
+    ]
+    if not pdfs:
+        return None
+    # The order packet is normally the largest PDF. Prefer a non-inline file when
+    # Graph reports inline signature assets alongside the actual attachment.
+    return max(
+        pdfs,
+        key=lambda item: (
+            not bool(item.get("isInline")),
+            int(item.get("size") or 0),
+        ),
+    )
+
+
+def upload_dv_order_email_pdf(file_bytes, case_number, message_id, filename):
+    safe_filename = secure_filename(filename) or "dv-order.pdf"
+    case_key = normalize_case_number_for_blob(case_number)
+    message_key = hashlib.sha256(str(message_id or "").encode("utf-8")).hexdigest()[:20]
+    blob_name = f"{DV_PDF_EMAIL_FILES_PREFIX}/{case_key}/{message_key}_{safe_filename}"
+    container = get_dv_files_container()
+    try:
+        container.create_container()
+    except Exception:
+        pass
+    blob = container.get_blob_client(blob_name)
+    if not blob.exists():
+        blob.upload_blob(
+            file_bytes,
+            overwrite=False,
+            content_settings=ContentSettings(content_type="application/pdf"),
+            metadata={
+                "case_number": str(case_number)[:128],
+                "original_filename": safe_filename[:200],
+                "source": "dv_order_email",
+            },
+        )
+    return blob_name
+
+
+def attach_pdf_to_existing_dv_email_record(
+    case_number,
+    respondent_name,
+    blob_name,
+    record_id=None,
+    message_id=None,
+    attachment_id=None,
+):
+    if not case_number or not respondent_name or not blob_name:
+        return False
+    pdf_download = f"/dv-pdf/file/{blob_name}"
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        _ensure_dv_pdf_optional_columns(cur)
+        cur.execute(
+            """
+            UPDATE search.dv_pdf_records
+            SET blob_name = ?, pdf_download = ?,
+                source_message_id = COALESCE(NULLIF(source_message_id, ''), ?),
+                source_attachment_id = COALESCE(NULLIF(source_attachment_id, ''), ?)
+            WHERE id = COALESCE(?, (
+                SELECT TOP (1) id
+                FROM search.dv_pdf_records
+                WHERE LOWER(LTRIM(RTRIM(case_number))) = LOWER(LTRIM(RTRIM(?)))
+                  AND LOWER(LTRIM(RTRIM(respondent_name))) = LOWER(LTRIM(RTRIM(?)))
+                  AND (NULLIF(LTRIM(RTRIM(blob_name)), '') IS NULL
+                       OR NULLIF(LTRIM(RTRIM(pdf_download)), '') IS NULL)
+                ORDER BY is_reissue ASC, uploaded_at DESC, id DESC
+            ))
+              AND (NULLIF(LTRIM(RTRIM(blob_name)), '') IS NULL
+                   OR NULLIF(LTRIM(RTRIM(pdf_download)), '') IS NULL)
+            """,
+            blob_name,
+            pdf_download,
+            message_id,
+            attachment_id,
+            record_id,
+            case_number,
+            respondent_name,
+        )
+        updated = cur.rowcount > 0
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
+def find_dv_email_record_by_message_id(message_id):
+    if not message_id:
+        return None
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        if not _dv_pdf_table_exists(cur):
+            return None
+        _ensure_dv_pdf_optional_columns(cur)
+        cur.execute(
+            """
+            SELECT TOP (1) id, pdf_download
+            FROM search.dv_pdf_records
+            WHERE source_message_id = ?
+               OR CASE WHEN ISJSON(source_row_json) = 1
+                       THEN JSON_VALUE(source_row_json, '$.source_message_id')
+                  END = ?
+            ORDER BY id DESC
+            """,
+            message_id,
+            message_id,
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"record_id": int(row[0]), "pdf_download": (row[1] or "").strip()}
+    finally:
+        conn.close()
+
+
 def insert_dv_email_record_in_sql(payload):
     record, csv_fields = build_dv_email_record(payload)
     if not record.get("case_number") or not record.get("respondent_name"):
@@ -1290,6 +1431,7 @@ def insert_dv_email_record_in_sql(payload):
         base_columns = [
             "case_number", "respondent_name", "issue_date", "order_type", "order_status",
             "blob_name", "pdf_download", "uploaded_at", "is_reissue", "source_row_json", "source_csv_name",
+            "source_message_id", "source_attachment_id",
         ]
         dynamic_columns = _resolve_existing_dv_columns(cur, sorted(csv_fields.keys()))
         all_columns = base_columns + dynamic_columns
@@ -1506,7 +1648,41 @@ def enrich_dv_service_attempts(records):
     return records
 
 
-def ingest_dv_email_payloads_for_run():
+def download_graph_pdf_attachment(headers, mailbox, message_id, attachment):
+    content_bytes = attachment.get("contentBytes")
+    if not content_bytes:
+        attachment_id = attachment.get("id")
+        response = requests.get(
+            f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/attachments/{attachment_id}",
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        content_bytes = response.json().get("contentBytes")
+    if not content_bytes:
+        raise RuntimeError("PDF attachment content was unavailable from Microsoft Graph.")
+    try:
+        return base64.b64decode(content_bytes, validate=True)
+    except (ValueError, TypeError, binascii.Error) as exc:
+        raise RuntimeError("PDF attachment returned invalid base64 content.") from exc
+
+
+def get_graph_dv_order_pdf(headers, mailbox, message_id):
+    response = requests.get(
+        f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/attachments",
+        headers=headers,
+        timeout=30,
+    )
+    response.raise_for_status()
+    attachment = select_dv_order_pdf_attachment(response.json().get("value", []))
+    if not attachment:
+        return None, None
+    return attachment, download_graph_pdf_attachment(
+        headers, mailbox, message_id, attachment
+    )
+
+
+def ingest_dv_email_payloads_for_run(include_processed=False):
     tenant_id = (os.getenv("MS_GRAPH_TENANT_ID") or "").strip()
     client_id = (os.getenv("MS_GRAPH_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("MS_GRAPH_CLIENT_SECRET") or "").strip()
@@ -1538,7 +1714,10 @@ def ingest_dv_email_payloads_for_run():
             if not access_token:
                 raise RuntimeError("Failed to obtain Graph API access token.")
 
-            headers = {"Authorization": f"Bearer {access_token}"}
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Prefer": 'IdType="ImmutableId"',
+            }
             messages = []
             messages_url = (
                 f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
@@ -1588,12 +1767,33 @@ def ingest_dv_email_payloads_for_run():
                 print(f"[DV EMAIL] Available folder names sample: {names[:30]}")
                 raise RuntimeError(f"Processed folder '{processed_folder}' not found in mailbox {mailbox}.")
 
+            message_sources = [(message, False) for message in messages]
+            if include_processed:
+                processed_messages = []
+                processed_url = (
+                    f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{folder_id}/messages"
+                    "?$top=200"
+                    "&$select=id,subject,body,receivedDateTime,from,conversationId"
+                    "&$filter=startsWith(subject,'DV Order')"
+                )
+                while processed_url:
+                    processed_resp = requests.get(processed_url, headers=headers, timeout=30)
+                    processed_resp.raise_for_status()
+                    processed_page = processed_resp.json()
+                    processed_messages.extend(processed_page.get("value", []))
+                    processed_url = processed_page.get("@odata.nextLink")
+                message_sources.extend((message, True) for message in processed_messages)
+                print(f"[DV EMAIL] Processed-folder backfill candidates found: {len(processed_messages)}")
+
             ingested = 0
+            backfilled = 0
+            already_linked = 0
+            without_attachment = 0
             moved = 0
             skipped_no_fields = 0
             failed = 0
             errors = []
-            for message in messages:
+            for message, already_processed in message_sources:
                 message_id = message.get("id")
                 subject = message.get("subject") or ""
                 print(f"[DV EMAIL] Processing message id={message_id} subject={subject!r}")
@@ -1625,21 +1825,66 @@ def ingest_dv_email_payloads_for_run():
                     "subject": subject,
                     "entry_details": entry_details,
                     "source_message_id": message_id,
+                    "source_attachment_id": "",
+                    "mailbox": mailbox,
                 }
                 if not entry_details:
                     skipped_no_fields += 1
                     print(f"[DV EMAIL] Skipped message id={message_id}: no entry_details parsed from HTML body.")
                     continue
                 try:
-                    duplicate = find_duplicate_dv_pdf_record(
-                        str(entry_details.get("CASE NUMBER") or entry_details.get("Case Number") or "").strip(),
-                        str(entry_details.get("RESPONDENT NAME") or entry_details.get("Respondent Name") or "").strip(),
+                    case_number = _dv_email_field(entry_details, "Case Number", "Warrant Case Number")
+                    respondent_name = _dv_email_field(entry_details, "Respondent Name")
+                    source_record = find_dv_email_record_by_message_id(message_id)
+                    duplicate = source_record or find_duplicate_dv_pdf_record(
+                        case_number, respondent_name
                     )
-                    if duplicate:
+                    if duplicate and duplicate.get("pdf_download"):
+                        already_linked += 1
                         print(
-                            f"[DV EMAIL] Duplicate found for message id={message_id}; "
-                            "moving to processed without insert."
+                            f"[DV EMAIL] Existing PDF link found for message id={message_id}; "
+                            "no attachment backfill needed."
                         )
+                    else:
+                        attachment, file_bytes = get_graph_dv_order_pdf(
+                            headers, mailbox, message_id
+                        )
+                        blob_name = ""
+                        if attachment:
+                            blob_name = upload_dv_order_email_pdf(
+                                file_bytes,
+                                case_number,
+                                message_id,
+                                attachment.get("name") or "dv-order.pdf",
+                            )
+                            payload.update({
+                                "source_attachment_id": attachment.get("id") or "",
+                                "original_filename": attachment.get("name") or "dv-order.pdf",
+                                "blob_name": blob_name,
+                                "pdf_download": f"/dv-pdf/file/{blob_name}",
+                            })
+                        else:
+                            without_attachment += 1
+                            print(f"[DV EMAIL] No PDF attachment on message id={message_id}; continuing normally.")
+
+                        if duplicate:
+                            if blob_name and attach_pdf_to_existing_dv_email_record(
+                                case_number,
+                                respondent_name,
+                                blob_name,
+                                record_id=(source_record or {}).get("record_id"),
+                                message_id=message_id,
+                                attachment_id=attachment.get("id") or "",
+                            ):
+                                backfilled += 1
+                                print(f"[DV EMAIL] Backfilled PDF for message id={message_id}.")
+                            elif blob_name:
+                                already_linked += 1
+                        else:
+                            insert_dv_email_record_in_sql(payload)
+                            ingested += 1
+
+                    if not already_processed:
                         move_resp = requests.post(
                             f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
                             headers={**headers, "Content-Type": "application/json"},
@@ -1648,19 +1893,7 @@ def ingest_dv_email_payloads_for_run():
                         )
                         move_resp.raise_for_status()
                         moved += 1
-                        continue
-
-                    insert_dv_email_record_in_sql(payload)
-                    ingested += 1
-                    move_resp = requests.post(
-                        f"https://graph.microsoft.com/v1.0/users/{mailbox}/messages/{message_id}/move",
-                        headers={**headers, "Content-Type": "application/json"},
-                        json={"destinationId": folder_id},
-                        timeout=30,
-                    )
-                    move_resp.raise_for_status()
-                    moved += 1
-                    print(f"[DV EMAIL] Ingested and moved message id={message_id}.")
+                        print(f"[DV EMAIL] Safely stored and moved message id={message_id}.")
                 except Exception as msg_exc:
                     failed += 1
                     error_text = f"id={message_id}: {msg_exc}"
@@ -1672,6 +1905,9 @@ def ingest_dv_email_payloads_for_run():
                 "source": "graph",
                 "candidates": len(messages),
                 "ingested": ingested,
+                "backfilled": backfilled,
+                "already_linked": already_linked,
+                "without_attachment": without_attachment,
                 "moved_to_processed": moved,
                 "skipped_no_fields": skipped_no_fields,
                 "failed": failed,
@@ -1706,6 +1942,23 @@ def ingest_dv_email_payloads_for_run():
         ingested += 1
     print(f"[DV EMAIL] File mode ingest complete. ingested={ingested} path={payloads_path}")
     return {"status": "ok", "source": "file", "ingested": ingested, "path": payloads_path}
+
+
+@app.route("/ingest-dv-orders", methods=["GET", "POST"])
+def ingest_dv_orders_route():
+    expected_key = (os.getenv("RETURNS_INGEST_KEY") or "").strip()
+    supplied_key = (request.headers.get("X-Ingest-Key") or "").strip()
+    if not expected_key:
+        return jsonify({"error": "RETURNS_INGEST_KEY is not configured"}), 503
+    if supplied_key != expected_key:
+        return jsonify({"error": "Unauthorized"}), 401
+    include_processed = (
+        str(request.args.get("backfill_processed") or "").strip().lower()
+        in {"1", "true", "yes"}
+    )
+    result = ingest_dv_email_payloads_for_run(include_processed=include_processed)
+    status_code = 200 if result.get("status") in {"ok", "skipped"} else 500
+    return jsonify(result), status_code
 
 
 @app.route("/ingest-dv-email", methods=["POST"])
@@ -3329,6 +3582,7 @@ DV_PDF_CSV_PATH = os.path.join("static", "uploads", "dv_pdf_records.csv")
 DV_PDF_BLOB_CONTAINER = os.environ.get("DV_PDF_BLOB_CONTAINER", "dvcsv").strip() or "dvcsv"
 DV_PDF_BLOB_PREFIX = os.environ.get("DV_PDF_BLOB_PREFIX", "dv_pdf").strip().strip("/") or "dv_pdf"
 DV_PDF_CASE_FILES_PREFIX = f"{DV_PDF_BLOB_PREFIX}/case_files"
+DV_PDF_EMAIL_FILES_PREFIX = f"{DV_PDF_BLOB_PREFIX}/email_orders"
 DV_SERVICE_ATTEMPT_FILES_PREFIX = f"{DV_PDF_BLOB_PREFIX}/service_attempts"
 DV_SERVICE_ATTEMPT_EMAIL_SUBJECT_MARKER = (
     os.environ.get(
@@ -4096,58 +4350,77 @@ def upload_dv_case_file():
 
 @app.route("/dv-pdf/files/download")
 def download_dv_case_files():
+    if "user_id" not in session:
+        return redirect("/login")
     case_number = (request.args.get("case_number") or "").strip()
-    if not case_number:
-        return jsonify({"error": "Missing case number"}), 400
+    record_id = (request.args.get("record_id") or "").strip()
+    if not case_number or not record_id.isdigit():
+        return jsonify({"error": "Missing case number or DV PDF record ID"}), 400
 
     case_key = normalize_case_number_for_blob(case_number)
     prefix = f"{DV_PDF_CASE_FILES_PREFIX}/{case_key}/"
 
     try:
         container = get_dv_files_container()
-        blobs = [blob.name for blob in container.list_blobs(name_starts_with=prefix)]
+        manual_blobs = []
+        download_names = {}
+        for blob in container.list_blobs(name_starts_with=prefix, include=["metadata"]):
+            metadata = blob.metadata or {}
+            if str(metadata.get("record_id") or "").strip() != record_id:
+                continue
+            manual_blobs.append(blob.name)
+            if metadata.get("original_filename"):
+                download_names[blob.name] = metadata["original_filename"]
+
+        conn = get_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT case_number, blob_name
+                FROM search.dv_pdf_records
+                WHERE id = ?
+                  AND REPLACE(REPLACE(UPPER(LTRIM(RTRIM(case_number))), '-', ''), ' ', '') = ?
+                """,
+                int(record_id),
+                normalize_dv_case_number(case_number),
+            )
+            record = cur.fetchone()
+            if not record:
+                return jsonify({"error": "DV PDF record not found"}), 404
+
+            ensure_dv_service_attempts_table(conn)
+            reconcile_dv_service_attempts(conn)
+            cur.execute(
+                """
+                SELECT blob_name, original_filename
+                FROM search.dv_service_attempts
+                WHERE dv_pdf_record_id = ? AND NULLIF(LTRIM(RTRIM(blob_name)), '') IS NOT NULL
+                ORDER BY COALESCE(clear_at, arrival_at, email_received_at, created_at), id
+                """,
+                int(record_id),
+            )
+            attempt_rows = cur.fetchall()
+        finally:
+            conn.close()
+
+        blob_names = []
+        if record[1]:
+            blob_names.append(record[1])
+        blob_names.extend(manual_blobs)
+        for attempt_blob_name, original_filename in attempt_rows:
+            blob_names.append(attempt_blob_name)
+            if original_filename:
+                download_names[attempt_blob_name] = original_filename
     except Exception as exc:
         return jsonify({"error": f"Unable to list files from blob storage: {exc}"}), 500
 
-    if not blobs:
-        return jsonify({"error": "No files found for this case number"}), 404
-
-    if len(blobs) == 1:
-        blob_name = blobs[0]
-        try:
-            blob_client = container.get_blob_client(blob_name)
-            data = blob_client.download_blob().readall()
-            props = blob_client.get_blob_properties()
-        except Exception as exc:
-            return jsonify({"error": f"Unable to download file from blob storage: {exc}"}), 500
-
-        filename = (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
-        content_type = (props.content_settings.content_type if props.content_settings else None) or "application/octet-stream"
-        return send_file(
-            io.BytesIO(data),
-            mimetype=content_type,
-            as_attachment=True,
-            download_name=filename,
-        )
-
-    zip_buffer = io.BytesIO()
-    try:
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for blob_name in blobs:
-                blob_client = container.get_blob_client(blob_name)
-                data = blob_client.download_blob().readall()
-                props = blob_client.get_blob_properties()
-                filename = (props.metadata or {}).get("original_filename") or os.path.basename(blob_name)
-                zf.writestr(filename, data)
-    except Exception as exc:
-        return jsonify({"error": f"Unable to create ZIP from blob files: {exc}"}), 500
-
-    zip_buffer.seek(0)
-    return send_file(
-        zip_buffer,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"dv_pdf_{case_key}_files.zip",
+    return send_civil_blob_collection(
+        container,
+        blob_names,
+        f"{case_key}.zip",
+        "No files found for this DV PDF record",
+        download_names=download_names,
     )
 
 
