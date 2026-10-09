@@ -1682,7 +1682,25 @@ def get_graph_dv_order_pdf(headers, mailbox, message_id):
     )
 
 
-def ingest_dv_email_payloads_for_run(include_processed=False):
+def select_processed_dv_email_batch(messages, limit=None, offset=0):
+    ordered = sorted(
+        messages,
+        key=lambda message: (
+            (message.get("receivedDateTime") or ""),
+            (message.get("id") or ""),
+        ),
+    )
+    start = max(0, int(offset or 0))
+    end = None if limit is None else start + max(1, int(limit))
+    return ordered[start:end]
+
+
+def ingest_dv_email_payloads_for_run(
+    include_processed=False,
+    processed_limit=None,
+    processed_offset=0,
+    processed_only=False,
+):
     tenant_id = (os.getenv("MS_GRAPH_TENANT_ID") or "").strip()
     client_id = (os.getenv("MS_GRAPH_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("MS_GRAPH_CLIENT_SECRET") or "").strip()
@@ -1719,20 +1737,21 @@ def ingest_dv_email_payloads_for_run(include_processed=False):
                 "Prefer": 'IdType="ImmutableId"',
             }
             messages = []
-            messages_url = (
-                f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
-                "?$top=200"
-                "&$select=id,subject,body,receivedDateTime,from,conversationId"
-                "&$filter=startsWith(subject,'DV Order')"
-            )
-            while messages_url:
-                msg_resp = requests.get(messages_url, headers=headers, timeout=30)
-                if msg_resp.status_code >= 400:
-                    print(f"[DV EMAIL] Message query failed status={msg_resp.status_code} body={msg_resp.text[:800]}")
-                msg_resp.raise_for_status()
-                payload = msg_resp.json()
-                messages.extend(payload.get("value", []))
-                messages_url = payload.get("@odata.nextLink")
+            if not processed_only:
+                messages_url = (
+                    f"https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/inbox/messages"
+                    "?$top=200"
+                    "&$select=id,subject,body,receivedDateTime,from,conversationId"
+                    "&$filter=startsWith(subject,'DV Order')"
+                )
+                while messages_url:
+                    msg_resp = requests.get(messages_url, headers=headers, timeout=30)
+                    if msg_resp.status_code >= 400:
+                        print(f"[DV EMAIL] Message query failed status={msg_resp.status_code} body={msg_resp.text[:800]}")
+                    msg_resp.raise_for_status()
+                    payload = msg_resp.json()
+                    messages.extend(payload.get("value", []))
+                    messages_url = payload.get("@odata.nextLink")
             messages.sort(key=lambda m: m.get("receivedDateTime") or "")
             print(f"[DV EMAIL] Inbox DV Order candidates found: {len(messages)}")
 
@@ -1768,6 +1787,8 @@ def ingest_dv_email_payloads_for_run(include_processed=False):
                 raise RuntimeError(f"Processed folder '{processed_folder}' not found in mailbox {mailbox}.")
 
             message_sources = [(message, False) for message in messages]
+            processed_total = 0
+            processed_batch_count = 0
             if include_processed:
                 processed_messages = []
                 processed_url = (
@@ -1782,8 +1803,19 @@ def ingest_dv_email_payloads_for_run(include_processed=False):
                     processed_page = processed_resp.json()
                     processed_messages.extend(processed_page.get("value", []))
                     processed_url = processed_page.get("@odata.nextLink")
-                message_sources.extend((message, True) for message in processed_messages)
-                print(f"[DV EMAIL] Processed-folder backfill candidates found: {len(processed_messages)}")
+                processed_total = len(processed_messages)
+                start = max(0, int(processed_offset or 0))
+                processed_batch = select_processed_dv_email_batch(
+                    processed_messages,
+                    limit=processed_limit,
+                    offset=start,
+                )
+                processed_batch_count = len(processed_batch)
+                message_sources.extend((message, True) for message in processed_batch)
+                print(
+                    "[DV EMAIL] Processed-folder backfill candidates found: "
+                    f"total={processed_total}, offset={start}, batch={processed_batch_count}"
+                )
 
             ingested = 0
             backfilled = 0
@@ -1912,6 +1944,9 @@ def ingest_dv_email_payloads_for_run(include_processed=False):
                 "skipped_no_fields": skipped_no_fields,
                 "failed": failed,
                 "errors": errors[:10],
+                "processed_candidates": processed_total,
+                "processed_batch_count": processed_batch_count,
+                "processed_offset": max(0, int(processed_offset or 0)),
             }
             print(f"[DV EMAIL] Summary: {summary}")
             return summary
@@ -1956,7 +1991,21 @@ def ingest_dv_orders_route():
         str(request.args.get("backfill_processed") or "").strip().lower()
         in {"1", "true", "yes"}
     )
-    result = ingest_dv_email_payloads_for_run(include_processed=include_processed)
+    try:
+        processed_limit = request.args.get("backfill_limit", type=int)
+        processed_offset = request.args.get("backfill_offset", default=0, type=int)
+        if processed_limit is not None and not 1 <= processed_limit <= 25:
+            raise ValueError("backfill_limit must be between 1 and 25")
+        if processed_offset is None or processed_offset < 0:
+            raise ValueError("backfill_offset must be zero or greater")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    result = ingest_dv_email_payloads_for_run(
+        include_processed=include_processed,
+        processed_limit=processed_limit,
+        processed_offset=processed_offset,
+        processed_only=include_processed,
+    )
     status_code = 200 if result.get("status") in {"ok", "skipped"} else 500
     return jsonify(result), status_code
 
