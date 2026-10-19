@@ -3,7 +3,6 @@ from datetime import datetime
 from unittest.mock import patch
 
 from mdec_civil_sync import (
-    MDEC_MATCH_WINDOW_DAYS,
     MDEC_BATCH_SIZE,
     MDEC_DOWNLOAD_TIMEOUT_SECONDS,
     MDEC_RUN_TIME_BUDGET_SECONDS,
@@ -109,7 +108,7 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertEqual(parse_submission_datetime("3/16/2026 11:20 AM EST"), datetime(2026, 3, 16, 11, 20))
         self.assertEqual(parse_submission_datetime("3/16/26 11:20:45 AM EDT"), datetime(2026, 3, 16, 11, 20, 45))
 
-    def test_match_uses_priority_before_date_distance(self):
+    def test_match_uses_date_distance_before_status_priority(self):
         cur = FakeCursor((456,))
         self.assertEqual(find_best_civil_record(cur, "D-01-CV-26-029285", datetime(2026, 8, 19)), 456)
         self.assertIn("THEN 0", cur.sql)
@@ -117,18 +116,22 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertIn("THEN 2", cur.sql)
         self.assertIn("THEN 3", cur.sql)
         order_by = cur.sql[cur.sql.index("ORDER BY"):]
-        self.assertLess(order_by.index("THEN 0"), order_by.index("ABS(DATEDIFF"))
-        self.assertEqual(cur.params[2], MDEC_MATCH_WINDOW_DAYS)
-        self.assertEqual(cur.params[4], MDEC_MATCH_WINDOW_DAYS)
+        self.assertLess(order_by.index("ABS(DATEDIFF"), order_by.index("LOWER(COALESCE"))
 
-    def test_match_checks_issue_or_intake_within_ten_days(self):
+    def test_match_has_no_date_cutoff(self):
         cur = FakeCursor(None)
         self.assertIsNone(find_best_civil_record(cur, "C-24-CV-26-000001", datetime(2026, 8, 20)))
         self.assertIn("TRY_CONVERT(date, NULLIF", cur.sql)
         self.assertIn("CONVERT(nvarchar(50), issue_date)", cur.sql)
         self.assertIn("CONVERT(nvarchar(50), court_issued_date)", cur.sql)
         self.assertNotIn("CAST(COALESCE(issue_date, court_issued_date) AS date)", cur.sql)
-        self.assertIn("OR ABS(DATEDIFF", cur.sql)
+        where_clause = cur.sql[cur.sql.index("WHERE"):cur.sql.index("ORDER BY")]
+        self.assertNotIn("DATEDIFF", where_clause)
+
+    def test_match_allows_missing_submission_date(self):
+        cur = FakeCursor((789,))
+        self.assertEqual(find_best_civil_record(cur, "C-24-CV-26-000002", None), 789)
+        self.assertIsNone(cur.params[1])
 
     def test_extracts_relative_servedocument_link(self):
         links = _extract_document_links(
@@ -249,6 +252,27 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertEqual(result["inserted"], 1)
         self.assertEqual(conn.commits, 1)
         self.assertTrue(record_status.call_args.kwargs["terminal"])
+
+    def test_sync_matches_document_with_missing_submission_date(self):
+        conn = FakeConnection()
+        document = {
+            "source_document_id": "missing-date",
+            "case_number": "C-24-CV-26-000002",
+            "submission_at": None,
+        }
+        with (
+            patch("mdec_civil_sync.fetch_mdec_documents", return_value=[document]),
+            patch("mdec_civil_sync.find_best_civil_record", return_value=789) as find_record,
+            patch("mdec_civil_sync.get_civil_record_priority", return_value=0),
+            patch("mdec_civil_sync.upsert_mdec_document", return_value=(3, True)),
+            patch("mdec_civil_sync.record_sync_status") as record_status,
+        ):
+            result = sync_mdec_civil_documents(conn, object())
+
+        find_record.assert_called_once_with(conn.cursor_value, document["case_number"], None)
+        self.assertEqual(result["matched"], 1)
+        self.assertEqual(result["unmatched"], 0)
+        self.assertEqual(record_status.call_args.args[2], "matched")
 
     def test_nonterminal_match_is_recorded_for_future_priority_rechecks(self):
         conn = FakeConnection()
