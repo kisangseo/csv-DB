@@ -8,7 +8,6 @@ from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 MDEC_SOURCE_SYSTEM = "mdec"
-MDEC_MATCH_WINDOW_DAYS = 10
 MDEC_ACTIVE_LINK_DAYS = 60
 MDEC_RETRY_MINUTES = 10
 MDEC_FAILED_RETRY_MINUTES = 30
@@ -86,10 +85,11 @@ def civil_priority_sql(alias=None):
 
 def find_best_civil_record(cur, case_number, submission_at):
     normalized_case = normalize_case_number(case_number)
-    if not normalized_case or not submission_at:
+    if not normalized_case:
         return None
-    # Matching is calendar-date based; any source time or timezone is ignored.
-    submission_date = submission_at.date().isoformat()
+    # When available, the submission date disambiguates multiple rows for the
+    # same case. A missing date must not prevent an exact case-number match.
+    submission_date = submission_at.date().isoformat() if submission_at else None
     priority = civil_priority_sql()
     issued_date = """
         COALESCE(
@@ -106,13 +106,10 @@ def find_best_civil_record(cur, case_number, submission_at):
         FROM search.records
         WHERE LOWER(LTRIM(RTRIM(COALESCE(department, '')))) = 'civil papers'
           AND REPLACE(REPLACE(REPLACE(REPLACE(UPPER(COALESCE(case_number, '')), '-', ''), ' ', ''), '/', ''), '.', '') = ?
-          AND (
-                ABS(DATEDIFF(day, CAST(? AS date), {issued_date})) <= ?
-             OR ABS(DATEDIFF(day, CAST(? AS date), {intake_date_value})) <= ?
-          )
         ORDER BY
-          {priority},
           CASE
+            WHEN CAST(? AS date) IS NULL THEN 0
+            WHEN {issued_date} IS NULL AND {intake_date_value} IS NULL THEN 2147483647
             WHEN {issued_date} IS NULL THEN ABS(DATEDIFF(day, CAST(? AS date), {intake_date_value}))
             WHEN {intake_date_value} IS NULL THEN ABS(DATEDIFF(day, CAST(? AS date), {issued_date}))
             WHEN ABS(DATEDIFF(day, CAST(? AS date), {issued_date}))
@@ -120,15 +117,13 @@ def find_best_civil_record(cur, case_number, submission_at):
               THEN ABS(DATEDIFF(day, CAST(? AS date), {issued_date}))
             ELSE ABS(DATEDIFF(day, CAST(? AS date), {intake_date_value}))
           END,
+          {priority},
           COALESCE(date_time_served, date_time_attempted, prior_attempt_date, date_received,
                    intake_date, issue_date, court_issued_date, created_at) DESC,
           record_id DESC
         """,
         normalized_case,
         submission_date,
-        MDEC_MATCH_WINDOW_DAYS,
-        submission_date,
-        MDEC_MATCH_WINDOW_DAYS,
         submission_date,
         submission_date,
         submission_date,
@@ -515,11 +510,6 @@ def sync_mdec_civil_documents(target_conn, container, source_conn=None, pdf_load
             if time.monotonic() - started_at >= MDEC_RUN_TIME_BUDGET_SECONDS:
                 summary["deferred"] = len(documents) - index
                 break
-            if not document.get("submission_at"):
-                summary["unmatched"] += 1
-                record_sync_status(target_conn, document, "unmatched", error="Missing or invalid submission date")
-                target_conn.commit()
-                continue
             try:
                 record_id = find_best_civil_record(target_cur, document["case_number"], document["submission_at"])
                 if not record_id:
