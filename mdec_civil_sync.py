@@ -167,7 +167,8 @@ def fetch_mdec_documents(conn):
                        ORDER BY cd.id DESC
                    ) AS case_row_number
             FROM source_documents AS cd
-            WHERE cd.parsed_submission_date BETWEEN
+            WHERE cd.parsed_submission_date IS NULL
+               OR cd.parsed_submission_date BETWEEN
                   DATEADD(day, -{MDEC_ACTIVE_LINK_DAYS}, CAST(SYSUTCDATETIME() AS date))
                   AND CAST(SYSUTCDATETIME() AS date)
         )
