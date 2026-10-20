@@ -215,6 +215,7 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertIn("> 1", sql)
         self.assertIn("next_retry_at", sql)
         self.assertIn("DATEADD(day, -60, CAST(SYSUTCDATETIME() AS date))", sql)
+        self.assertIn("cd.parsed_submission_date IS NULL", sql)
         self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 23)", sql)
         self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 101)", sql)
         self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 1)", sql)
