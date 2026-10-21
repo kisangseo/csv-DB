@@ -193,7 +193,9 @@ def fetch_mdec_documents(conn):
                  AND {priority} > 1
                  AND (sync.next_retry_at IS NULL OR sync.next_retry_at <= SYSUTCDATETIME()))
           )
-        ORDER BY cd.parsed_submission_date DESC,
+        ORDER BY CASE WHEN sync.last_attempt_at IS NULL THEN 0 ELSE 1 END,
+                 sync.last_attempt_at ASC,
+                 cd.parsed_submission_date DESC,
                  cd.source_version DESC
     """)
     documents = []
