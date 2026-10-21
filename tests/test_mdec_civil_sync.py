@@ -219,7 +219,12 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 23)", sql)
         self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 101)", sql)
         self.assertIn("TRY_CONVERT(date, parsed.submission_date_text, 1)", sql)
-        self.assertIn("ORDER BY cd.parsed_submission_date DESC", sql)
+        self.assertIn(
+            "ORDER BY CASE WHEN sync.last_attempt_at IS NULL THEN 0 ELSE 1 END",
+            sql,
+        )
+        self.assertIn("sync.last_attempt_at ASC", sql)
+        self.assertIn("cd.parsed_submission_date DESC", sql)
 
     def test_fetches_one_combined_candidate_per_case(self):
         conn = FakeConnection()
