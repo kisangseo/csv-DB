@@ -5,6 +5,7 @@ from unittest.mock import patch
 from mdec_civil_sync import (
     MDEC_BATCH_SIZE,
     MDEC_DOWNLOAD_TIMEOUT_SECONDS,
+    MDEC_NONFINAL_RETRY_MINUTES,
     MDEC_RUN_TIME_BUDGET_SECONDS,
     MDEC_RETRY_MINUTES,
     _extract_document_links,
@@ -16,6 +17,7 @@ from mdec_civil_sync import (
     find_best_civil_record,
     normalize_case_number,
     parse_submission_datetime,
+    record_sync_status,
     source_filename,
     sync_mdec_civil_documents,
 )
@@ -90,6 +92,30 @@ class FakeConnection:
 
 
 class MdecCivilSyncTests(unittest.TestCase):
+    def test_unmatched_status_retries_after_ten_minutes(self):
+        conn = FakeConnection()
+        record_sync_status(
+            conn,
+            {"source_document_id": "unmatched-1", "case_number": "C-1"},
+            "unmatched",
+        )
+        self.assertEqual(conn.cursor_value.params[6], MDEC_RETRY_MINUTES)
+        self.assertEqual(conn.cursor_value.params[15], MDEC_RETRY_MINUTES)
+
+    def test_nonfinal_match_retries_after_six_hours(self):
+        conn = FakeConnection()
+        record_sync_status(
+            conn,
+            {"source_document_id": "matched-1", "case_number": "C-1"},
+            "matched",
+            record_id=1,
+            pdf_id=2,
+            terminal=False,
+        )
+        self.assertEqual(MDEC_NONFINAL_RETRY_MINUTES, 360)
+        self.assertEqual(conn.cursor_value.params[6], MDEC_NONFINAL_RETRY_MINUTES)
+        self.assertEqual(conn.cursor_value.params[15], MDEC_NONFINAL_RETRY_MINUTES)
+
     def test_case_number_normalization(self):
         self.assertEqual(normalize_case_number(" D-01-CV-26-029285 "), "D01CV26029285")
 
