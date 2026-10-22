@@ -222,7 +222,7 @@ class MdecCivilSyncTests(unittest.TestCase):
 
     def test_candidate_query_skips_terminal_matches_but_keeps_new_and_retryable_documents(self):
         self.assertEqual(MDEC_RETRY_MINUTES, 10)
-        self.assertEqual(MDEC_BATCH_SIZE, 10)
+        self.assertEqual(MDEC_BATCH_SIZE, 20)
         self.assertLessEqual(MDEC_DOWNLOAD_TIMEOUT_SECONDS, 15)
         self.assertLessEqual(MDEC_RUN_TIME_BUDGET_SECONDS, 150)
         conn = FakeConnection()
@@ -230,7 +230,7 @@ class MdecCivilSyncTests(unittest.TestCase):
         self.assertEqual(fetch_mdec_documents(conn), [])
         sql = conn.cursor_value.sql
         self.assertIn("sync.source_document_id IS NULL AND pdf.id IS NULL", sql)
-        self.assertIn("SELECT TOP (10)", sql)
+        self.assertIn("SELECT TOP (20)", sql)
         self.assertIn("sync.sync_status IN ('unmatched', 'failed')", sql)
         self.assertIn("CONCAT('combined:', cd.normalized_case_number)", sql)
         self.assertIn("JSON_VALUE(pdf.source_json, '$.source_version')", sql)
