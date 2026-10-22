@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 MDEC_SOURCE_SYSTEM = "mdec"
 MDEC_ACTIVE_LINK_DAYS = 60
 MDEC_RETRY_MINUTES = 10
+MDEC_NONFINAL_RETRY_MINUTES = 6 * 60
 MDEC_FAILED_RETRY_MINUTES = 30
 MDEC_BATCH_SIZE = 10
 MDEC_RUN_TIME_BUDGET_SECONDS = 150
@@ -222,7 +223,12 @@ def get_civil_record_priority(cur, record_id):
 
 def record_sync_status(conn, document, status, record_id=None, pdf_id=None, error=None, terminal=False):
     cur = conn.cursor()
-    retry_minutes = MDEC_FAILED_RETRY_MINUTES if status == "failed" else MDEC_RETRY_MINUTES
+    if status == "failed":
+        retry_minutes = MDEC_FAILED_RETRY_MINUTES
+    elif status == "matched" and not terminal:
+        retry_minutes = MDEC_NONFINAL_RETRY_MINUTES
+    else:
+        retry_minutes = MDEC_RETRY_MINUTES
     cur.execute("""
         MERGE search.mdec_civil_sync_status AS target
         USING (SELECT ? AS source_document_id) AS source
