@@ -1,0 +1,106 @@
+.portal-theme {
+  --portal-navy: #142542;
+  --portal-gold: #d4aa55;
+  --portal-ink: #192b47;
+  --portal-blue: #2454ba;
+  --portal-line: #dbe4ef;
+  margin: 0;
+  padding: 0;
+  color: var(--portal-ink);
+  background: #eff4fa;
+  font: 1rem/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.portal-header {
+  color: white;
+  background: var(--portal-navy);
+  border-bottom: 3px solid var(--portal-gold);
+}
+.portal-header-inner {
+  box-sizing: border-box;
+  width: min(1380px, calc(100% - 3rem));
+  min-height: 76px;
+  margin-inline: auto;
+  padding-block: .75rem;
+  display: flex;
+  align-items: center;
+}
+.portal-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: .75rem;
+  color: inherit;
+  text-decoration: none;
+  font-size: .95rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.portal-brand img {
+  width: 3rem;
+  height: 3rem;
+  object-fit: contain;
+  flex: none;
+}
+.portal-brand small {
+  display: block;
+  color: #c5d2e8;
+  font-size: .78rem;
+  font-weight: 500;
+}
+.portal-theme :focus-visible {
+  outline: 2px solid #3978dc;
+  outline-offset: 2px;
+}
+.portal-theme .search-portal {
+  box-sizing: border-box;
+  margin-block: 1.25rem;
+  border: 1px solid var(--portal-line);
+  padding-inline: clamp(.65rem, 2vw, 1.5rem);
+}
+.portal-theme h1 {
+  color: var(--portal-ink);
+  letter-spacing: -.04em;
+  font-weight: 750;
+}
+.search-portal th { background-color: #eaf0fa; }
+.portal-primary,
+#searchForm button[type="submit"] {
+  background: var(--portal-blue);
+  color: white;
+}
+.portal-primary:hover,
+#searchForm button[type="submit"]:hover {
+  background: #194397;
+}
+.portal-sign-in {
+  box-sizing: border-box;
+  width: min(27rem, calc(100% - 2rem));
+  margin: 3rem auto;
+  padding: 1.25rem;
+  border: 1px solid var(--portal-line);
+  border-radius: .9rem;
+  background: white;
+  box-shadow: 0 3px 12px #172d4910;
+}
+.portal-sign-in h1 { margin: 0 0 1rem; }
+.portal-sign-in form, .portal-sign-in label { display: grid; gap: .85rem; }
+.portal-sign-in label { gap: .3rem; font-weight: 650; }
+.portal-sign-in input, .portal-sign-in button {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #bdcbdd;
+  border-radius: .45rem;
+  padding: .52rem .7rem;
+  font: inherit;
+}
+.portal-sign-in button { border-color: var(--portal-blue); font-weight: 700; cursor: pointer; }
+.portal-error {
+  padding: .7rem .9rem;
+  border-radius: .55rem;
+  background: #fce8e7;
+  color: #8c2726;
+}
+
+@media (max-width: 550px) {
+  .portal-header-inner { width: calc(100% - 1.5rem); }
+}
