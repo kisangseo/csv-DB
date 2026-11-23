@@ -660,35 +660,30 @@ def can_delete_records() -> bool:
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
-        return '''
-        <form method="post">
-            Email: <input name="email"><br>
-            Password: <input name="password" type="password"><br>
-            <button type="submit">Login</button>
-        </form>
-        '''
+        return render_template("login.html")
 
     email = request.form["email"]
     password = request.form["password"]
 
     conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT user_id, password_hash, must_change_password, permission
-        FROM search.users
-        WHERE email = ? AND is_active = 1
-    """, email)
-
-    row = cur.fetchone()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT user_id, password_hash, must_change_password, permission
+            FROM search.users
+            WHERE email = ? AND is_active = 1
+        """, email)
+        row = cur.fetchone()
+    finally:
+        conn.close()
 
     if not row:
-        return "Invalid login", 401
+        return render_template("login.html", error="Invalid email or password."), 401
 
     user_id, pw, must_change, permission = row
 
     if password != pw:
-        return "Invalid login", 401
+        return render_template("login.html", error="Invalid email or password."), 401
     session.permanent = True
     session["user_id"] = user_id
     session["permission"] = (permission or "").strip().lower()

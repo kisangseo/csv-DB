@@ -3,15 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BSCO Search Portal</title>
+  <title>BCSO Search Portal</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <!-- Flatpickr CSS -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
   
+  <link rel="stylesheet" href="{{ url_for('static', filename='portal-theme.css') }}">
 </head>
-<body>
-  
-  <div class="container">
+<body class="portal-theme">
+  {% include "portal_header.html" %}
+
+  <div class="container search-portal">
     <h1>BCSO Search Portal</h1>
 
     <form id="searchForm" onsubmit="search(event)">
